@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -33,6 +34,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from datetime import datetime
@@ -42,6 +44,7 @@ DEFAULT_CLAUDE_ROOT = str(Path.home() / ".claude" / "projects")
 DEFAULT_HERMES_DB = str(Path.home() / ".hermes" / "state.db")
 DEFAULT_HERMES_LOG = str(Path.home() / ".hermes" / "logs" / "agent.log")
 DEFAULT_SESSION = "hermon"
+DEFAULT_IDLE_TIMEOUT = 180.0
 WINDOW = "deck"
 ROSTER_TITLE = "hermon-roster"
 
@@ -452,6 +455,37 @@ def hermes_connect(db_path):
     return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
 
 
+TOOL_PENDING_CEILING_MULT = 5  # a running tool call gets a much longer leash
+
+
+def hermes_liveness(s, now, idle_timeout):
+    """live/done for a Hermes session, using Hermes's own turn-completion
+    signal rather than guessing from silence.
+
+    ``ended_at`` is set rarely in practice — interactive CLI/TUI sessions
+    routinely sit for hours between turns without it ever being set — so it
+    can't be the primary signal. The reliable one is the last message's
+    ``finish_reason``: 'stop' with no pending tool_calls means the assistant
+    cleanly closed its turn and is idle waiting on the next user message —
+    that's "done" the instant it happens, no timeout needed.
+
+    Otherwise Hermes is structurally mid-turn, but two very different waits
+    hide behind that: a pending tool_calls means a tool (shell command, web
+    fetch, sub-agent) is actually *running* and can legitimately take
+    minutes without a new row appearing, so it gets a much longer ceiling.
+    Anything else mid-turn (a fresh tool result awaiting the assistant's
+    next completion, a user message not yet answered) should resolve within
+    normal API latency, so it keeps the tighter idle_timeout ceiling — a
+    multi-minute gap there is genuinely suspicious, not just a slow tool.
+    """
+    if s["ended_at"]:
+        return "done"
+    if s["turn_done"]:
+        return "done"
+    ceiling = idle_timeout * TOOL_PENDING_CEILING_MULT if s["tool_pending"] else idle_timeout
+    return "live" if now - s["last_ts"] <= ceiling else "done"
+
+
 class HermesSource:
     def __init__(self, db_path):
         self.db_path = str(Path(db_path).expanduser())
@@ -472,7 +506,13 @@ class HermesSource:
                        s.cache_read_tokens, s.cache_write_tokens,
                        COALESCE(s.actual_cost_usd, s.estimated_cost_usd),
                        COALESCE((SELECT MAX(m.timestamp) FROM messages m
-                                 WHERE m.session_id = s.id), s.started_at)
+                                 WHERE m.session_id = s.id), s.started_at),
+                       (SELECT role FROM messages m WHERE m.session_id = s.id
+                        ORDER BY m.id DESC LIMIT 1),
+                       (SELECT finish_reason FROM messages m WHERE m.session_id = s.id
+                        ORDER BY m.id DESC LIMIT 1),
+                       (SELECT tool_calls IS NOT NULL FROM messages m
+                        WHERE m.session_id = s.id ORDER BY m.id DESC LIMIT 1)
                 FROM sessions s
                 WHERE s.started_at >= ? OR s.ended_at IS NULL
                 """,
@@ -485,6 +525,8 @@ class HermesSource:
             conn.close()
         out = []
         for r in rows:
+            last_role, last_finish, last_has_tc = r[11], r[12], bool(r[13])
+            turn_done = last_role == "assistant" and last_finish == "stop" and not last_has_tc
             out.append({
                 "id": r[0], "started_at": r[1] or 0, "ended_at": r[2],
                 "model": r[3] or "?", "title": r[4] or "",
@@ -492,6 +534,8 @@ class HermesSource:
                 "out_tok": int(r[6] or 0),
                 "cost": r[9],
                 "last_ts": r[10] or r[1] or 0,
+                "turn_done": turn_done,
+                "tool_pending": last_role == "assistant" and last_has_tc and not turn_done,
             })
         return out
 
@@ -512,10 +556,7 @@ class HermesSource:
         snaps = {}
         for s in self.sessions(now - idle_timeout * 5):
             key = f"hermes:{s['id']}"
-            if s["ended_at"]:
-                state = "done"
-            else:
-                state = "live" if now - s["last_ts"] <= idle_timeout else "done"
+            state = hermes_liveness(s, now, idle_timeout)
             snaps[key] = Snap(
                 key, f"H:{short_id(s['id'])}",
                 ["render", "--hermes", s["id"], "--hermes-db", self.db_path],
@@ -744,10 +785,7 @@ def build_roster(sources, claude_stats, now, fresh_window, idle_timeout):
                 ))
         elif isinstance(src, HermesSource):
             for s in src.sessions(now - fresh_window):
-                if s["ended_at"]:
-                    state = "done"
-                else:
-                    state = "live" if now - s["last_ts"] <= idle_timeout else "done"
+                state = hermes_liveness(s, now, idle_timeout)
                 if state != "live" and now - s["last_ts"] > fresh_window:
                     continue
                 rows.append(RosterRow(
@@ -776,6 +814,34 @@ def cmd_summary(sources, hermes_log, interval, fresh_window, idle_timeout, once=
 
 
 # ---------------------------------------------------------------- watch daemon (tmux panes)
+
+
+def acquire_lock(session):
+    """Advisory lock so only one `watch` daemon owns a given tmux session.
+
+    Without this, two daemons independently discover the same live sessions
+    and each splits its own pane for them, producing duplicate panes. flock
+    is released automatically if the holding process dies, so a stale lock
+    file never wedges a restart.
+    """
+    lock_path = Path(tempfile.gettempdir()) / f"hermon-{session}.lock"
+    lock_file = open(lock_path, "a+")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        holder = ""
+        try:
+            lock_file.seek(0)
+            holder = lock_file.read().strip()
+        except OSError:
+            pass
+        lock_file.close()
+        return None, holder
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(str(os.getpid()))
+    lock_file.flush()
+    return lock_file, None  # caller must keep the return value alive
 
 
 def tmux(*args):
@@ -916,6 +982,13 @@ def source_flags(args):
 def cmd_watch(args):
     if not shutil.which("tmux"):
         sys.exit("hermon: tmux not found on PATH — install tmux first")
+    lock, holder_pid = acquire_lock(args.session)
+    if lock is None:
+        pid_msg = f" (pid {holder_pid})" if holder_pid else ""
+        sys.exit(
+            f"hermon: a watch daemon is already running for session "
+            f"'{args.session}'{pid_msg} — only one may own a session at a time"
+        )
     sources = build_sources(args)
     deck = Deck(args, source_flags(args))
     tracked = {}  # key -> Tracked
@@ -1042,8 +1115,10 @@ def build_parser():
     w.add_argument("--interval", type=float, default=1.0, help="scan interval (s)")
     w.add_argument("--fresh-window", type=float, default=300.0,
                    help="roster lookback for recently-finished sessions (s)")
-    w.add_argument("--idle-timeout", type=float, default=60.0,
-                   help="no activity for this long = session finished")
+    w.add_argument("--idle-timeout", type=float, default=DEFAULT_IDLE_TIMEOUT,
+                   help="safety ceiling for a session stuck mid-turn with no "
+                        "activity (Hermes sessions go done immediately on a "
+                        "clean turn end, via finish_reason, regardless of this)")
     w.add_argument("--linger", type=float, default=60.0,
                    help="keep finished panes this long before unsplitting; 0 = forever")
     w.add_argument("--max-panes", type=int, default=8,
@@ -1062,13 +1137,13 @@ def build_parser():
                    help="roster mode: live table of all sessions")
     r.add_argument("--interval", type=float, default=1.0)
     r.add_argument("--fresh-window", type=float, default=300.0)
-    r.add_argument("--idle-timeout", type=float, default=60.0)
+    r.add_argument("--idle-timeout", type=float, default=DEFAULT_IDLE_TIMEOUT)
 
     l = sub.add_parser("ls", help="print the roster once to stdout (no tmux)")
     add_source_flags(l)
     l.add_argument("--fresh-window", type=float, default=3600.0,
                    help="include sessions active within this many seconds")
-    l.add_argument("--idle-timeout", type=float, default=60.0)
+    l.add_argument("--idle-timeout", type=float, default=DEFAULT_IDLE_TIMEOUT)
 
     return p
 

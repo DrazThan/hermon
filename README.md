@@ -67,7 +67,7 @@ Defaults make `hermon watch` correct with zero flags.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--idle-timeout` | `60` | no activity for this long ⇒ session finished |
+| `--idle-timeout` | `180` | safety ceiling for a session stuck mid-turn with no activity (Hermes sessions go done immediately on a clean turn end — see Liveness) |
 | `--linger` | `60` | finished panes stay this long before unsplitting; `0` = keep forever |
 | `--max-panes` | `8` | pane cap; finished panes are evicted first, the roster always lists everything |
 | `--fresh-window` | `300` | roster lookback for recently-finished sessions |
@@ -97,16 +97,38 @@ never a raw JSON dump. The `state.db` is opened read-only
 
 ## Liveness
 
-A session is **live** when it shows recent activity: for Hermes, a message
-row or `ended_at` within `--idle-timeout` (Hermes doesn't always set
-`ended_at`, so idleness is the fallback); for Claude transcripts, a fresh
-mtime or a process holding the file open *for writing* (via `lsof` — hermon's
-own read-only panes don't count). Finished ⇒ pane marked `✓`, unsplit after
-`--linger`, resurrected if the session resumes.
+For Claude transcripts: **live** on a fresh mtime, or a process holding the
+file open *for writing* (via `lsof` — hermon's own read-only panes don't
+count).
+
+For Hermes: `ended_at` is set rarely in practice — interactive CLI/TUI
+sessions routinely sit for hours between turns without it ever being set —
+so it can't be the primary signal. hermon rides on Hermes's own
+turn-completion signal instead, the last message's `finish_reason`:
+
+- `finish_reason='stop'` with no pending `tool_calls` ⇒ the assistant
+  cleanly closed its turn and is idle waiting on the next user message —
+  **done immediately**, no timeout wait.
+- a pending `tool_calls` ⇒ a tool (shell command, web fetch, sub-agent) is
+  actually *running* and can legitimately take minutes without a new
+  message row appearing — **live**, with a generous ceiling (`5 ×
+  --idle-timeout`) against a truly orphaned turn.
+- anything else mid-turn (a tool result awaiting the assistant's next
+  completion, a user message not yet answered) should resolve within
+  normal API latency — **live**, but with the tighter `--idle-timeout`
+  ceiling; a multi-minute gap there is genuinely suspicious.
+- `ended_at` set ⇒ done, always.
+
+Either way, finished ⇒ pane marked `✓`, unsplit after `--linger`,
+resurrected if the session resumes.
 
 The daemon is idempotent: restart it and it re-adopts existing panes by
 title instead of duplicating them, and it recreates the tmux session if you
-kill it externally.
+kill it externally. Only one `watch` may own a given `--session` at a time —
+a second one refuses to start with a clear error rather than racing the
+first to split duplicate panes (an flock on a temp lockfile, released
+automatically if the holder dies, so a crashed daemon never wedges a
+restart).
 
 ## Tests
 

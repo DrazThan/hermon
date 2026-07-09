@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hermon import HermesSource, render_hermes_row
+from hermon import HermesSource, hermes_liveness, render_hermes_row
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -44,6 +44,7 @@ CREATE TABLE messages (
     content TEXT,
     tool_calls TEXT,
     tool_name TEXT,
+    finish_reason TEXT,
     timestamp REAL NOT NULL
 );
 """
@@ -171,6 +172,118 @@ class TestHermesSource(unittest.TestCase):
         src = HermesSource("/nonexistent/dir/state.db")
         self.assertEqual(src.sessions(0), [])
         self.assertEqual(src.snapshot(time.time(), 60), {})
+
+    def test_pending_tool_call_stays_live_past_idle_timeout(self):
+        """Reproduces the real-world flicker: a session mid-turn on a slow
+        tool call (last message role=assistant, finish_reason=tool_calls)
+        must stay live even though no new row has landed in ages — Hermes
+        itself says a tool is outstanding, so silence isn't idleness."""
+        now = time.time()
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "state.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(FIXTURE_SCHEMA)
+        conn.execute(
+            "INSERT INTO sessions (id, source, model, started_at, ended_at)"
+            " VALUES ('pending01', 'tui', 'claude-sonnet-5', ?, NULL)",
+            (now - 600,))
+        conn.execute(
+            "INSERT INTO messages (session_id, role, tool_calls, finish_reason,"
+            " timestamp) VALUES ('pending01', 'assistant', '[{\"id\":\"x\"}]',"
+            " 'tool_calls', ?)", (now - 300,))  # 300s of silence, tool pending
+        conn.commit()
+        conn.close()
+        self.addCleanup(lambda: os.unlink(path))
+
+        src = HermesSource(path)
+        snaps = src.snapshot(now, idle_timeout=180)
+        self.assertEqual(snaps["hermes:pending01"].state, "live")
+
+    def test_clean_turn_end_goes_done_immediately(self):
+        """finish_reason='stop' with no pending tool_calls means the turn
+        just closed — done right away, not after waiting out idle_timeout."""
+        now = time.time()
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "state.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(FIXTURE_SCHEMA)
+        conn.execute(
+            "INSERT INTO sessions (id, source, model, started_at, ended_at)"
+            " VALUES ('closed01', 'tui', 'claude-sonnet-5', ?, NULL)",
+            (now - 600,))
+        conn.execute(
+            "INSERT INTO messages (session_id, role, finish_reason, timestamp)"
+            " VALUES ('closed01', 'assistant', 'stop', ?)", (now - 5,))
+        conn.commit()
+        conn.close()
+        self.addCleanup(lambda: os.unlink(path))
+
+        src = HermesSource(path)
+        snaps = src.snapshot(now, idle_timeout=180)
+        self.assertEqual(snaps["hermes:closed01"].state, "done")
+
+    def test_pending_tool_call_hits_safety_ceiling_eventually(self):
+        """An orphaned mid-turn session (process died, tool never returned)
+        must not stay live forever — idle_timeout still caps it."""
+        now = time.time()
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "state.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(FIXTURE_SCHEMA)
+        conn.execute(
+            "INSERT INTO sessions (id, source, model, started_at, ended_at)"
+            " VALUES ('orphan01', 'tui', 'claude-sonnet-5', ?, NULL)",
+            (now - 7200,))
+        conn.execute(
+            "INSERT INTO messages (session_id, role, tool_calls, finish_reason,"
+            " timestamp) VALUES ('orphan01', 'assistant', '[{\"id\":\"x\"}]',"
+            " 'tool_calls', ?)", (now - 7000,))
+        conn.commit()
+        conn.close()
+        self.addCleanup(lambda: os.unlink(path))
+
+        src = HermesSource(path)
+        snaps = src.snapshot(now, idle_timeout=180)
+        self.assertEqual(snaps["hermes:orphan01"].state, "done")
+
+
+class TestHermesLiveness(unittest.TestCase):
+    def _sess(self, **overrides):
+        base = {"ended_at": None, "turn_done": False, "tool_pending": False,
+                "last_ts": time.time()}
+        base.update(overrides)
+        return base
+
+    def test_ended_at_wins_over_everything(self):
+        s = self._sess(ended_at=time.time(), turn_done=False,
+                        last_ts=time.time())
+        self.assertEqual(hermes_liveness(s, time.time(), 180), "done")
+
+    def test_turn_done_is_immediate_regardless_of_recency(self):
+        s = self._sess(turn_done=True, last_ts=time.time())  # just happened
+        self.assertEqual(hermes_liveness(s, time.time(), 180), "done")
+
+    def test_mid_turn_recent_is_live(self):
+        now = time.time()
+        s = self._sess(turn_done=False, last_ts=now - 10)
+        self.assertEqual(hermes_liveness(s, now, 180), "live")
+
+    def test_mid_turn_beyond_ceiling_is_done(self):
+        now = time.time()
+        s = self._sess(turn_done=False, last_ts=now - 999)
+        self.assertEqual(hermes_liveness(s, now, 180), "done")
+
+    def test_tool_pending_gets_a_longer_ceiling(self):
+        # idle_timeout=180 -> tool_pending ceiling is 900; 236s (the real
+        # flicker case observed live) sits inside that window.
+        now = time.time()
+        s = self._sess(tool_pending=True, last_ts=now - 236)
+        self.assertEqual(hermes_liveness(s, now, 180), "live")
+
+    def test_tool_pending_still_dies_past_its_own_ceiling(self):
+        now = time.time()
+        s = self._sess(tool_pending=True, last_ts=now - 901)
+        self.assertEqual(hermes_liveness(s, now, 180), "done")
 
 
 if __name__ == "__main__":
