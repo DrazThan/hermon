@@ -6,22 +6,29 @@
 A CLI companion for devs working with [Hermes](https://github.com/NousResearch/hermes-agent):
 one terminal window you drag onto a spare monitor, where every agent session
 running on your machine — Hermes TUI/CLI/gateway sessions, sub-agents, small
-one-shot calls, `claude -p` invocations, calls to any provider — appears live
-in its own pane. The window **splits when a session starts and unsplits when
-it ends** (after a configurable linger, default 60s).
+one-shot calls, `claude -p` invocations, `opencode run` invocations, calls to
+any provider — appears live in its own pane. The window **splits when a
+session starts and unsplits when it ends** (after a configurable linger,
+default 60s).
 
 *(demo GIF goes here)*
 
 ## How it captures sessions
 
 hermon is read-only and needs zero changes to Hermes or your orchestration.
-It watches the places sessions already leave a live trail:
+It watches the places sessions already leave a live trail — including the
+session stores of tools Hermes shells out to, not just Hermes itself:
 
 | Source | What it captures |
 |---|---|
 | `~/.hermes/state.db` (`sessions` + `messages`, WAL SQLite) | every Hermes session: TUI, CLI, gateway, sub-agents — any provider. Model, tool calls, tokens, cost, live-written mid-session |
 | `~/.claude/projects/**/*.jsonl` | every Claude Code session: interactive or `claude -p`, including ones Hermes spawns as subprocesses |
+| `~/.local/share/opencode/opencode.db` (`session`/`message`/`part`, WAL SQLite) | every OpenCode CLI session: `opencode run` or interactive, including ones Hermes spawns as subprocesses |
 | `~/.hermes/logs/agent.log` | per-API-call ticker in the roster (model, provider, tokens, latency) — catches small/auxiliary calls too |
+
+Adding another tool Hermes delegates to is mostly a matter of pointing a new
+source at wherever *that* tool keeps its own session history — see
+[Adding another source](#adding-another-source).
 
 It never sends input to sessions and never kills them.
 
@@ -47,8 +54,8 @@ hermon` works in any terminal.
 The top pane is a **roster**: every recent session with state (● live /
 ✓ done), model, last tool, cumulative tokens, cost, and elapsed time, plus a
 ticker of the last few raw Hermes API calls. Each other pane tails one
-session, labeled on its border: `C:0f865f` (Claude) / `H:b356d8` (Hermes),
-`✓`-prefixed once finished.
+session, labeled on its border: `C:0f865f` (Claude) / `H:b356d8` (Hermes) /
+`O:fiiDPP` (OpenCode), `✓`-prefixed once finished.
 
 ## CLI
 
@@ -56,9 +63,10 @@ session, labeled on its border: `C:0f865f` (Claude) / `H:b356d8` (Hermes),
 hermon watch  [--session NAME] [--interval SEC] [--fresh-window SEC]
               [--idle-timeout SEC] [--linger SEC] [--max-panes N]
               [--claude-root DIR] [--hermes-db PATH] [--hermes-log PATH]
-              [--no-claude] [--no-hermes]
+              [--opencode-db PATH] [--no-claude] [--no-hermes] [--no-opencode]
 hermon render FILE [--replay-bytes N]          # tail a Claude transcript
 hermon render --hermes SESSION_ID              # tail a Hermes session
+hermon render --opencode SESSION_ID            # tail an OpenCode session
 hermon render --summary                        # the roster (used by pane 0)
 hermon ls                                      # roster once, to stdout, no tmux
 ```
@@ -89,11 +97,18 @@ unsplit, the pane comes back.
 | user / orchestrator prompt | `» user: …` |
 | anything unrecognized | a single dim `· <type>` line |
 
-Neither the Claude transcript format nor the Hermes schema is a stable public
-API, so both parsers are defensive: malformed lines become a dim
-`· parse-skip` marker, unknown shapes a `· <type>` line — never a crash,
-never a raw JSON dump. The `state.db` is opened read-only
-(`file:…?mode=ro`), safe alongside a running Hermes (WAL).
+For OpenCode, the same shape maps onto its `part` rows instead of a flat
+message stream: a `tool` part starts as `▶ tool {input}` and is *updated in
+place* (not a new row) once it completes, so hermon detects that status
+change and appends `◀ result`/`◀ ERROR` — both lines appear together if the
+tool finished between two polls. `text`/`reasoning`/`file`/`patch`/
+`step-*` parts render once, on first sight.
+
+None of the three schemas (Claude transcript, Hermes DB, OpenCode DB) is a
+stable public API, so all three parsers are defensive: malformed rows become
+a dim `· parse-skip` marker, unknown shapes a `· <type>` line — never a
+crash, never a raw JSON dump. Both SQLite stores are opened read-only
+(`file:…?mode=ro`), safe alongside the real tool running (WAL).
 
 ## Liveness
 
@@ -101,15 +116,18 @@ For Claude transcripts: **live** on a fresh mtime, or a process holding the
 file open *for writing* (via `lsof` — hermon's own read-only panes don't
 count).
 
-For Hermes: `ended_at` is set rarely in practice — interactive CLI/TUI
-sessions routinely sit for hours between turns without it ever being set —
-so it can't be the primary signal. hermon rides on Hermes's own
-turn-completion signal instead, the last message's `finish_reason`:
+For Hermes and OpenCode, an explicit "session closed" flag (`ended_at`,
+`time_archived`) is set rarely in practice — interactive sessions routinely
+sit for hours between turns without it ever being set — so it can't be the
+primary signal. hermon rides on each tool's own turn-completion signal
+instead: Hermes's last message `finish_reason`, OpenCode's last message
+`finish` (`'tool-calls'` / `'stop'`) — same shape, same classifier
+(`turn_liveness`):
 
-- `finish_reason='stop'` with no pending `tool_calls` ⇒ the assistant
-  cleanly closed its turn and is idle waiting on the next user message —
-  **done immediately**, no timeout wait.
-- a pending `tool_calls` ⇒ a tool (shell command, web fetch, sub-agent) is
+- a clean stop with no pending tool call ⇒ the assistant closed its turn and
+  is idle waiting on the next user message — **done immediately**, no
+  timeout wait.
+- a pending tool call ⇒ a tool (shell command, web fetch, sub-agent) is
   actually *running* and can legitimately take minutes without a new
   message row appearing — **live**, with a generous ceiling (`5 ×
   --idle-timeout`) against a truly orphaned turn.
@@ -117,7 +135,7 @@ turn-completion signal instead, the last message's `finish_reason`:
   completion, a user message not yet answered) should resolve within
   normal API latency — **live**, but with the tighter `--idle-timeout`
   ceiling; a multi-minute gap there is genuinely suspicious.
-- `ended_at` set ⇒ done, always.
+- the explicit closed flag, when it is set ⇒ done, always.
 
 Either way, finished ⇒ pane marked `✓`, unsplit after `--linger`,
 resurrected if the session resumes.
@@ -130,14 +148,41 @@ first to split duplicate panes (an flock on a temp lockfile, released
 automatically if the holder dies, so a crashed daemon never wedges a
 restart).
 
+## Adding another source
+
+Hermes shells out to more than these two tools, and each one tends to keep
+its own session store the same way Claude Code and OpenCode do — hermon
+watches that store directly rather than going through Hermes. If the store
+is a SQLite DB with a row-per-message shape and *some* field that marks a
+turn as cleanly finished vs. mid-tool-call (that's the part worth checking
+first — grep the tool's own source or DB schema for anything resembling
+`finish_reason`/`stop_reason`/`status`), adding it is mostly:
+
+1. Subclass `DbTurnSource`, set `key_prefix`/`label_prefix`, implement
+   `sessions()` returning the shared dict shape (`id`, `started_at`,
+   `ended_at`, `model`, `title`, `in_tok`, `out_tok`, `cost`, `last_ts`,
+   `turn_done`, `tool_pending`) and `last_tool()`/`_render_argv()` — `Hermes-
+   Source`/`OpenCodeSource` in [hermon.py](hermon.py) are the templates.
+   `turn_liveness()` and the roster then work for it automatically.
+2. Write a `render_<tool>_*` function turning one row into printable lines,
+   and a `cmd_render_<tool>` polling loop — `render_hermes_row`/
+   `cmd_render_hermes` (append-only) or `render_opencode_part`/
+   `cmd_render_opencode` (in-place-updated rows) are the two shapes so far.
+3. Wire it into `add_source_flags`, `build_sources`, `source_flags`, the
+   `render` subparser, and `main()`'s dispatch.
+
+If the tool has no such signal at all, it still works via the flat
+`now - last_ts <= idle_timeout` fallback (like Claude transcripts) — just
+less precise about mid-turn silence.
+
 ## Tests
 
 ```bash
 python3 -m unittest discover -s tests
 ```
 
-Fixtures only — synthetic transcripts and a fixture SQLite db; no tmux, no
-real sessions.
+Fixtures only — synthetic transcripts and fixture SQLite DBs matching each
+tool's real schema; no tmux, no real sessions.
 
 ## Non-goals (v1)
 

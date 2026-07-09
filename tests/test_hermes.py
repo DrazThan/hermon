@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hermon import HermesSource, hermes_liveness, render_hermes_row
+from hermon import HermesSource, turn_liveness, render_hermes_row
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -257,33 +257,33 @@ class TestHermesLiveness(unittest.TestCase):
     def test_ended_at_wins_over_everything(self):
         s = self._sess(ended_at=time.time(), turn_done=False,
                         last_ts=time.time())
-        self.assertEqual(hermes_liveness(s, time.time(), 180), "done")
+        self.assertEqual(turn_liveness(s, time.time(), 180), "done")
 
     def test_turn_done_is_immediate_regardless_of_recency(self):
         s = self._sess(turn_done=True, last_ts=time.time())  # just happened
-        self.assertEqual(hermes_liveness(s, time.time(), 180), "done")
+        self.assertEqual(turn_liveness(s, time.time(), 180), "done")
 
     def test_mid_turn_recent_is_live(self):
         now = time.time()
         s = self._sess(turn_done=False, last_ts=now - 10)
-        self.assertEqual(hermes_liveness(s, now, 180), "live")
+        self.assertEqual(turn_liveness(s, now, 180), "live")
 
     def test_mid_turn_beyond_ceiling_is_done(self):
         now = time.time()
         s = self._sess(turn_done=False, last_ts=now - 999)
-        self.assertEqual(hermes_liveness(s, now, 180), "done")
+        self.assertEqual(turn_liveness(s, now, 180), "done")
 
     def test_tool_pending_gets_a_longer_ceiling(self):
         # idle_timeout=180 -> tool_pending ceiling is 900; 236s (the real
         # flicker case observed live) sits inside that window.
         now = time.time()
         s = self._sess(tool_pending=True, last_ts=now - 236)
-        self.assertEqual(hermes_liveness(s, now, 180), "live")
+        self.assertEqual(turn_liveness(s, now, 180), "live")
 
     def test_tool_pending_still_dies_past_its_own_ceiling(self):
         now = time.time()
         s = self._sess(tool_pending=True, last_ts=now - 901)
-        self.assertEqual(hermes_liveness(s, now, 180), "done")
+        self.assertEqual(turn_liveness(s, now, 180), "done")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,10 @@ Sources:
   * Claude Code transcripts   ~/.claude/projects/<slug>/<uuid>.jsonl
   * Hermes session store      ~/.hermes/state.db  (sessions + messages)
   * Hermes small/aux calls    ~/.hermes/logs/agent.log  (roster ticker)
+  * OpenCode session store    ~/.local/share/opencode/opencode.db
+                               (session + message + part) — any tool Hermes
+                               shells out to keeps its own store the same
+                               way; hermon watches it directly.
 
 Python 3.9+ stdlib only. External binaries: tmux (required for `watch`),
 lsof (optional, improves Claude-transcript liveness).
@@ -17,9 +21,10 @@ Usage:
   hermon watch  [--session NAME] [--interval SEC] [--fresh-window SEC]
                 [--idle-timeout SEC] [--linger SEC] [--max-panes N]
                 [--claude-root DIR] [--hermes-db PATH] [--hermes-log PATH]
-                [--no-claude] [--no-hermes]
+                [--opencode-db PATH] [--no-claude] [--no-hermes] [--no-opencode]
   hermon render FILE [--replay-bytes N]
   hermon render --hermes SESSION_ID [--hermes-db PATH] [--replay-msgs N]
+  hermon render --opencode SESSION_ID [--opencode-db PATH] [--replay-parts N]
   hermon render --summary [source flags] [--interval SEC]
   hermon ls     [source flags] [--fresh-window SEC]
 """
@@ -43,6 +48,7 @@ from pathlib import Path
 DEFAULT_CLAUDE_ROOT = str(Path.home() / ".claude" / "projects")
 DEFAULT_HERMES_DB = str(Path.home() / ".hermes" / "state.db")
 DEFAULT_HERMES_LOG = str(Path.home() / ".hermes" / "logs" / "agent.log")
+DEFAULT_OPENCODE_DB = str(Path.home() / ".local" / "share" / "opencode" / "opencode.db")
 DEFAULT_SESSION = "hermon"
 DEFAULT_IDLE_TIMEOUT = 180.0
 WINDOW = "deck"
@@ -458,20 +464,21 @@ def hermes_connect(db_path):
 TOOL_PENDING_CEILING_MULT = 5  # a running tool call gets a much longer leash
 
 
-def hermes_liveness(s, now, idle_timeout):
-    """live/done for a Hermes session, using Hermes's own turn-completion
-    signal rather than guessing from silence.
+def turn_liveness(s, now, idle_timeout):
+    """live/done for a turn-based session (Hermes, OpenCode), using the
+    tool's own turn-completion signal rather than guessing from silence.
 
-    ``ended_at`` is set rarely in practice — interactive CLI/TUI sessions
+    An explicit "session closed" flag (Hermes's ``ended_at``, OpenCode's
+    ``time_archived``) is set rarely in practice — interactive sessions
     routinely sit for hours between turns without it ever being set — so it
     can't be the primary signal. The reliable one is the last message's
-    ``finish_reason``: 'stop' with no pending tool_calls means the assistant
-    cleanly closed its turn and is idle waiting on the next user message —
+    finish/stop reason: a clean stop with no pending tool call means the
+    assistant closed its turn and is idle waiting on the next user message —
     that's "done" the instant it happens, no timeout needed.
 
-    Otherwise Hermes is structurally mid-turn, but two very different waits
-    hide behind that: a pending tool_calls means a tool (shell command, web
-    fetch, sub-agent) is actually *running* and can legitimately take
+    Otherwise the tool is structurally mid-turn, but two very different
+    waits hide behind that: a pending tool call means a tool (shell command,
+    web fetch, sub-agent) is actually *running* and can legitimately take
     minutes without a new row appearing, so it gets a much longer ceiling.
     Anything else mid-turn (a fresh tool result awaiting the assistant's
     next completion, a user message not yet answered) should resolve within
@@ -486,7 +493,44 @@ def hermes_liveness(s, now, idle_timeout):
     return "live" if now - s["last_ts"] <= ceiling else "done"
 
 
-class HermesSource:
+class DbTurnSource:
+    """Shared base for SQLite-backed, turn-based sources (Hermes, OpenCode).
+
+    A subclass provides ``sessions()``/``last_tool()`` returning the shared
+    dict shape (id/started_at/ended_at/model/title/in_tok/out_tok/cost/
+    last_ts/turn_done/tool_pending) plus a ``key_prefix``/``label_prefix``
+    and ``_render_argv()`` — ``snapshot()`` and the roster then work
+    identically for any tool that exposes a turn-completion signal this way.
+    """
+
+    key_prefix = ""
+    label_prefix = ""
+
+    def sessions(self, since):
+        raise NotImplementedError
+
+    def last_tool(self, session_id):
+        raise NotImplementedError
+
+    def _render_argv(self, session_id):
+        raise NotImplementedError
+
+    def snapshot(self, now, idle_timeout, tracked_keys=()):
+        snaps = {}
+        for s in self.sessions(now - idle_timeout * TOOL_PENDING_CEILING_MULT):
+            key = f"{self.key_prefix}:{s['id']}"
+            state = turn_liveness(s, now, idle_timeout)
+            snaps[key] = Snap(
+                key, f"{self.label_prefix}:{short_id(s['id'])}",
+                self._render_argv(s["id"]), state, s["last_ts"],
+            )
+        return snaps
+
+
+class HermesSource(DbTurnSource):
+    key_prefix = "hermes"
+    label_prefix = "H"
+
     def __init__(self, db_path):
         self.db_path = str(Path(db_path).expanduser())
         self._warned = False
@@ -552,22 +596,124 @@ class HermesSource:
         except sqlite3.Error:
             return "-"
 
-    def snapshot(self, now, idle_timeout, tracked_keys=()):
-        snaps = {}
-        for s in self.sessions(now - idle_timeout * 5):
-            key = f"hermes:{s['id']}"
-            state = hermes_liveness(s, now, idle_timeout)
-            snaps[key] = Snap(
-                key, f"H:{short_id(s['id'])}",
-                ["render", "--hermes", s["id"], "--hermes-db", self.db_path],
-                state, s["last_ts"],
-            )
-        return snaps
+    def _render_argv(self, session_id):
+        return ["render", "--hermes", session_id, "--hermes-db", self.db_path]
 
     def _warn(self):
         if not self._warned:
             self._warned = True
             print(c(DIM, f"· hermes db unavailable: {self.db_path}"), flush=True)
+
+
+# ---------------------------------------------------------------- opencode source
+
+
+def opencode_connect(db_path):
+    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+
+
+class OpenCodeSource(DbTurnSource):
+    """OpenCode CLI sessions, from its own ``opencode.db`` (SQLite, WAL).
+
+    Any tool Hermes shells out to (see ``skill_view('opencode')`` /
+    ``terminal`` calls to ``opencode run ...``) keeps its own session store;
+    hermon watches that store directly rather than going through Hermes, the
+    same way it watches Claude Code's transcripts directly. OpenCode's
+    ``message.data.finish`` is 'tool-calls' / 'stop' — the exact same signal
+    as Hermes's ``finish_reason``, so it plugs into the same turn_liveness
+    logic via the shared DbTurnSource dict shape.
+    """
+
+    key_prefix = "opencode"
+    label_prefix = "O"
+
+    def __init__(self, db_path):
+        self.db_path = str(Path(db_path).expanduser())
+        self._warned = False
+
+    def sessions(self, since):
+        """Recent/unfinished session rows as dicts; [] on any error."""
+        try:
+            conn = opencode_connect(self.db_path)
+        except sqlite3.Error:
+            self._warn()
+            return []
+        try:
+            rows = conn.execute(
+                """
+                SELECT s.id, s.title, s.model, s.cost,
+                       s.tokens_input, s.tokens_output,
+                       s.tokens_cache_read, s.tokens_cache_write,
+                       s.time_created, s.time_updated, s.time_archived,
+                       (SELECT data FROM message m WHERE m.session_id = s.id
+                        ORDER BY m.rowid DESC LIMIT 1)
+                FROM session s
+                WHERE s.time_created >= ? OR s.time_archived IS NULL
+                """,
+                (since * 1000,),  # opencode times are epoch milliseconds
+            ).fetchall()
+        except sqlite3.Error:
+            self._warn()
+            return []
+        finally:
+            conn.close()
+        out = []
+        for r in rows:
+            model = "?"
+            if r[2]:
+                try:
+                    model = json.loads(r[2]).get("id") or "?"
+                except Exception:
+                    pass
+            last_role = last_finish = None
+            if r[11]:
+                try:
+                    last_msg = json.loads(r[11])
+                    last_role, last_finish = last_msg.get("role"), last_msg.get("finish")
+                except Exception:
+                    pass
+            turn_done = last_role == "assistant" and last_finish == "stop"
+            out.append({
+                "id": r[0], "started_at": (r[8] or 0) / 1000.0, "ended_at": r[10],
+                "model": model, "title": r[1] or "",
+                "in_tok": int((r[4] or 0) + (r[6] or 0) + (r[7] or 0)),
+                "out_tok": int(r[5] or 0),
+                "cost": r[3],
+                "last_ts": (r[9] or r[8] or 0) / 1000.0,
+                "turn_done": turn_done,
+                "tool_pending": last_role == "assistant" and last_finish == "tool-calls",
+            })
+        return out
+
+    def last_tool(self, session_id):
+        """Name of the most recent tool-type part; a bounded scan since
+        parts interleave text/reasoning/tool rows (no JSON1 dependency)."""
+        try:
+            conn = opencode_connect(self.db_path)
+            rows = conn.execute(
+                "SELECT data FROM part WHERE session_id = ?"
+                " ORDER BY rowid DESC LIMIT 20",
+                (session_id,),
+            ).fetchall()
+            conn.close()
+        except sqlite3.Error:
+            return "-"
+        for (data,) in rows:
+            try:
+                d = json.loads(data)
+            except Exception:
+                continue
+            if d.get("type") == "tool":
+                return d.get("tool", "-")
+        return "-"
+
+    def _render_argv(self, session_id):
+        return ["render", "--opencode", session_id, "--opencode-db", self.db_path]
+
+    def _warn(self):
+        if not self._warned:
+            self._warned = True
+            print(c(DIM, f"· opencode db unavailable: {self.db_path}"), flush=True)
 
 
 # ---------------------------------------------------------------- hermes message renderer
@@ -693,6 +839,162 @@ def cmd_render_hermes(session_id, db_path, replay_msgs):
         time.sleep(0.5)
 
 
+# ---------------------------------------------------------------- opencode part renderer
+
+
+def render_opencode_tool_call(data):
+    name = data.get("tool", "?")
+    state = data.get("state") if isinstance(data.get("state"), dict) else {}
+    try:
+        arg = json.dumps(state.get("input", {}), ensure_ascii=False)
+    except Exception:
+        arg = ""
+    return [c(BOLD, f"▶ {name}") + " " + c(DIM, clip(arg, 120))]
+
+
+def render_opencode_tool_result(data):
+    name = data.get("tool", "?")
+    state = data.get("state") if isinstance(data.get("state"), dict) else {}
+    if state.get("status") == "error":
+        return [c(RED, "◀ ERROR") + " " +
+                c(DIM, f"{name}: {clip(state.get('error', ''), 180)}")]
+    return [c(DIM, f"◀ {name} {clip(state.get('output', ''), 200)}")]
+
+
+def render_opencode_simple_part(role, data, width=None):
+    width = width or term_width()
+    ptype = data.get("type")
+    if ptype == "text":
+        text = str(data.get("text", "")).strip()
+        if not text:
+            return []
+        if role == "user":
+            return wrap_prefixed(c(YELLOW, "» user:"), text, width)
+        return textwrap.wrap(text, width)
+    return [c(DIM, f"· {ptype if ptype else 'unknown'}")]
+
+
+def render_opencode_part(role, raw_data, prev_status):
+    """Render lines for one OpenCode ``part`` row, given the status we last
+    rendered for it (``None`` if never seen). Returns ``(lines, status to
+    remember)``. Defensive: malformed rows degrade to a dim marker, never
+    raise.
+
+    Unlike Claude/Hermes rows (append-only, one row per finalized event), a
+    tool part is *updated in place* as it moves pending → completed/error —
+    the same row, not a new one. So a part is rendered up to twice: once as
+    ``▶ tool`` the first time it's seen (immediately followed by
+    ``◀ result`` too, if it was already done by the time we polled — a fast
+    tool call can complete between two polls, and both lines still need to
+    show), and again as ``◀ result``/``◀ ERROR`` only when status actually
+    changes afterward. Non-tool parts (text, reasoning, file, patch,
+    step-start/finish) are rendered once, on first sight.
+    """
+    try:
+        data = json.loads(raw_data)
+    except Exception:
+        return ([c(DIM, "· parse-skip")], prev_status)
+    if not isinstance(data, dict):
+        return ([c(DIM, "· parse-skip")], prev_status)
+
+    if data.get("type") != "tool":
+        if prev_status is not None:
+            return ([], prev_status)
+        return (render_opencode_simple_part(role, data), "shown")
+
+    state = data.get("state") if isinstance(data.get("state"), dict) else {}
+    status = state.get("status")
+    lines = []
+    if prev_status is None:
+        lines.extend(render_opencode_tool_call(data))
+        if status in ("completed", "error"):
+            lines.extend(render_opencode_tool_result(data))
+    elif status != prev_status and status in ("completed", "error"):
+        lines.extend(render_opencode_tool_result(data))
+    return (lines, status if status is not None else prev_status)
+
+
+def cmd_render_opencode(session_id, db_path, replay_parts):
+    print(c(DIM, f"hermon · opencode session {session_id} ({db_path})"), flush=True)
+    part_status = {}
+    watermark = None
+    last_stats = None
+    warned = False
+    tick = 0
+    while True:
+        try:
+            conn = opencode_connect(db_path)
+        except sqlite3.Error:
+            if not warned:
+                print(c(DIM, "· opencode db unavailable — waiting"), flush=True)
+                warned = True
+            time.sleep(1)
+            continue
+        warned = False
+        try:
+            if watermark is None:
+                row = conn.execute(
+                    "SELECT MIN(time_updated) FROM (SELECT time_updated FROM part"
+                    " WHERE session_id = ? ORDER BY rowid DESC LIMIT ?)",
+                    (session_id, max(replay_parts, 1)),
+                ).fetchone()
+                watermark = (row[0] - 1) if row and row[0] is not None else 0
+
+            rows = conn.execute(
+                "SELECT part.id, part.time_updated, part.data, message.data"
+                " FROM part JOIN message ON message.id = part.message_id"
+                " WHERE part.session_id = ? AND part.time_updated > ?"
+                " ORDER BY part.time_updated, part.rowid LIMIT 1000",
+                (session_id, watermark),
+            ).fetchall()
+            for pid, tu, pdata, mdata in rows:
+                watermark = max(watermark, tu)
+                role = None
+                try:
+                    role = json.loads(mdata).get("role")
+                except Exception:
+                    pass
+                lines, status = render_opencode_part(role, pdata, part_status.get(pid))
+                part_status[pid] = status
+                for ln in lines:
+                    print(ln, flush=True)
+
+            tick += 1
+            if tick % 4 == 1:  # stats every ~2s
+                srow = conn.execute(
+                    "SELECT model, cost, tokens_input, tokens_output,"
+                    " tokens_cache_read, tokens_cache_write, time_archived"
+                    " FROM session WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+                if srow:
+                    stats = tuple(srow[:6])
+                    if stats != last_stats and any(v for v in srow[1:6]):
+                        last_stats = stats
+                        model = "?"
+                        if srow[0]:
+                            try:
+                                model = json.loads(srow[0]).get("id") or "?"
+                            except Exception:
+                                pass
+                        in_tok = int((srow[2] or 0) + (srow[4] or 0) + (srow[5] or 0))
+                        line = f"Σ in:{in_tok:,} out:{int(srow[3] or 0):,}"
+                        if srow[1] is not None:
+                            line += f" ${srow[1]:.4f}"
+                        line += f"  [{model}]"
+                        print(c(CYAN, line), flush=True)
+                    if srow[6]:  # time_archived set: session closed cleanly
+                        print(c(GREEN, "Σ session archived"), flush=True)
+                        conn.close()
+                        return
+        except sqlite3.Error:
+            print(c(DIM, "· opencode db read error — retrying"), flush=True)
+            time.sleep(1)
+        finally:
+            conn.close()
+        time.sleep(0.5)
+
+
 # ---------------------------------------------------------------- roster / summary
 
 API_CALL_RE = re.compile(
@@ -783,13 +1085,13 @@ def build_roster(sources, claude_stats, now, fresh_window, idle_timeout):
                     st.cost if (st.cost_reported is not None or st.cost_sum) else None,
                     st.elapsed, snap.last_ts,
                 ))
-        elif isinstance(src, HermesSource):
+        elif isinstance(src, DbTurnSource):
             for s in src.sessions(now - fresh_window):
-                state = hermes_liveness(s, now, idle_timeout)
+                state = turn_liveness(s, now, idle_timeout)
                 if state != "live" and now - s["last_ts"] > fresh_window:
                     continue
                 rows.append(RosterRow(
-                    f"H:{short_id(s['id'])}", state, s["model"],
+                    f"{src.label_prefix}:{short_id(s['id'])}", state, s["model"],
                     src.last_tool(s["id"]),
                     s["in_tok"], s["out_tok"], s["cost"],
                     s["last_ts"] - s["started_at"] if s["started_at"] else None,
@@ -963,19 +1265,29 @@ def build_sources(args):
             sources.append(HermesSource(db))
         else:
             print(c(DIM, f"· hermes db missing, skipping: {db}"), flush=True)
+    if not args.no_opencode:
+        db = Path(args.opencode_db).expanduser()
+        if db.exists():
+            sources.append(OpenCodeSource(db))
+        else:
+            print(c(DIM, f"· opencode db missing, skipping: {db}"), flush=True)
     if not sources:
-        sys.exit("hermon: no sources available (claude root and hermes db both missing)")
+        sys.exit("hermon: no sources available (claude root, hermes db, and "
+                  "opencode db all missing)")
     return sources
 
 
 def source_flags(args):
     flags = ["--claude-root", str(args.claude_root),
              "--hermes-db", str(args.hermes_db),
-             "--hermes-log", str(args.hermes_log)]
+             "--hermes-log", str(args.hermes_log),
+             "--opencode-db", str(args.opencode_db)]
     if args.no_claude:
         flags.append("--no-claude")
     if args.no_hermes:
         flags.append("--no-hermes")
+    if args.no_opencode:
+        flags.append("--no-opencode")
     return flags
 
 
@@ -1096,10 +1408,14 @@ def add_source_flags(p):
                    help="Hermes state.db path")
     p.add_argument("--hermes-log", default=DEFAULT_HERMES_LOG,
                    help="Hermes agent.log (roster API-call ticker)")
+    p.add_argument("--opencode-db", default=DEFAULT_OPENCODE_DB,
+                   help="OpenCode opencode.db path")
     p.add_argument("--no-claude", action="store_true",
                    help="disable the Claude transcript source")
     p.add_argument("--no-hermes", action="store_true",
                    help="disable the Hermes db source")
+    p.add_argument("--no-opencode", action="store_true",
+                   help="disable the OpenCode db source")
 
 
 def build_parser():
@@ -1129,10 +1445,14 @@ def build_parser():
     r.add_argument("file", nargs="?", help="claude transcript .jsonl to tail")
     r.add_argument("--hermes", metavar="SESSION_ID",
                    help="hermes session id to tail from state.db")
+    r.add_argument("--opencode", metavar="SESSION_ID",
+                   help="opencode session id to tail from opencode.db")
     r.add_argument("--replay-bytes", type=int, default=20480,
                    help="claude transcript history shown on open")
     r.add_argument("--replay-msgs", type=int, default=30,
                    help="hermes message history shown on open")
+    r.add_argument("--replay-parts", type=int, default=40,
+                   help="opencode part history shown on open")
     r.add_argument("--summary", action="store_true",
                    help="roster mode: live table of all sessions")
     r.add_argument("--interval", type=float, default=1.0)
@@ -1162,10 +1482,13 @@ def main(argv=None):
                 )
             if args.hermes:
                 cmd_render_hermes(args.hermes, args.hermes_db, args.replay_msgs)
+            elif args.opencode:
+                cmd_render_opencode(args.opencode, args.opencode_db, args.replay_parts)
             elif args.file:
                 cmd_render_claude(args.file, args.replay_bytes)
             else:
-                sys.exit("hermon render: FILE, --hermes ID, or --summary required")
+                sys.exit("hermon render: FILE, --hermes ID, --opencode ID, "
+                          "or --summary required")
         elif args.cmd == "ls":
             return cmd_summary(
                 build_sources(args),
