@@ -23,8 +23,14 @@ fn hermes_schema_builds_with_expected_tables() {
     let conn = Connection::open(&db_path).expect("reopen temp db");
 
     let tables = table_names(&conn);
-    assert!(tables.contains(&"sessions".to_string()), "tables: {tables:?}");
-    assert!(tables.contains(&"messages".to_string()), "tables: {tables:?}");
+    assert!(
+        tables.contains(&"sessions".to_string()),
+        "tables: {tables:?}"
+    );
+    assert!(
+        tables.contains(&"messages".to_string()),
+        "tables: {tables:?}"
+    );
 }
 
 #[test]
@@ -33,7 +39,13 @@ fn opencode_schema_builds_with_expected_tables() {
     let conn = Connection::open(&db_path).expect("reopen temp db");
 
     let tables = table_names(&conn);
-    assert!(tables.contains(&"session".to_string()), "tables: {tables:?}");
-    assert!(tables.contains(&"message".to_string()), "tables: {tables:?}");
+    assert!(
+        tables.contains(&"session".to_string()),
+        "tables: {tables:?}"
+    );
+    assert!(
+        tables.contains(&"message".to_string()),
+        "tables: {tables:?}"
+    );
     assert!(tables.contains(&"part".to_string()), "tables: {tables:?}");
 }
