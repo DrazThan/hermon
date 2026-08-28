@@ -55,6 +55,16 @@ pub enum Attn {
     Stuck,
 }
 
+/// A source of sessions from one tool's on-disk store (Hermes, OpenCode,
+/// Claude Code). Kept minimal — just what the roster needs — since each
+/// backing store implements it differently.
+pub trait Source {
+    /// Current sessions from this source; empty on any read error.
+    fn sessions(&mut self) -> Vec<SessionMeta>;
+    /// The most recently used tool name in a session, or `"-"` if none.
+    fn last_tool(&mut self, session_id: &str) -> String;
+}
+
 /// A running tool call gets a much longer leash.
 pub const TOOL_PENDING_CEILING_MULT: f64 = 5.0;
 
@@ -184,151 +194,267 @@ mod tests {
             // --- mirrors tests/test_hermes.py:250 TestHermesLiveness ---
             (
                 "ended wins over everything",
-                M { ended: true, age: 0.0, ..M::default() },
+                M {
+                    ended: true,
+                    age: 0.0,
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "turn_done is immediate regardless of recency",
-                M { turn_done: true, age: 0.0, ..M::default() },
+                M {
+                    turn_done: true,
+                    age: 0.0,
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "mid-turn recent is live",
-                M { age: 10.0, ..M::default() },
+                M {
+                    age: 10.0,
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "mid-turn beyond ceiling is done",
-                M { age: 999.0, ..M::default() },
+                M {
+                    age: 999.0,
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "tool_pending gets a longer ceiling (236s, real flicker case)",
-                M { tool_pending: true, age: 236.0, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: 236.0,
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "tool_pending past its own ceiling, still fresh -> Stuck",
-                M { tool_pending: true, age: 901.0, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: 901.0,
+                    ..M::default()
+                },
                 Attention(Stuck),
             ),
             // --- exact boundaries ---
             (
                 "plain ceiling boundary: age == idle_timeout is live",
-                M { age: IDLE, ..M::default() },
+                M {
+                    age: IDLE,
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "plain ceiling boundary: just past idle_timeout is done",
-                M { age: IDLE + 0.001, ..M::default() },
+                M {
+                    age: IDLE + 0.001,
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "tool-pending boundary: age == 5x ceiling is live",
-                M { tool_pending: true, age: CEILING, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: CEILING,
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "fresh-window boundary: age == fresh_window is still Stuck",
-                M { tool_pending: true, age: FRESH, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: FRESH,
+                    ..M::default()
+                },
                 Attention(Stuck),
             ),
             (
                 "past fresh_window the stuck session leaves as Done",
-                M { tool_pending: true, age: FRESH + 0.001, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: FRESH + 0.001,
+                    ..M::default()
+                },
                 Done,
             ),
             // --- pending tool progression: Live -> Stuck -> Done ---
             (
                 "pending tool stays live past idle_timeout",
-                M { tool_pending: true, age: IDLE + 120.0, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: IDLE + 120.0,
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "pending tool becomes Stuck past 5x idle_timeout",
-                M { tool_pending: true, age: CEILING + 100.0, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: CEILING + 100.0,
+                    ..M::default()
+                },
                 Attention(Stuck),
             ),
             (
                 "pending tool becomes Done past fresh_window",
-                M { tool_pending: true, age: FRESH + 100.0, ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: FRESH + 100.0,
+                    ..M::default()
+                },
                 Done,
             ),
             // --- Stuck is only for a blown tool-pending ceiling ---
             (
                 "non-pending timeout within fresh_window is Done, not Stuck",
-                M { age: IDLE + 1.0, ..M::default() },
+                M {
+                    age: IDLE + 1.0,
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "ended + tool_pending is Done, never Stuck",
-                M { ended: true, tool_pending: true, age: 1_000.0, ..M::default() },
+                M {
+                    ended: true,
+                    tool_pending: true,
+                    age: 1_000.0,
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "turn_done + tool_pending, however stale, is Done, never Stuck",
-                M { turn_done: true, tool_pending: true, age: 1_000.0, ..M::default() },
+                M {
+                    turn_done: true,
+                    tool_pending: true,
+                    age: 1_000.0,
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "clean turn_done stays Done at any elapsed time",
-                M { turn_done: true, age: 100_000.0, ..M::default() },
+                M {
+                    turn_done: true,
+                    age: 100_000.0,
+                    ..M::default()
+                },
                 Done,
             ),
             // --- PermWait ---
             (
                 "ToolUse with 31s silence -> PermWait",
-                M { age: 31.0, last_event: tool_use(), ..M::default() },
+                M {
+                    age: 31.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
                 Attention(PermWait),
             ),
             (
                 "ToolUse with 29s silence -> Live",
-                M { age: 29.0, last_event: tool_use(), ..M::default() },
+                M {
+                    age: 29.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "ToolUse with exactly 30s silence -> Live (strictly greater)",
-                M { age: 30.0, last_event: tool_use(), ..M::default() },
+                M {
+                    age: 30.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "last_event None never yields PermWait",
-                M { age: 31.0, ..M::default() },
+                M {
+                    age: 31.0,
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "ToolResult silence is Live, not PermWait",
-                M { age: 31.0, last_event: Some(LastEvent::ToolResult), ..M::default() },
+                M {
+                    age: 31.0,
+                    last_event: Some(LastEvent::ToolResult),
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "AssistantText silence is Live, not PermWait",
-                M { age: 31.0, last_event: Some(LastEvent::AssistantText), ..M::default() },
+                M {
+                    age: 31.0,
+                    last_event: Some(LastEvent::AssistantText),
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "User silence is Live, not PermWait",
-                M { age: 31.0, last_event: Some(LastEvent::User), ..M::default() },
+                M {
+                    age: 31.0,
+                    last_event: Some(LastEvent::User),
+                    ..M::default()
+                },
                 Live,
             ),
             (
                 "tool_pending + ToolUse silence while raw-live -> PermWait",
-                M { tool_pending: true, age: 236.0, last_event: tool_use(), ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: 236.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
                 Attention(PermWait),
             ),
             (
                 "ended trumps PermWait even with ToolUse and silence",
-                M { ended: true, age: 31.0, last_event: tool_use(), ..M::default() },
+                M {
+                    ended: true,
+                    age: 31.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "turn_done trumps PermWait even with ToolUse and silence",
-                M { turn_done: true, age: 31.0, last_event: tool_use(), ..M::default() },
+                M {
+                    turn_done: true,
+                    age: 31.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
                 Done,
             ),
             (
                 "blown ceiling with ToolUse is Stuck, not PermWait",
-                M { tool_pending: true, age: CEILING + 100.0, last_event: tool_use(), ..M::default() },
+                M {
+                    tool_pending: true,
+                    age: CEILING + 100.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
                 Attention(Stuck),
             ),
         ];
@@ -344,17 +470,53 @@ mod tests {
     fn raw_rule_matches_python_semantics() {
         // The private rule keeps pure live/done semantics: the same inputs
         // the Python matrix uses, checked against the bool directly.
-        assert!(!turn_liveness_raw(&meta(M { ended: true, ..M::default() }), NOW, IDLE));
-        assert!(!turn_liveness_raw(&meta(M { turn_done: true, ..M::default() }), NOW, IDLE));
-        assert!(turn_liveness_raw(&meta(M { age: 10.0, ..M::default() }), NOW, IDLE));
-        assert!(!turn_liveness_raw(&meta(M { age: 999.0, ..M::default() }), NOW, IDLE));
-        assert!(turn_liveness_raw(
-            &meta(M { tool_pending: true, age: 236.0, ..M::default() }),
+        assert!(!turn_liveness_raw(
+            &meta(M {
+                ended: true,
+                ..M::default()
+            }),
             NOW,
             IDLE
         ));
         assert!(!turn_liveness_raw(
-            &meta(M { tool_pending: true, age: 901.0, ..M::default() }),
+            &meta(M {
+                turn_done: true,
+                ..M::default()
+            }),
+            NOW,
+            IDLE
+        ));
+        assert!(turn_liveness_raw(
+            &meta(M {
+                age: 10.0,
+                ..M::default()
+            }),
+            NOW,
+            IDLE
+        ));
+        assert!(!turn_liveness_raw(
+            &meta(M {
+                age: 999.0,
+                ..M::default()
+            }),
+            NOW,
+            IDLE
+        ));
+        assert!(turn_liveness_raw(
+            &meta(M {
+                tool_pending: true,
+                age: 236.0,
+                ..M::default()
+            }),
+            NOW,
+            IDLE
+        ));
+        assert!(!turn_liveness_raw(
+            &meta(M {
+                tool_pending: true,
+                age: 901.0,
+                ..M::default()
+            }),
             NOW,
             IDLE
         ));
