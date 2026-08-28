@@ -16,7 +16,20 @@ pub enum Command {
     /// Run the watcher daemon (owns the tmux session).
     Watch(SourceArgs),
     /// Print the roster once to stdout (no tmux).
-    Ls(SourceArgs),
+    Ls(LsArgs),
+}
+
+/// `hermon ls`: the source flags plus its own, wider lookback
+/// (`hermon.py:1463`, where `ls` defaults `--fresh-window` to an hour while
+/// `watch` keeps 300s).
+#[derive(Debug, Args)]
+pub struct LsArgs {
+    #[command(flatten)]
+    pub source: SourceArgs,
+
+    /// Include sessions active within this many seconds.
+    #[arg(long, default_value_t = 3600.0)]
+    pub fresh_window: f64,
 }
 
 /// Flags shared by every subcommand, ported from `hermon.py:1404 add_source_flags`
@@ -35,6 +48,10 @@ pub struct SourceArgs {
     /// OpenCode opencode.db path.
     #[arg(long, default_value_t = default_opencode_db())]
     pub opencode_db: String,
+
+    /// Hermes agent.log (roster API-call ticker).
+    #[arg(long, default_value_t = default_hermes_log())]
+    pub hermes_log: String,
 
     /// Safety ceiling for a session stuck mid-turn with no activity.
     #[arg(long, default_value_t = 180.0)]
@@ -67,6 +84,16 @@ fn default_hermes_db() -> String {
         .unwrap_or_default()
         .join(".hermes")
         .join("state.db")
+        .display()
+        .to_string()
+}
+
+fn default_hermes_log() -> String {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".hermes")
+        .join("logs")
+        .join("agent.log")
         .display()
         .to_string()
 }

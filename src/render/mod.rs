@@ -101,6 +101,21 @@ impl StyledLine {
     pub fn to_plain(&self) -> String {
         self.0.iter().map(|seg| seg.text.as_str()).collect()
     }
+
+    /// The line as 24-bit ANSI, for `hermon ls` on a color terminal
+    /// (`hermon.py:70 c()`). Callers decide whether color is wanted —
+    /// `NO_COLOR` and a non-tty stdout both mean [`to_plain`](Self::to_plain).
+    pub fn to_ansi(&self) -> String {
+        let mut out = String::new();
+        for seg in &self.0 {
+            let Rgb { r, g, b } = seg.sem.color();
+            if seg.sem == Sem::Bold {
+                out.push_str("\x1b[1m");
+            }
+            out.push_str(&format!("\x1b[38;2;{r};{g};{b}m{}\x1b[0m", seg.text));
+        }
+        out
+    }
 }
 
 /// Pane/roster label core: last 6 chars of a uuid stem or hermes id
