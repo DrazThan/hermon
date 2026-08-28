@@ -299,7 +299,19 @@ impl ClaudeSource {
             .entry(id.clone())
             .or_insert_with(|| ClaudeStats::new(path));
         stats.update();
-        let last_ts = stats.last_ts.or(mtime).unwrap_or(0.0);
+        // File mtime is a floor, not a substitute: a transcript recently
+        // appended with an untimestamped tail event (e.g. a tool result
+        // with no `timestamp` field) must not read as stale just because
+        // the last *timestamped* event is old (`hermon.py:431`, which
+        // keys Claude recency off mtime alone). Clock skew can still push
+        // the event timestamp ahead of mtime, so take the max rather than
+        // preferring either source outright.
+        let last_ts = match (stats.last_ts, mtime) {
+            (Some(ts), Some(mt)) => ts.max(mt),
+            (Some(ts), None) => ts,
+            (None, Some(mt)) => mt,
+            (None, None) => 0.0,
+        };
         let started_at = stats.first_ts.unwrap_or(last_ts);
         Some(SessionMeta {
             id,
@@ -658,7 +670,13 @@ mod tests {
         assert_eq!(s.in_tok, 125 + 250);
         assert_eq!(s.out_tok, 30);
         assert_eq!(s.cost, 0.5);
-        assert_eq!(s.last_ts, s.started_at + 61.0);
+        // The fixture's own timestamps are long past by the time this test
+        // runs, so the freshly written file's mtime floors last_ts (see
+        // `mtime_floors_a_stale_last_event_timestamp`); the exact
+        // event-derived relationship (last_ts == started_at + 61s) is
+        // covered directly on the accumulator by
+        // `accumulates_tokens_cost_model_and_tool`, with no mtime involved.
+        assert!(s.last_ts >= s.started_at + 61.0);
         assert!(!s.turn_done);
         assert!(!s.tool_pending);
         assert!(!s.ended);
@@ -761,5 +779,64 @@ mod tests {
 
         let mut src = ClaudeSource::new(dir.path());
         assert_eq!(src.sessions(), Vec::new());
+    }
+
+    #[test]
+    fn mtime_floors_a_stale_last_event_timestamp() {
+        use crate::source::{Liveness, classify};
+
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        // Last *timestamped* event is old, as if the transcript's tail
+        // carries an untimestamped tool result appended just now — the
+        // divergence this fix closes (`hermon.py:431`).
+        append(
+            &path,
+            br#"{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2020-01-01T00:00:00Z"}"#,
+        );
+        append(&path, b"\n");
+        let fresh = SystemTime::now();
+        File::open(&path)
+            .expect("open transcript")
+            .set_modified(fresh)
+            .expect("set fresh mtime");
+
+        let mut src = ClaudeSource::new(dir.path());
+        let sessions = src.sessions();
+        assert_eq!(sessions.len(), 1);
+        let mtime = mtime_secs(&path).expect("mtime");
+        assert!(
+            (sessions[0].last_ts - mtime).abs() < 1.0,
+            "last_ts should floor to mtime: {} vs {}",
+            sessions[0].last_ts,
+            mtime
+        );
+
+        let live = classify(&sessions[0], mtime, 300.0, 3600.0);
+        assert_eq!(live, Liveness::Live);
+    }
+
+    #[test]
+    fn event_timestamp_newer_than_mtime_wins_on_clock_skew() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        // A timestamp far ahead of the file's real mtime, simulating clock
+        // skew between whatever clock stamped the event and the
+        // filesystem's clock. The larger value must survive.
+        let future_ts = "2030-01-01T00:00:00Z";
+        append(
+            &path,
+            format!(
+                r#"{{"type":"user","message":{{"role":"user","content":"hi"}},"timestamp":"{future_ts}"}}"#
+            )
+            .as_bytes(),
+        );
+        append(&path, b"\n");
+
+        let mut src = ClaudeSource::new(dir.path());
+        let sessions = src.sessions();
+        assert_eq!(sessions.len(), 1);
+        let expected = parse_ts(future_ts).expect("parse future ts");
+        assert_eq!(sessions[0].last_ts, expected);
     }
 }
