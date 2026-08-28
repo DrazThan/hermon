@@ -7,12 +7,14 @@
 //! directly. Pane management (M3) and eviction/linger (M4) are not here yet.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::EngineConfig;
-use crate::roster::{RosterRow, Sources, build_roster};
+use crate::render::StyledLine;
+use crate::roster::{RosterRow, Sources, TICKER_LIMIT, api_call_ticker, build_roster};
 use crate::source::Liveness;
 
 /// Engine → UI. `Roster` is a full replacement of the deck each tick, not a
@@ -20,6 +22,8 @@ use crate::source::Liveness;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Roster(Vec<RosterRow>),
+    /// The newest Hermes API calls, refreshed with the roster.
+    Ticker(Vec<StyledLine>),
     Lifecycle {
         key: String,
         change: Lifecycle,
@@ -68,8 +72,13 @@ fn run(config: EngineConfig, tx: &Sender<Event>, rx: &Receiver<UiCmd>) {
         let liveness = lifecycle_events(&prev_liveness, &rows);
         prev_liveness = rows.iter().map(|r| (r.key.clone(), r.state)).collect();
 
+        let ticker = api_call_ticker(Path::new(&config.hermes_log), TICKER_LIMIT);
+
         if tx.send(Event::Roster(rows)).is_err() {
             return; // UI hung up.
+        }
+        if tx.send(Event::Ticker(ticker)).is_err() {
+            return;
         }
         for event in liveness {
             if tx.send(event).is_err() {
@@ -121,10 +130,12 @@ mod tests {
 
     fn row(key: &str, state: Liveness) -> RosterRow {
         RosterRow {
+            id: format!("id-{key}"),
             key: key.to_string(),
             state,
             model: "m".to_string(),
             last_tool: "-".to_string(),
+            last_line: String::new(),
             in_tok: 0,
             out_tok: 0,
             cost: 0.0,

@@ -24,12 +24,18 @@ use crate::source::{Attn, Liveness, SessionMeta, Source, classify};
 /// One session as the roster displays it (`hermon.py:1025 RosterRow`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RosterRow {
+    /// The source's own session id, unchanged. The UI keys its selection on
+    /// this so the cursor stays on a session as rows reorder between ticks.
+    pub id: String,
     /// Pane/roster label: `C:0f865f` (Claude), `H:b356d8` (Hermes),
     /// `O:fiiDPP` (OpenCode).
     pub key: String,
     pub state: Liveness,
     pub model: String,
     pub last_tool: String,
+    /// One-line summary of the newest event, as the source rendered it
+    /// ([`SessionMeta::last_line`]) — what the session is doing right now.
+    pub last_line: String,
     pub in_tok: u64,
     pub out_tok: u64,
     /// Reported spend. Python distinguishes "no cost data" (`-`) from a
@@ -110,10 +116,12 @@ fn roster_row(
         return None;
     }
     Some(RosterRow {
+        id: s.id.clone(),
         key: format!("{label_prefix}:{}", short_id(&s.id)),
         state,
         model: s.model.clone(),
         last_tool,
+        last_line: s.last_line.clone(),
         in_tok: s.in_tok,
         out_tok: s.out_tok,
         cost: s.cost,
@@ -257,7 +265,7 @@ fn row_line(r: &RosterRow) -> StyledLine {
 
 /// The fleet at a glance: `N live · N done · Σ $X.XX · Y in`. Sessions
 /// needing attention are counted as live — they are unfinished work.
-fn totals_line(rows: &[RosterRow]) -> StyledLine {
+pub(crate) fn totals_line(rows: &[RosterRow]) -> StyledLine {
     let done = rows.iter().filter(|r| r.state == Liveness::Done).count();
     // fold, not sum(): f64's Sum identity is -0.0, which prints as "$-0.00".
     let cost = rows.iter().fold(0.0, |acc, r| acc + r.cost);
@@ -290,7 +298,7 @@ fn clock(now: f64) -> String {
 }
 
 /// Thousands separators, matching Python's `{:,}` token counts.
-fn commas(n: u64) -> String {
+pub(crate) fn commas(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, ch) in digits.char_indices() {
@@ -314,10 +322,12 @@ mod tests {
 
     fn row(key: &str, state: Liveness) -> RosterRow {
         RosterRow {
+            id: format!("id-{key}"),
             key: key.to_string(),
             state,
             model: "claude-sonnet-5".to_string(),
             last_tool: "Bash".to_string(),
+            last_line: "▶ Bash ls -la".to_string(),
             in_tok: 1_234_567,
             out_tok: 890,
             cost: 1.5,

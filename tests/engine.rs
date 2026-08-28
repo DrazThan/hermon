@@ -29,6 +29,7 @@ fn config(hermes_db: &std::path::Path) -> EngineConfig {
         claude_dir: "/nonexistent/claude/projects".to_string(),
         hermes_db: hermes_db.display().to_string(),
         opencode_db: "/nonexistent/opencode.db".to_string(),
+        hermes_log: "/nonexistent/agent.log".to_string(),
         idle_timeout: 180.0,
         fresh_window: 300.0,
         interval: TICK,
@@ -88,7 +89,7 @@ fn engine_emits_roster_then_a_lifecycle_finished_on_turn_done() {
                     break;
                 }
             }
-            Event::Lifecycle { .. } | Event::Alert => {}
+            Event::Ticker(_) | Event::Lifecycle { .. } | Event::Alert => {}
         }
     }
     assert!(saw_live, "engine never reported the live session");
@@ -136,6 +137,7 @@ fn shutdown_joins_promptly_with_no_sessions() {
             claude_dir: "/nonexistent/claude/projects".to_string(),
             hermes_db: "/nonexistent/state.db".to_string(),
             opencode_db: "/nonexistent/opencode.db".to_string(),
+            hermes_log: "/nonexistent/agent.log".to_string(),
             idle_timeout: 180.0,
             fresh_window: 300.0,
             interval: TICK,
@@ -170,6 +172,7 @@ fn a_hung_up_ui_ends_the_loop_via_the_failing_send() {
             claude_dir: "/nonexistent/claude/projects".to_string(),
             hermes_db: "/nonexistent/state.db".to_string(),
             opencode_db: "/nonexistent/opencode.db".to_string(),
+            hermes_log: "/nonexistent/agent.log".to_string(),
             idle_timeout: 180.0,
             fresh_window: 300.0,
             interval: TICK,
