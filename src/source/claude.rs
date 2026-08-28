@@ -1,13 +1,15 @@
 //! Claude Code transcript source (`~/.claude/projects/**/*.jsonl`).
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
 use crate::render::{clip, parse_ts};
-use crate::source::LastEvent;
+use crate::source::{LastEvent, SessionMeta};
 
 /// Tool arguments are clipped at 120 chars, tool results at 200
 /// (`hermon.py:212`, `hermon.py:243`).
@@ -248,6 +250,142 @@ fn result_text(content: Option<&Value>) -> String {
             .join(" "),
         Some(other) => other.to_string(),
         None => String::new(),
+    }
+}
+
+/// Transcripts idle longer than this are not worth statting every tick —
+/// `~/.claude/projects` accumulates every session ever run, and nothing
+/// this old is a live session worth tracking.
+const RECENCY_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Discovers Claude Code sessions by walking transcript files on disk
+/// (`hermon.py:424 scan_claude_root`, `hermon.py:431 ClaudeSource`).
+/// Claude has no session database, so each `*.jsonl` file under the root
+/// *is* a session, and its [`ClaudeStats`] accumulator is the session's
+/// state.
+pub struct ClaudeSource {
+    root: PathBuf,
+    /// Keyed by transcript file stem (the session id), so it doubles as
+    /// the `last_tool` lookup index. Kept across calls to `sessions()` so
+    /// each transcript is re-parsed only from its last byte offset.
+    stats: HashMap<String, ClaudeStats>,
+}
+
+impl ClaudeSource {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        ClaudeSource {
+            root: root.into(),
+            stats: HashMap::new(),
+        }
+    }
+
+    /// One [`SessionMeta`] per transcript modified within
+    /// [`RECENCY_WINDOW`]. Claude carries no turn-completion signal, so
+    /// `turn_done`, `tool_pending` and `ended` are always false — the
+    /// engine special-cases this source's liveness from `last_ts`/mtime
+    /// instead of calling `turn_liveness` (`hermon.py:431`).
+    pub fn sessions(&mut self) -> Vec<SessionMeta> {
+        scan_jsonl_files(&self.root, RECENCY_WINDOW)
+            .into_iter()
+            .filter_map(|path| self.session_for(path))
+            .collect()
+    }
+
+    fn session_for(&mut self, path: PathBuf) -> Option<SessionMeta> {
+        let id = path.file_stem()?.to_str()?.to_string();
+        let mtime = mtime_secs(&path);
+        let stats = self
+            .stats
+            .entry(id.clone())
+            .or_insert_with(|| ClaudeStats::new(path));
+        stats.update();
+        let last_ts = stats.last_ts.or(mtime).unwrap_or(0.0);
+        let started_at = stats.first_ts.unwrap_or(last_ts);
+        Some(SessionMeta {
+            id,
+            started_at,
+            ended: false,
+            model: stats.model.clone(),
+            title: String::new(),
+            in_tok: stats.in_tok,
+            out_tok: stats.out_tok,
+            cost: stats.cost(),
+            last_ts,
+            turn_done: false,
+            tool_pending: false,
+            last_tool: stats.last_tool.clone(),
+            last_line: stats.last_line.clone(),
+            last_event: stats.last_event.clone(),
+        })
+    }
+
+    /// The last tool name seen in `session_id`'s transcript
+    /// (`hermon.py:352 ClaudeStats.last_tool`).
+    pub fn last_tool(&mut self, session_id: &str) -> String {
+        match self.stats.get_mut(session_id) {
+            Some(stats) => {
+                stats.update();
+                stats.last_tool.clone()
+            }
+            None => "-".to_string(),
+        }
+    }
+}
+
+impl Default for ClaudeSource {
+    fn default() -> Self {
+        let root = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".claude")
+            .join("projects");
+        ClaudeSource::new(root)
+    }
+}
+
+fn mtime_secs(path: &Path) -> Option<f64> {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs_f64())
+}
+
+/// Recursively collects `*.jsonl` files under `root` modified within
+/// `window` of now, sorted for a deterministic scan order. I/O errors
+/// (missing root, permission denied) are swallowed and yield an empty
+/// scan, matching Python's `except OSError: return []` (`hermon.py:424`).
+fn scan_jsonl_files(root: &Path, window: Duration) -> Vec<PathBuf> {
+    let cutoff = SystemTime::now().checked_sub(window);
+    let mut out = Vec::new();
+    walk_jsonl(root, cutoff, &mut out);
+    out.sort();
+    out
+}
+
+fn walk_jsonl(dir: &Path, cutoff: Option<SystemTime>, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            walk_jsonl(&path, cutoff, out);
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+        let fresh = match (cutoff, modified) {
+            (Some(cutoff), Some(modified)) => modified >= cutoff,
+            _ => true,
+        };
+        if fresh {
+            out.push(path);
+        }
     }
 }
 
@@ -498,5 +636,130 @@ mod tests {
         assert_eq!(s.elapsed(), None);
         assert_eq!(s.last_event, None);
         assert_eq!(s.last_line, "");
+    }
+
+    // -------------------------------------------------------- ClaudeSource
+
+    #[test]
+    fn sessions_returns_one_per_transcript() {
+        let dir = TempDir::new().expect("create temp dir");
+        let project = dir.path().join("proj-a");
+        fs::create_dir_all(&project).expect("create project dir");
+        let path = project.join("session-one.jsonl");
+        append(&path, &fixture_bytes());
+
+        let mut src = ClaudeSource::new(dir.path());
+        let sessions = src.sessions();
+
+        assert_eq!(sessions.len(), 1);
+        let s = &sessions[0];
+        assert_eq!(s.id, "session-one");
+        assert_eq!(s.model, "claude-fable-5");
+        assert_eq!(s.in_tok, 125 + 250);
+        assert_eq!(s.out_tok, 30);
+        assert_eq!(s.cost, 0.5);
+        assert_eq!(s.last_ts, s.started_at + 61.0);
+        assert!(!s.turn_done);
+        assert!(!s.tool_pending);
+        assert!(!s.ended);
+    }
+
+    #[test]
+    fn sessions_covers_multiple_transcripts_across_project_dirs() {
+        let dir = TempDir::new().expect("create temp dir");
+        let a = dir.path().join("proj-a");
+        let b = dir.path().join("proj-b");
+        fs::create_dir_all(&a).expect("create project dir a");
+        fs::create_dir_all(&b).expect("create project dir b");
+        append(&a.join("s1.jsonl"), assistant("hi", 1, 1, 0.0).as_bytes());
+        append(&a.join("s1.jsonl"), b"\n");
+        append(&b.join("s2.jsonl"), assistant("yo", 2, 2, 0.0).as_bytes());
+        append(&b.join("s2.jsonl"), b"\n");
+
+        let mut src = ClaudeSource::new(dir.path());
+        let mut ids: Vec<_> = src.sessions().into_iter().map(|s| s.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["s1".to_string(), "s2".to_string()]);
+    }
+
+    #[test]
+    fn empty_dir_returns_empty_vec() {
+        let dir = TempDir::new().expect("create temp dir");
+        let mut src = ClaudeSource::new(dir.path());
+        assert_eq!(src.sessions(), Vec::new());
+    }
+
+    #[test]
+    fn missing_root_returns_empty_vec_not_error() {
+        let mut src = ClaudeSource::new("/nonexistent/claude/projects/root");
+        assert_eq!(src.sessions(), Vec::new());
+    }
+
+    #[test]
+    fn malformed_lines_are_skipped_without_panic() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("junk.jsonl");
+        append(&path, b"{malformed\n[1, 2, 3]\nnot json at all\n");
+
+        let mut src = ClaudeSource::new(dir.path());
+        let sessions = src.sessions();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].model, "?");
+        assert_eq!(sessions[0].last_tool, "-");
+        assert_eq!(sessions[0].cost, 0.0);
+    }
+
+    #[test]
+    fn sessions_reuses_the_accumulator_across_calls() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        append(&path, assistant("a", 1, 1, 0.0).as_bytes());
+        append(&path, b"\n");
+
+        let mut src = ClaudeSource::new(dir.path());
+        let first = src.sessions();
+        assert_eq!(first[0].in_tok, 1);
+
+        append(&path, assistant("b", 2, 2, 0.0).as_bytes());
+        append(&path, b"\n");
+        let second = src.sessions();
+        // Incremental: totals accumulate rather than resetting each scan.
+        assert_eq!(second[0].in_tok, 3);
+        assert_eq!(second[0].out_tok, 3);
+    }
+
+    #[test]
+    fn last_tool_reads_from_the_accumulator() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        append(&path, &fixture_bytes());
+
+        let mut src = ClaudeSource::new(dir.path());
+        src.sessions();
+        assert_eq!(src.last_tool("s"), "Read");
+    }
+
+    #[test]
+    fn last_tool_of_unknown_session_is_a_placeholder() {
+        let dir = TempDir::new().expect("create temp dir");
+        let mut src = ClaudeSource::new(dir.path());
+        assert_eq!(src.last_tool("nope"), "-");
+    }
+
+    #[test]
+    fn stale_transcripts_outside_the_recency_window_are_skipped() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("old.jsonl");
+        append(&path, assistant("a", 1, 1, 0.0).as_bytes());
+        append(&path, b"\n");
+        let stale = SystemTime::now() - (RECENCY_WINDOW + Duration::from_secs(1));
+        File::open(&path)
+            .expect("open transcript")
+            .set_modified(stale)
+            .expect("set stale mtime");
+
+        let mut src = ClaudeSource::new(dir.path());
+        assert_eq!(src.sessions(), Vec::new());
     }
 }
