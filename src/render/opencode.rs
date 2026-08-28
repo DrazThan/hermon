@@ -1,0 +1,1 @@
+//! Renders OpenCode session parts.

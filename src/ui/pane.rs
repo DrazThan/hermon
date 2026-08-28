@@ -1,0 +1,1 @@
+//! Single session pane widget.
