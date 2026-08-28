@@ -55,6 +55,16 @@ pub enum Attn {
     Stuck,
 }
 
+/// A source of sessions from one tool's on-disk store (Hermes, OpenCode,
+/// Claude Code). Kept minimal — just what the roster needs — since each
+/// backing store implements it differently.
+pub trait Source {
+    /// Current sessions from this source; empty on any read error.
+    fn sessions(&mut self) -> Vec<SessionMeta>;
+    /// The most recently used tool name in a session, or `"-"` if none.
+    fn last_tool(&mut self, session_id: &str) -> String;
+}
+
 /// A running tool call gets a much longer leash.
 pub const TOOL_PENDING_CEILING_MULT: f64 = 5.0;
 
