@@ -34,6 +34,7 @@ pub fn run() -> anyhow::Result<()> {
                 claude_dir: args.claude_dir,
                 hermes_db: args.hermes_db,
                 opencode_db: args.opencode_db,
+                hermes_log: args.hermes_log,
                 idle_timeout: args.idle_timeout,
                 fresh_window: 300.0,
                 interval: Duration::from_secs_f64(args.interval),

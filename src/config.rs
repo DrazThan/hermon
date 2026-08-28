@@ -10,6 +10,8 @@ pub struct EngineConfig {
     pub claude_dir: String,
     pub hermes_db: String,
     pub opencode_db: String,
+    /// Hermes `agent.log`, scanned each tick for the API-call ticker.
+    pub hermes_log: String,
     /// Safety ceiling for a session stuck mid-turn with no activity.
     pub idle_timeout: f64,
     /// How long a finished session stays on the roster before aging out.
