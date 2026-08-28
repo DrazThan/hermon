@@ -15,19 +15,31 @@ pub mod view;
 
 use std::io::IsTerminal;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::bail;
 use clap::Parser;
 
 use cli::{Cli, Command, LsArgs};
+use config::EngineConfig;
 use roster::{Sources, TICKER_LIMIT, api_call_ticker, build_roster, roster_lines};
 
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Command::Watch(_args) => bail!("hermon watch: not yet implemented"),
+        Command::Watch(args) => {
+            // `watch` keeps the Python default 300s fresh window
+            // (`hermon.py:1463`); only `ls` widens it to an hour.
+            let config = EngineConfig {
+                claude_dir: args.claude_dir,
+                hermes_db: args.hermes_db,
+                opencode_db: args.opencode_db,
+                idle_timeout: args.idle_timeout,
+                fresh_window: 300.0,
+                interval: Duration::from_secs_f64(args.interval),
+            };
+            ui::run_tui(config)
+        }
         Command::Ls(args) => {
             ls(&args);
             Ok(())
