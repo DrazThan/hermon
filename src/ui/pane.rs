@@ -35,12 +35,16 @@ pub struct Pane<'a> {
     /// [`crate::roster::RosterRow::attn_elapsed`]; `None` outside attention
     /// or before the engine has had a tick to measure it.
     pub attn_elapsed: Option<f64>,
+    /// Whether the session is pinned — a finished, pinned pane keeps its
+    /// slot (never evicted) and its border says so with the amber accent
+    /// instead of going dim.
+    pub pinned: bool,
 }
 
 /// Draws the pane into `area`, border included.
 pub fn render(frame: &mut Frame, area: Rect, pane: &Pane) {
     let block = Block::bordered()
-        .border_style(border_style(pane.state, pane.selected))
+        .border_style(border_style(pane.state, pane.selected, pane.pinned))
         .title(title(pane.key, pane.state));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -101,8 +105,10 @@ fn title(key: &str, state: Liveness) -> String {
 }
 
 /// Cyan for the selected pane; otherwise the session's own state — amber
-/// waiting on you, red stuck, dim finished, plain chrome while it works.
-pub fn border_style(state: Liveness, selected: bool) -> Style {
+/// waiting on you, red stuck, dim finished, plain chrome while it works. A
+/// pinned pane that finished stays amber instead of dim: pinning is what
+/// held its slot against eviction, and the border says so.
+pub fn border_style(state: Liveness, selected: bool, pinned: bool) -> Style {
     if selected {
         return palette::border_selected();
     }
@@ -110,6 +116,7 @@ pub fn border_style(state: Liveness, selected: bool) -> Style {
         Liveness::Live => palette::border(),
         Liveness::Attention(Attn::PermWait) => palette::style(Sem::User),
         Liveness::Attention(Attn::Stuck) => palette::style(Sem::Error),
+        Liveness::Done if pinned => palette::style(Sem::User),
         Liveness::Done => palette::style(Sem::Dim),
     }
 }
@@ -242,6 +249,7 @@ mod tests {
             lines,
             offset,
             attn_elapsed: None,
+            pinned: false,
         }
     }
 
@@ -343,22 +351,44 @@ mod tests {
     #[test]
     fn the_border_takes_the_session_state_unless_the_pane_is_selected() {
         assert_eq!(
-            border_style(Liveness::Done, true),
+            border_style(Liveness::Done, true, false),
             palette::border_selected()
         );
-        assert_eq!(border_style(Liveness::Live, false), palette::border());
         assert_eq!(
-            border_style(Liveness::Attention(Attn::PermWait), false),
+            border_style(Liveness::Live, false, false),
+            palette::border()
+        );
+        assert_eq!(
+            border_style(Liveness::Attention(Attn::PermWait), false, false),
             palette::style(Sem::User)
         );
         assert_eq!(
-            border_style(Liveness::Attention(Attn::Stuck), false),
+            border_style(Liveness::Attention(Attn::Stuck), false, false),
             palette::style(Sem::Error)
         );
         assert_eq!(
-            border_style(Liveness::Done, false),
+            border_style(Liveness::Done, false, false),
             palette::style(Sem::Dim)
         );
+    }
+
+    /// A finished pane that is pinned keeps the amber accent instead of
+    /// going dim — the visual cue that it kept its slot on purpose.
+    #[test]
+    fn a_pinned_done_pane_stays_amber_instead_of_dim() {
+        assert_eq!(
+            border_style(Liveness::Done, false, true),
+            palette::style(Sem::User)
+        );
+        let lines = buffer(&["last line"]);
+        let done_pinned = Pane {
+            state: Liveness::Done,
+            pinned: true,
+            ..pane(&lines, 0)
+        };
+        let buf = draw(&done_pinned, 20, 5);
+        let amber = palette::style(Sem::User).fg.unwrap();
+        assert_eq!(buf[(0, 0)].fg, amber);
     }
 
     #[test]

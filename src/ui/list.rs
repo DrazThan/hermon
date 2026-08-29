@@ -213,6 +213,24 @@ mod tests {
         assert!(rows[3].ends_with("$12.0000"), "{:?}", rows[3]);
     }
 
+    /// A pinned row carries the pin glyph (📌, or `*` under `HERMON_ASCII` —
+    /// [`palette::pin_glyph`] already resolves whichever mode is cached),
+    /// sorts to the top of the list, and no other row does.
+    #[test]
+    fn a_pinned_row_shows_the_pin_glyph_and_sorts_first() {
+        let mut state = app(fixture());
+        state.view.pin("id-H:bbbbbb");
+        let buf = draw(&state, 100, 20);
+        let pin = palette::pin_glyph();
+        let rows: Vec<String> = (0..5).map(|y| text_at(&buf, y)).collect();
+
+        assert!(rows[0].contains("H:bbbbbb"), "pin sorts first: {rows:?}");
+        assert!(rows[0].contains(pin), "{:?}", rows[0]);
+        for row in &rows[1..] {
+            assert!(!row.contains(pin), "only one row should be pinned: {row:?}");
+        }
+    }
+
     #[test]
     fn a_done_row_is_dim_from_end_to_end() {
         let buf = draw(&app(fixture()), 100, 20);
@@ -231,7 +249,7 @@ mod tests {
         let amber = palette::style(Sem::User).fg.unwrap();
         let red = palette::style(Sem::Error).fg.unwrap();
         // The key column of the perm-wait row is amber, the stuck one red.
-        let key_col = roster::W_GLYPH as u16;
+        let key_col = (roster::W_GLYPH + roster::W_PIN) as u16;
         assert_eq!(buf[(key_col, 1)].fg, amber);
         assert_eq!(buf[(key_col, 2)].fg, red);
     }
