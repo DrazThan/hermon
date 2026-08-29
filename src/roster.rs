@@ -46,6 +46,14 @@ pub struct RosterRow {
     pub elapsed: Option<f64>,
     pub last_ts: f64,
     pub title: String,
+    /// Seconds since the session entered its current [`Liveness::Attention`]
+    /// state; `None` outside attention, and also outside the live engine
+    /// loop, which is the only caller that can track history across ticks
+    /// (`hermon ls`'s one-shot [`build_roster`] call always leaves this
+    /// unset). Populated by `engine::scan` after lifecycle events are
+    /// resolved, from a `key -> since` map the roster itself has no memory
+    /// of.
+    pub attn_elapsed: Option<f64>,
 }
 
 /// The three on-disk stores hermon reads, held together so the roster can
@@ -168,6 +176,7 @@ fn roster_row(
         elapsed: (s.started_at > 0.0).then_some(s.last_ts - s.started_at),
         last_ts: s.last_ts,
         title: s.title.clone(),
+        attn_elapsed: None,
     })
 }
 
@@ -290,7 +299,7 @@ fn row_line(r: &RosterRow) -> StyledLine {
                 " {:<W_KEY$}{:<W_MODEL$}{:<W_TOOL$}{:>W_IN$}{:>W_OUT$}{:>W_COST$}{:>W_ELAPSED$}  ",
                 r.key,
                 clip(&r.model, W_MODEL - 1),
-                clip(&r.last_tool, W_TOOL - 1),
+                clip(&tool_annotation(r), W_TOOL - 1),
                 commas(r.in_tok),
                 commas(r.out_tok),
                 format!("{:.4}", r.cost),
@@ -301,21 +310,60 @@ fn row_line(r: &RosterRow) -> StyledLine {
     ])
 }
 
-/// The fleet at a glance: `N live · N done · Σ $X.XX · Y in`. Sessions
-/// needing attention are counted as live — they are unfinished work.
+/// The fleet at a glance: `N ⏸ · N ⚠ · N live · N done · Σ $X.XX · Y in`.
+/// Attention sessions get their own counts instead of folding into live, so
+/// the totals line surfaces them the same way the roster rows do; the ⏸/⚠
+/// counts are omitted when zero to keep the common case unchanged.
 pub(crate) fn totals_line(rows: &[RosterRow]) -> StyledLine {
+    let perm_wait = rows
+        .iter()
+        .filter(|r| r.state == Liveness::Attention(Attn::PermWait))
+        .count();
+    let stuck = rows
+        .iter()
+        .filter(|r| r.state == Liveness::Attention(Attn::Stuck))
+        .count();
+    let live = rows.iter().filter(|r| r.state == Liveness::Live).count();
     let done = rows.iter().filter(|r| r.state == Liveness::Done).count();
     // fold, not sum(): f64's Sum identity is -0.0, which prints as "$-0.00".
     let cost = rows.iter().fold(0.0, |acc, r| acc + r.cost);
     let in_tok: u64 = rows.iter().map(|r| r.in_tok).sum();
+
+    let mut parts = Vec::new();
+    if perm_wait > 0 {
+        parts.push(format!("{perm_wait} ⏸"));
+    }
+    if stuck > 0 {
+        parts.push(format!("{stuck} ⚠"));
+    }
+    parts.push(format!("{live} live"));
+    parts.push(format!("{done} done"));
+
     StyledLine(vec![Seg::new(
         Sem::Stat,
         format!(
-            "{} live · {done} done · Σ ${cost:.2} · {} in",
-            rows.len() - done,
-            commas(in_tok),
+            "{} · Σ ${cost:.2} · {} in",
+            parts.join(" · "),
+            commas(in_tok)
         ),
     )])
+}
+
+/// The TOOL column's text for one row: the plain tool name, plus a suffix
+/// naming why the session needs attention (`Bash · perm?` while a tool call
+/// looks like a stalled permission prompt, `Bash · 3m07s` once a blown
+/// tool-pending ceiling has made it look stuck). Silent outside attention,
+/// and when `attn_elapsed` hasn't been populated (`hermon ls`'s one-shot
+/// roster has no tick history to compute it from).
+fn tool_annotation(r: &RosterRow) -> String {
+    match r.state {
+        Liveness::Attention(Attn::PermWait) => format!("{} · perm?", r.last_tool),
+        Liveness::Attention(Attn::Stuck) => match r.attn_elapsed {
+            Some(elapsed) => format!("{} · {}", r.last_tool, fmt_elapsed(Some(elapsed))),
+            None => r.last_tool.clone(),
+        },
+        _ => r.last_tool.clone(),
+    }
 }
 
 /// Status glyph and its color, per the design's four session states.
@@ -372,6 +420,7 @@ mod tests {
             elapsed: Some(187.0),
             last_ts: NOW,
             title: "a title".to_string(),
+            attn_elapsed: None,
         }
     }
 
@@ -493,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn totals_count_attention_rows_as_live() {
+    fn totals_count_attention_separately() {
         let rows = [
             row("C:aaaaaa", Liveness::Live),
             row("H:bbbbbb", Liveness::Attention(Attn::PermWait)),
@@ -502,8 +551,47 @@ mod tests {
         ];
         assert_eq!(
             totals_line(&rows).to_plain(),
-            "3 live · 1 done · Σ $6.00 · 4,938,268 in"
+            "1 ⏸ · 1 ⚠ · 1 live · 1 done · Σ $6.00 · 4,938,268 in"
         );
+    }
+
+    #[test]
+    fn totals_omit_zero_attention_counts() {
+        let rows = [
+            row("C:aaaaaa", Liveness::Live),
+            row("C:dddddd", Liveness::Done),
+        ];
+        assert_eq!(
+            totals_line(&rows).to_plain(),
+            "1 live · 1 done · Σ $3.00 · 2,469,134 in"
+        );
+    }
+
+    #[test]
+    fn tool_column_annotates_perm_wait_with_no_elapsed() {
+        let r = row("C:aaaaaa", Liveness::Attention(Attn::PermWait));
+        let line = row_line(&r).to_plain();
+        let cols: Vec<char> = line.chars().collect();
+        assert_eq!(text(&cols, 36, W_TOOL), "Bash · perm?");
+    }
+
+    #[test]
+    fn tool_column_annotates_stuck_with_elapsed_when_known() {
+        let mut r = row("C:aaaaaa", Liveness::Attention(Attn::Stuck));
+        r.attn_elapsed = Some(187.0);
+        let line = row_line(&r).to_plain();
+        let cols: Vec<char> = line.chars().collect();
+        assert_eq!(text(&cols, 36, W_TOOL), "Bash · 3m07s");
+    }
+
+    #[test]
+    fn tool_column_stays_plain_when_stuck_elapsed_is_unknown() {
+        // hermon ls's one-shot roster has no tick history to compute
+        // attn_elapsed from.
+        let r = row("C:aaaaaa", Liveness::Attention(Attn::Stuck));
+        let line = row_line(&r).to_plain();
+        let cols: Vec<char> = line.chars().collect();
+        assert_eq!(text(&cols, 36, W_TOOL), "Bash");
     }
 
     #[test]

@@ -13,7 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use hermon::config::EngineConfig;
-use hermon::engine::{Clock, Deck, Engine, Event, Lifecycle, PANE_TICK, UiCmd};
+use hermon::engine::{Cause, Clock, Deck, Engine, Event, Lifecycle, PANE_TICK, UiCmd};
 use hermon::render::{Seg, Sem, StyledLine};
 use hermon::roster::RosterRow;
 use hermon::source::{Liveness, Replay, Tailer};
@@ -139,6 +139,7 @@ impl Deck for FakeDeck {
                     elapsed: None,
                     last_ts: now,
                     title: String::new(),
+                    attn_elapsed: None,
                 })
             })
             .collect()
@@ -214,7 +215,7 @@ fn full_walk_live_to_done_to_linger_to_closed_to_resurrected() {
     // Live -> Done.
     deck.set("a", Liveness::Done);
     assert!(
-        wait_for_lifecycle(&rx, "a", Lifecycle::Finished),
+        wait_for_lifecycle(&rx, "a", Lifecycle::Finished(Cause::Clean)),
         "no Lifecycle::Finished on turning done"
     );
 
@@ -289,7 +290,11 @@ fn linger_zero_keeps_a_finished_pane_open_forever() {
     ));
 
     deck.set("a", Liveness::Done);
-    assert!(wait_for_lifecycle(&rx, "a", Lifecycle::Finished));
+    assert!(wait_for_lifecycle(
+        &rx,
+        "a",
+        Lifecycle::Finished(Cause::Clean)
+    ));
 
     // A linger longer than any real session would ever wait.
     clock.advance(1_000_000.0);
@@ -343,10 +348,18 @@ fn eviction_picks_the_oldest_finished_pane() {
 
     // a finishes first, then b — a is the older finish.
     deck.set("a", Liveness::Done);
-    assert!(wait_for_lifecycle(&rx, "a", Lifecycle::Finished));
+    assert!(wait_for_lifecycle(
+        &rx,
+        "a",
+        Lifecycle::Finished(Cause::Clean)
+    ));
     clock.advance(10.0);
     deck.set("b", Liveness::Done);
-    assert!(wait_for_lifecycle(&rx, "b", Lifecycle::Finished));
+    assert!(wait_for_lifecycle(
+        &rx,
+        "b",
+        Lifecycle::Finished(Cause::Clean)
+    ));
 
     // Both slots are taken and full (max_panes=2); c wanting one evicts the
     // older finish, a, and leaves b's pane alone.
@@ -481,7 +494,7 @@ fn a_session_gone_from_every_source_is_forgotten_after_its_own_linger() {
     // Gone from every source, with no explicit Done in between.
     deck.vanish("a");
     assert!(
-        wait_for_lifecycle(&rx, "a", Lifecycle::Finished),
+        wait_for_lifecycle(&rx, "a", Lifecycle::Finished(Cause::Clean)),
         "a vanished session should read as an implicit finish"
     );
 

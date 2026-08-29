@@ -258,7 +258,10 @@ impl App {
                 self.panes.remove(key);
                 self.scroll.remove(key);
             }
-            Lifecycle::Started | Lifecycle::Finished => {}
+            Lifecycle::Started
+            | Lifecycle::Finished(_)
+            | Lifecycle::Attention(_)
+            | Lifecycle::Cleared => {}
         }
     }
 
@@ -380,6 +383,7 @@ impl App {
             selected: self.selected_id.as_deref() == Some(row.id.as_str()),
             lines: self.panes.get(&row.key).unwrap_or(&NO_LINES),
             offset: self.scroll.get(&row.key).copied().unwrap_or(0),
+            attn_elapsed: row.attn_elapsed,
         }
     }
 
@@ -720,6 +724,7 @@ mod tests {
             elapsed: None,
             last_ts: 0.0,
             title: String::new(),
+            attn_elapsed: None,
         }
     }
 

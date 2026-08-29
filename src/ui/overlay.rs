@@ -263,6 +263,7 @@ mod tests {
             elapsed: None,
             last_ts: 0.0,
             title: String::new(),
+            attn_elapsed: None,
         }
     }
 

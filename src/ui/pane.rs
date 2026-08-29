@@ -18,7 +18,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::render::{Sem, StyledLine};
+use crate::render::{Seg, Sem, StyledLine, fmt_elapsed};
 use crate::source::{Attn, Liveness};
 use crate::ui::palette;
 
@@ -31,6 +31,10 @@ pub struct Pane<'a> {
     pub lines: &'a VecDeque<StyledLine>,
     /// Display lines hidden below the viewport; 0 follows the tail.
     pub offset: usize,
+    /// Seconds since the session entered its current attention state, from
+    /// [`crate::roster::RosterRow::attn_elapsed`]; `None` outside attention
+    /// or before the engine has had a tick to measure it.
+    pub attn_elapsed: Option<f64>,
 }
 
 /// Draws the pane into `area`, border included.
@@ -44,7 +48,12 @@ pub fn render(frame: &mut Frame, area: Rect, pane: &Pane) {
         return;
     }
 
-    let wrapped = wrap(pane.lines, inner.width as usize);
+    let mut wrapped = wrap(pane.lines, inner.width as usize);
+    if let Some(status) = attention_status(pane.state, pane.attn_elapsed) {
+        let mut tail = VecDeque::new();
+        tail.push_back(status);
+        wrapped.extend(wrap(&tail, inner.width as usize));
+    }
     let height = inner.height as usize;
     let below = pane.offset.min(wrapped.len().saturating_sub(height));
     let end = wrapped.len() - below;
@@ -53,6 +62,30 @@ pub fn render(frame: &mut Frame, area: Rect, pane: &Pane) {
     frame.render_widget(Paragraph::new(wrapped[start..end].to_vec()), inner);
     if below > 0 {
         render_more(frame, inner, below);
+    }
+}
+
+/// The line appended below an attention pane's transcript, narrating why it
+/// needs eyes on it and for how long — `None` for `Live`/`Done`, which get
+/// no extra line.
+fn attention_status(state: Liveness, elapsed: Option<f64>) -> Option<StyledLine> {
+    let elapsed = fmt_elapsed(elapsed);
+    match state {
+        Liveness::Attention(Attn::PermWait) => Some(StyledLine(vec![Seg::new(
+            Sem::User,
+            format!(
+                "{} waiting on permission prompt \u{b7} {elapsed}",
+                palette::glyph_for_liveness(state).0,
+            ),
+        )])),
+        Liveness::Attention(Attn::Stuck) => Some(StyledLine(vec![Seg::new(
+            Sem::Error,
+            format!(
+                "{} tool pending {elapsed} \u{2014} no output",
+                palette::glyph_for_liveness(state).0,
+            ),
+        )])),
+        Liveness::Live | Liveness::Done => None,
     }
 }
 
@@ -208,6 +241,7 @@ mod tests {
             selected: false,
             lines,
             offset,
+            attn_elapsed: None,
         }
     }
 
@@ -338,6 +372,44 @@ mod tests {
         let red = palette::style(Sem::Error).fg.unwrap();
         assert_eq!(buf[(0, 0)].fg, red);
         assert_ne!(buf[(0, 0)].fg, Color::Reset);
+    }
+
+    #[test]
+    fn a_perm_wait_pane_appends_a_status_line_with_elapsed() {
+        let lines = buffer(&["x"]);
+        let waiting = Pane {
+            state: Liveness::Attention(Attn::PermWait),
+            attn_elapsed: Some(45.0),
+            ..pane(&lines, 0)
+        };
+        let rendered = text(&draw(&waiting, 40, 6));
+        assert!(
+            rendered.contains("waiting on permission prompt \u{b7} 45s"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn a_stuck_pane_appends_a_status_line_with_elapsed() {
+        let lines = buffer(&["x"]);
+        let stuck = Pane {
+            state: Liveness::Attention(Attn::Stuck),
+            attn_elapsed: Some(905.0),
+            ..pane(&lines, 0)
+        };
+        let rendered = text(&draw(&stuck, 40, 6));
+        assert!(
+            rendered.contains("tool pending 15m05s \u{2014} no output"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn a_live_pane_gets_no_status_line() {
+        let lines = buffer(&["x"]);
+        let rendered = text(&draw(&pane(&lines, 0), 40, 6));
+        assert!(!rendered.contains("waiting on"), "{rendered}");
+        assert!(!rendered.contains("tool pending"), "{rendered}");
     }
 
     #[test]

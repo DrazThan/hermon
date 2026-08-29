@@ -156,6 +156,7 @@ mod tests {
             elapsed: Some(187.0),
             last_ts: 0.0,
             title: "a title".to_string(),
+            attn_elapsed: None,
         }
     }
 
@@ -269,7 +270,7 @@ mod tests {
             .expect("totals line");
         assert_eq!(
             rendered[totals],
-            "4 live · 1 done · Σ $13.88 · 6,172,835 in"
+            "1 ⏸ · 1 ⚠ · 2 live · 1 done · Σ $13.88 · 6,172,835 in"
         );
         assert!(rendered[totals + 1].starts_with("api: 14:23:03 sess03"));
         assert!(
