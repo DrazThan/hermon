@@ -5,6 +5,8 @@ pub mod claude;
 pub mod hermes;
 pub mod opencode;
 
+use crate::render::StyledLine;
+
 /// The last event observed in a session's transcript. Only the Claude
 /// source can populate this; DB-backed sources (Hermes, OpenCode) leave
 /// `SessionMeta::last_event` as `None`.
@@ -70,6 +72,67 @@ pub trait Source {
     fn sessions(&mut self) -> Vec<SessionMeta>;
     /// The most recently used tool name in a session, or `"-"` if none.
     fn last_tool(&mut self, session_id: &str) -> String;
+    /// Opens a live tail of one session, seeded with `replay` worth of
+    /// history. `None` means this source cannot tail that session — an
+    /// unknown id, an unavailable store, or a source whose tailer has not
+    /// been written yet — and the caller falls back to session metadata.
+    fn open_tailer(&self, _session_id: &str, _replay: Replay) -> Option<Box<dyn Tailer>> {
+        None
+    }
+}
+
+/// How much history a freshly opened [`Tailer`] replays before it streams
+/// only new events.
+///
+/// Both budgets travel together because the caller opening a pane does not
+/// know which kind of store sits behind a roster key: file-backed sources
+/// (Claude transcripts) honour `bytes` and ignore `rows`, database-backed
+/// ones (Hermes, OpenCode) do the reverse. A source may clamp either budget
+/// to whatever its store makes cheap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Replay {
+    /// Seek back at most this many bytes from the end of a transcript file.
+    pub bytes: u64,
+    /// Replay at most this many of the newest rows (Hermes messages,
+    /// OpenCode parts).
+    pub rows: u32,
+}
+
+impl Replay {
+    /// What the TUI and `hermon render` open panes with — a screenful or
+    /// two of context (`hermon.py:1450`, `--replay-bytes 20480`
+    /// / `--replay-parts 40`).
+    pub const DEFAULT: Replay = Replay {
+        bytes: 20_480,
+        rows: 40,
+    };
+}
+
+impl Default for Replay {
+    fn default() -> Self {
+        Replay::DEFAULT
+    }
+}
+
+/// A live view of one session's transcript, polled on every fast tick of
+/// the engine loop (`hermon.py`'s `cmd_render_*` tail loops, as a value
+/// instead of a process).
+///
+/// Implementations are stateful: [`poll`](Tailer::poll) returns only the
+/// lines that appeared since the previous call, so a caller can append the
+/// result straight onto its pane buffer. The first poll after
+/// [`Source::open_tailer`] returns the replay window.
+///
+/// Polling never fails. A store that is missing, locked, rotated or
+/// truncated emits a dim status line (at most one per condition, not one
+/// per tick) and then keeps returning nothing until it can read again, at
+/// which point it resumes on its own: a pane must never go permanently
+/// blank because a file moved under it.
+///
+/// A tailer is polled on the thread that opened it and is not required to
+/// be `Send`.
+pub trait Tailer {
+    fn poll(&mut self) -> Vec<StyledLine>;
 }
 
 /// A running tool call gets a much longer leash.

@@ -15,13 +15,17 @@ pub mod view;
 
 use std::io::IsTerminal;
 use std::path::Path;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use anyhow::anyhow;
 use clap::Parser;
 
 use cli::{Cli, Command, LsArgs};
 use config::EngineConfig;
-use roster::{Sources, TICKER_LIMIT, api_call_ticker, build_roster, roster_lines};
+use engine::PANE_TICK;
+use roster::{Sources, TICKER_LIMIT, api_call_ticker, build_roster, resolve_key, roster_lines};
+use source::Replay;
 
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -45,6 +49,37 @@ pub fn run() -> anyhow::Result<()> {
             ls(&args);
             Ok(())
         }
+        Command::Render(args) => render(&args),
+    }
+}
+
+fn now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// Tail one session to stdout until Ctrl-C, which kills the process the
+/// ordinary way — nothing here holds the terminal (`hermon.py:1443`).
+///
+/// The roster is built once, only to turn the key into a source and a
+/// session id; from there the tailer is the whole loop.
+fn render(args: &cli::RenderArgs) -> anyhow::Result<()> {
+    let src = &args.source;
+    let mut sources = Sources::new(&src.claude_dir, &src.hermes_db, &src.opencode_db);
+    let now = now_secs();
+
+    let rows = build_roster(&mut sources, now, args.fresh_window, src.idle_timeout);
+    let row = resolve_key(&rows, &args.key)?;
+    let mut tailer = sources
+        .open_tailer(&row.key, &row.id, Replay::DEFAULT)
+        .ok_or_else(|| anyhow!("{}: this source cannot tail sessions yet", row.key))?;
+
+    loop {
+        for line in tailer.poll() {
+            println!("{}", line.to_plain());
+        }
+        thread::sleep(PANE_TICK);
     }
 }
 
@@ -54,9 +89,7 @@ pub fn run() -> anyhow::Result<()> {
 fn ls(args: &LsArgs) {
     let src = &args.source;
     let mut sources = Sources::new(&src.claude_dir, &src.hermes_db, &src.opencode_db);
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
+    let now = now_secs();
 
     let rows = build_roster(&mut sources, now, args.fresh_window, src.idle_timeout);
     let ticker = api_call_ticker(Path::new(&src.hermes_log), TICKER_LIMIT);

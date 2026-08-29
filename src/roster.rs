@@ -12,6 +12,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::LazyLock;
 
+use anyhow::anyhow;
 use chrono::{DateTime, Local};
 use regex::Regex;
 
@@ -19,7 +20,7 @@ use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed, short_id};
 use crate::source::claude::ClaudeSource;
 use crate::source::hermes::HermesSource;
 use crate::source::opencode::OpenCodeSource;
-use crate::source::{Attn, Liveness, SessionMeta, Source, classify};
+use crate::source::{Attn, Liveness, Replay, SessionMeta, Source, Tailer, classify};
 
 /// One session as the roster displays it (`hermon.py:1025 RosterRow`).
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +64,42 @@ impl Sources {
             opencode: OpenCodeSource::new(opencode_db),
         }
     }
+
+    /// Opens a tailer for one roster row, picking the source from the key's
+    /// prefix (`C:`/`H:`/`O:`). Both halves of the row are needed: the key
+    /// says which store to ask, and only [`RosterRow::id`] carries the full
+    /// session id — the key's is shortened for display.
+    ///
+    /// `None` when the prefix is unknown or that source has no tailer for
+    /// the session; callers show session metadata instead.
+    pub fn open_tailer(
+        &self,
+        key: &str,
+        session_id: &str,
+        replay: Replay,
+    ) -> Option<Box<dyn Tailer>> {
+        match key.split_once(':')?.0 {
+            "C" => self.claude.open_tailer(session_id, replay),
+            "H" => self.hermes.open_tailer(session_id, replay),
+            "O" => self.opencode.open_tailer(session_id, replay),
+            _ => None,
+        }
+    }
+}
+
+/// Finds the row a `hermon render KEY` argument names. The error lists the
+/// keys that *are* on the deck, since they change from run to run and a
+/// mistyped one is otherwise a guessing game.
+pub fn resolve_key<'a>(rows: &'a [RosterRow], key: &str) -> anyhow::Result<&'a RosterRow> {
+    if let Some(row) = rows.iter().find(|r| r.key == key) {
+        return Ok(row);
+    }
+    let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    Err(if keys.is_empty() {
+        anyhow!("no session {key}: no sessions on the roster right now")
+    } else {
+        anyhow!("no session {key}: valid keys are {}", keys.join(" "))
+    })
 }
 
 /// Every session from every source, newest activity first
@@ -335,6 +372,53 @@ mod tests {
             elapsed: Some(187.0),
             last_ts: NOW,
             title: "a title".to_string(),
+        }
+    }
+
+    #[test]
+    fn resolve_key_finds_the_row_it_names() {
+        let rows = vec![
+            row("C:aaaaaa", Liveness::Live),
+            row("H:bbbbbb", Liveness::Done),
+        ];
+        let found = resolve_key(&rows, "H:bbbbbb").expect("key is on the deck");
+        assert_eq!(found.id, "id-H:bbbbbb");
+    }
+
+    /// A mistyped key is the common case, and the valid ones change every
+    /// run, so the error has to name them.
+    #[test]
+    fn resolve_key_lists_the_valid_keys_when_it_fails() {
+        let rows = vec![
+            row("C:aaaaaa", Liveness::Live),
+            row("H:bbbbbb", Liveness::Done),
+        ];
+        let err = resolve_key(&rows, "bogus")
+            .expect_err("bogus key")
+            .to_string();
+        assert!(err.contains("no session bogus"), "{err}");
+        assert!(err.contains("C:aaaaaa"), "{err}");
+        assert!(err.contains("H:bbbbbb"), "{err}");
+    }
+
+    #[test]
+    fn resolve_key_says_so_when_the_roster_is_empty() {
+        let err = resolve_key(&[], "C:aaaaaa")
+            .expect_err("empty roster")
+            .to_string();
+        assert!(err.contains("no sessions on the roster"), "{err}");
+    }
+
+    /// The prefix picks the store; an unknown one is not a panic.
+    #[test]
+    fn open_tailer_dispatches_on_the_key_prefix() {
+        let sources = Sources::new(
+            "/nonexistent/claude",
+            "/nonexistent/h.db",
+            "/nonexistent/o.db",
+        );
+        for key in ["C:aaaaaa", "H:bbbbbb", "O:cccccc", "Z:dddddd", "nocolon"] {
+            assert!(sources.open_tailer(key, "id", Replay::DEFAULT).is_none());
         }
     }
 
