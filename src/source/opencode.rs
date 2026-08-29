@@ -130,11 +130,6 @@ impl OpenCodeSource {
     /// waits out a database that is missing or locked, so refusing here
     /// would turn a transient hiccup into a permanently dead pane.
     pub fn open_tailer(&self, session_id: &str, replay: Replay) -> Option<Box<dyn Tailer>> {
-        // Unlike Hermes (self-healing lazy tail), OpenCode tails a real
-        // database: refuse to open until it exists (hermon.py parity).
-        if !self.db_path.exists() {
-            return None;
-        }
         Some(Box::new(OpenCodeTailer::new(
             &self.db_path,
             session_id,
