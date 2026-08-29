@@ -17,6 +17,25 @@ pub enum Command {
     Watch(SourceArgs),
     /// Print the roster once to stdout (no tmux).
     Ls(LsArgs),
+    /// Stream one session's transcript to stdout until Ctrl-C.
+    Render(RenderArgs),
+}
+
+/// `hermon render C:0f865f`: one session's pane body on stdout, the parity
+/// harness the per-source renderers are diffed against
+/// (`hermon.py:1443`, which takes a file or `--hermes`/`--opencode` id
+/// where this takes the roster key `hermon ls` already prints).
+#[derive(Debug, Args)]
+pub struct RenderArgs {
+    /// Roster key of the session to tail, e.g. `C:0f865f` (see `hermon ls`).
+    pub key: String,
+
+    #[command(flatten)]
+    pub source: SourceArgs,
+
+    /// Look this many seconds back for the session named by KEY.
+    #[arg(long, default_value_t = 3600.0)]
+    pub fresh_window: f64,
 }
 
 /// `hermon ls`: the source flags plus its own, wider lookback

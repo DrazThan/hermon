@@ -10,8 +10,9 @@ pub mod palette;
 pub mod pane;
 pub mod roster;
 
+use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event as CtEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -35,6 +36,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const REDRAW_INTERVAL: Duration = Duration::from_millis(100);
 /// Preview box: four lines of session detail plus its border.
 const PREVIEW_HEIGHT: u16 = 6;
+/// Transcript lines kept for the open pane. Far more than the preview box
+/// shows — the surplus is what grid mode's scrollback will read.
+const PANE_SCROLLBACK: usize = 5_000;
 
 /// UI state: the latest roster from the engine plus what the user has done
 /// with it. Pure data — every transition is a plain method so tests can
@@ -51,6 +55,16 @@ pub struct App {
     pub quit: bool,
     /// The store paths the engine is watching, for the empty state.
     pub paths: Vec<String>,
+    /// Transcript lines for the open pane, oldest first. Only the open pane
+    /// has an entry: closing one drops its buffer, so reopening shows the
+    /// engine's fresh replay instead of it twice.
+    pub panes: HashMap<String, VecDeque<StyledLine>>,
+    /// The key whose tailer the engine currently holds open, which is the
+    /// selected session's — tracked separately so a roster reorder that
+    /// leaves the cursor put does not churn the pane.
+    open_pane: Option<String>,
+    /// Commands the run loop has not yet handed to the engine.
+    cmds: Vec<UiCmd>,
 }
 
 impl App {
@@ -79,6 +93,7 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.select_prev(),
             _ => {}
         }
+        self.sync_pane();
     }
 
     pub fn apply_event(&mut self, event: Event) {
@@ -91,10 +106,49 @@ impl App {
                 if self.selected_row().is_none() {
                     self.select_at(position);
                 }
+                self.sync_pane();
             }
             Event::Ticker(lines) => self.ticker = lines,
+            Event::PaneLines { key, lines } => self.buffer_pane(&key, lines),
             Event::Lifecycle { .. } | Event::Alert => {}
         }
+    }
+
+    /// Appends a fast tick's lines to the open pane's buffer, dropping the
+    /// oldest past [`PANE_SCROLLBACK`]. Lines for any other key are stale —
+    /// in flight when the cursor moved — and discarded.
+    fn buffer_pane(&mut self, key: &str, lines: Vec<StyledLine>) {
+        if self.open_pane.as_deref() != Some(key) {
+            return;
+        }
+        let buffer = self.panes.entry(key.to_string()).or_default();
+        buffer.extend(lines);
+        while buffer.len() > PANE_SCROLLBACK {
+            buffer.pop_front();
+        }
+    }
+
+    /// Keeps the engine tailing exactly the selected session: whenever the
+    /// cursor lands on a different one, the old pane is closed (and its
+    /// buffer dropped) and the new one opened.
+    fn sync_pane(&mut self) {
+        let wanted = self.selected_row().map(|r| r.key.clone());
+        if wanted == self.open_pane {
+            return;
+        }
+        if let Some(old) = self.open_pane.take() {
+            self.panes.remove(&old);
+            self.cmds.push(UiCmd::ClosePane(old));
+        }
+        if let Some(new) = wanted.clone() {
+            self.cmds.push(UiCmd::OpenPane(new));
+        }
+        self.open_pane = wanted;
+    }
+
+    /// Hands the engine everything the last transition asked for.
+    pub fn take_commands(&mut self) -> Vec<UiCmd> {
+        std::mem::take(&mut self.cmds)
     }
 
     /// The selected session, or `None` while the roster is empty.
@@ -151,7 +205,7 @@ pub fn run_tui(config: EngineConfig) -> anyhow::Result<()> {
     let engine = Engine::spawn(config, event_tx, cmd_rx);
 
     install_panic_hook(restore_terminal);
-    let result = run_terminal(app, &event_rx);
+    let result = run_terminal(app, &event_rx, &cmd_tx);
     restore_terminal();
 
     let _ = cmd_tx.send(UiCmd::Shutdown);
@@ -159,7 +213,7 @@ pub fn run_tui(config: EngineConfig) -> anyhow::Result<()> {
     result
 }
 
-fn run_terminal(mut app: App, rx: &Receiver<Event>) -> anyhow::Result<()> {
+fn run_terminal(mut app: App, rx: &Receiver<Event>, cmd_tx: &Sender<UiCmd>) -> anyhow::Result<()> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
@@ -184,6 +238,11 @@ fn run_terminal(mut app: App, rx: &Receiver<Event>) -> anyhow::Result<()> {
         for event in rx.try_iter() {
             app.apply_event(event);
             dirty = true;
+        }
+        // A dead engine is not the UI's problem to report: the failing
+        // `Event` channel ends the loop on its own.
+        for cmd in app.take_commands() {
+            let _ = cmd_tx.send(cmd);
         }
         if dirty || last_draw.elapsed() >= REDRAW_INTERVAL {
             terminal.draw(|frame| draw(frame, &app))?;
@@ -358,6 +417,90 @@ mod tests {
         let tick = StyledLine(vec![crate::render::Seg::new(crate::render::Sem::Dim, "t")]);
         app.apply_event(Event::Ticker(vec![tick.clone()]));
         assert_eq!(app.ticker, vec![tick]);
+    }
+
+    fn pane_line(text: &str) -> StyledLine {
+        StyledLine(vec![crate::render::Seg::new(
+            crate::render::Sem::Plain,
+            text,
+        )])
+    }
+
+    /// The engine only tails what the cursor is on, so every selection move
+    /// closes one pane and opens the next.
+    #[test]
+    fn selection_opens_the_new_pane_and_closes_the_old_one() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(vec![row("a"), row("b")]));
+        assert_eq!(
+            app.take_commands(),
+            vec![UiCmd::OpenPane("a".to_string())],
+            "the first roster opens the selected session's pane"
+        );
+
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(
+            app.take_commands(),
+            vec![
+                UiCmd::ClosePane("a".to_string()),
+                UiCmd::OpenPane("b".to_string()),
+            ]
+        );
+
+        // A roster that leaves the cursor where it was churns nothing.
+        app.apply_event(Event::Roster(vec![row("b"), row("a")]));
+        assert!(app.take_commands().is_empty());
+    }
+
+    #[test]
+    fn pane_lines_are_buffered_for_the_open_pane_only() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(vec![row("a"), row("b")]));
+        app.apply_event(Event::PaneLines {
+            key: "a".to_string(),
+            lines: vec![pane_line("one"), pane_line("two")],
+        });
+        app.apply_event(Event::PaneLines {
+            key: "b".to_string(),
+            lines: vec![pane_line("not selected")],
+        });
+
+        let buffered: Vec<String> = app.panes["a"].iter().map(StyledLine::to_plain).collect();
+        assert_eq!(buffered, ["one", "two"]);
+        assert!(!app.panes.contains_key("b"), "stale lines were buffered");
+    }
+
+    /// Moving on drops the buffer: the engine replays history when the pane
+    /// is reopened, and keeping the old tail would show it twice.
+    #[test]
+    fn closing_a_pane_drops_its_buffer() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(vec![row("a"), row("b")]));
+        app.apply_event(Event::PaneLines {
+            key: "a".to_string(),
+            lines: vec![pane_line("one")],
+        });
+        app.handle_key(key(KeyCode::Char('j')));
+        assert!(app.panes.is_empty());
+    }
+
+    #[test]
+    fn the_pane_buffer_is_capped_and_keeps_the_newest_lines() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(vec![row("a")]));
+        for chunk in 0..3 {
+            app.apply_event(Event::PaneLines {
+                key: "a".to_string(),
+                lines: (0..2_000)
+                    .map(|i| pane_line(&format!("line {}", chunk * 2_000 + i)))
+                    .collect(),
+            });
+        }
+
+        let buffer = &app.panes["a"];
+        assert_eq!(buffer.len(), PANE_SCROLLBACK);
+        assert_eq!(buffer.front().unwrap().to_plain(), "line 1000");
+        assert_eq!(buffer.back().unwrap().to_plain(), "line 5999");
     }
 
     static HOOK_CALLS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
