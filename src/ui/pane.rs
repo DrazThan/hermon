@@ -37,7 +37,7 @@ pub struct Pane<'a> {
 pub fn render(frame: &mut Frame, area: Rect, pane: &Pane) {
     let block = Block::bordered()
         .border_style(border_style(pane.state, pane.selected))
-        .title(pane.key.to_string());
+        .title(title(pane.key, pane.state));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.is_empty() {
@@ -53,6 +53,17 @@ pub fn render(frame: &mut Frame, area: Rect, pane: &Pane) {
     frame.render_widget(Paragraph::new(wrapped[start..end].to_vec()), inner);
     if below > 0 {
         render_more(frame, inner, below);
+    }
+}
+
+/// A finished session's tile is marked done the same way its roster row is:
+/// the state glyph in front of the key, so `[x]`-dismissing then `[o]`-
+/// reopening — or a resurrection reopening it automatically — reads the
+/// same way a fresh pane does, glyph and all.
+fn title(key: &str, state: Liveness) -> String {
+    match state {
+        Liveness::Done => format!("{} {key}", palette::glyph_for_liveness(state).0),
+        _ => key.to_string(),
     }
 }
 
@@ -213,6 +224,23 @@ mod tests {
             assert!(rendered.contains(line), "{rendered}");
         }
         assert!(!rendered.contains("more"), "{rendered}");
+    }
+
+    /// A finished session's pane carries the same `✓` the roster row does,
+    /// and its border goes dim — the lifecycle ticket's acceptance snapshot.
+    #[test]
+    fn a_done_pane_is_titled_with_a_checkmark_and_a_dim_border() {
+        let lines = buffer(&["last line before it finished"]);
+        let done = Pane {
+            state: Liveness::Done,
+            ..pane(&lines, 0)
+        };
+        let buf = draw(&done, 20, 5);
+        let rendered = text(&buf);
+
+        assert!(rendered.contains("✓ C:aaaaaa"), "{rendered}");
+        let dim = palette::style(Sem::Dim).fg.unwrap();
+        assert_eq!(buf[(0, 0)].fg, dim, "border should be dim: {rendered}");
     }
 
     #[test]

@@ -28,7 +28,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::config::EngineConfig;
-use crate::engine::{Engine, Event, UiCmd};
+use crate::engine::{Engine, Event, Lifecycle, UiCmd};
 use crate::render::{Sem, StyledLine};
 use crate::roster::RosterRow;
 
@@ -200,7 +200,32 @@ impl App {
             }
             Event::Ticker(lines) => self.ticker = lines,
             Event::PaneLines { key, lines } => self.buffer_pane(&key, lines),
-            Event::Lifecycle { .. } | Event::Alert => {}
+            Event::Lifecycle { key, change } => self.apply_lifecycle(&key, change),
+            Event::Alert => {}
+        }
+    }
+
+    /// Reacts to a lifecycle boundary the engine wants narrated. Eviction
+    /// frees the grid slot exactly like `[x]` does — the session keeps its
+    /// roster row, it just stops crowding a tile once max-panes reassigns
+    /// its pane elsewhere — and a resurrection undoes that, since a session
+    /// coming back to life is the opposite of dismissed. Both drop the
+    /// pane's buffer: the engine's own tailer already closed or is about to
+    /// reopen with a fresh replay, and the old tail left in place would
+    /// either look frozen forever or show its history twice.
+    fn apply_lifecycle(&mut self, key: &str, change: Lifecycle) {
+        match change {
+            Lifecycle::Evicted => {
+                self.closed.insert(key.to_string());
+                self.panes.remove(key);
+                self.scroll.remove(key);
+            }
+            Lifecycle::Resumed => {
+                self.closed.remove(key);
+                self.panes.remove(key);
+                self.scroll.remove(key);
+            }
+            Lifecycle::Started | Lifecycle::Finished => {}
         }
     }
 
@@ -250,8 +275,10 @@ impl App {
         self.open_panes = wanted;
     }
 
-    /// Sessions eligible for a grid slot: the roster in order, minus the ones
-    /// dismissed with `[x]`. First-come — eviction policy is M4.
+    /// Sessions eligible for a grid slot: the roster in order, minus the
+    /// ones dismissed with `[x]` — or, since the M4 lifecycle ticket, ones
+    /// the engine itself evicted under `--max-panes` (see
+    /// [`Self::apply_lifecycle`]), which land in the same `closed` set.
     fn grid_keys(&self) -> Vec<String> {
         self.roster
             .iter()
@@ -1101,6 +1128,58 @@ mod tests {
 
         app.handle_key(key(KeyCode::Char('o')));
         assert_eq!(app.take_commands(), vec![UiCmd::OpenPane("a".to_string())]);
+    }
+
+    /// The engine evicting a finished pane to make room under `--max-panes`
+    /// reads to the UI exactly like the user pressing `[x]`: the tile's
+    /// slot frees up and its buffer goes with it, though the row stays on
+    /// the roster.
+    #[test]
+    fn eviction_frees_the_grid_slot_like_a_manual_close() {
+        let mut app = grid(vec![row("a"), row("b")]);
+        app.apply_event(Event::PaneLines {
+            key: "a".to_string(),
+            lines: vec![pane_line("stale")],
+        });
+
+        app.apply_event(Event::Lifecycle {
+            key: "a".to_string(),
+            change: Lifecycle::Evicted,
+        });
+
+        assert!(!screen(&app, 60, 16).contains("┌a"), "pane a still tiled");
+        assert!(
+            !app.panes.contains_key("a"),
+            "evicted pane's buffer lingered"
+        );
+    }
+
+    /// A resurrection is the opposite of a dismissal: it undoes whatever
+    /// `[x]` or an eviction did, without the user lifting a finger.
+    #[test]
+    fn resurrection_undoes_a_dismissal_and_drops_the_stale_buffer() {
+        let mut app = grid(vec![row("a"), row("b")]);
+        app.apply_event(Event::Lifecycle {
+            key: "a".to_string(),
+            change: Lifecycle::Evicted,
+        });
+        app.apply_event(Event::PaneLines {
+            key: "a".to_string(),
+            lines: vec![pane_line("stale")],
+        });
+        assert!(app.closed.contains("a"), "sanity: a was dismissed");
+        assert!(
+            app.panes.contains_key("a"),
+            "sanity: buffer landed pre-resurrection"
+        );
+
+        app.apply_event(Event::Lifecycle {
+            key: "a".to_string(),
+            change: Lifecycle::Resumed,
+        });
+
+        assert!(!app.closed.contains("a"), "a stayed dismissed");
+        assert!(!app.panes.contains_key("a"), "stale buffer was kept");
     }
 
     /// Moving the cursor past the end of a page turns to the next one, so

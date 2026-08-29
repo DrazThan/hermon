@@ -42,6 +42,8 @@ pub fn run() -> anyhow::Result<()> {
                 idle_timeout: args.idle_timeout,
                 fresh_window: 300.0,
                 interval: Duration::from_secs_f64(args.interval),
+                linger: args.linger,
+                max_panes: args.max_panes,
             };
             ui::run_tui(config)
         }
