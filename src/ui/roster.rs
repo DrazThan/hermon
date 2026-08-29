@@ -1,1 +1,139 @@
 //! Roster table widget: every recent session with state, model, tokens, cost.
+//!
+//! List mode gives it the whole body; grid mode gets the same rows squeezed
+//! into the few lines above the tiles, so the table lives here rather than in
+//! either mode.
+//!
+//! A row is `glyph · key · model/elapsed · what it is doing · cost`, with the
+//! summary column absorbing whatever width is left over. Attention states
+//! tint the row, finished sessions go entirely dim.
+
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::Paragraph;
+
+use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed};
+use crate::roster::RosterRow;
+use crate::source::{Attn, Liveness};
+use crate::ui::App;
+use crate::ui::palette;
+
+/// Row column widths. The glyph column is two wide because the ASCII
+/// fallback for `⏸` is `||`; the summary column takes the remainder.
+pub const W_GLYPH: usize = 2;
+const W_KEY: usize = 10;
+const W_META: usize = 26;
+const W_COST: usize = 9;
+
+/// Draws the roster into `area`, or the empty state when the deck is bare.
+/// Taller decks scroll just enough to keep the cursor on screen.
+pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+    if app.roster.is_empty() {
+        frame.render_widget(
+            Paragraph::new(palette::to_lines(&empty_state(&app.paths))),
+            area,
+        );
+        return;
+    }
+
+    let selected = app.selected_index();
+    let lines: Vec<Line> = app
+        .roster
+        .iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let line = row_line(row, area.width as usize);
+            if i == selected {
+                line.patch_style(palette::selection_bg())
+            } else {
+                line
+            }
+        })
+        .collect();
+
+    // Scrollback is M3; this only keeps the cursor on screen when the fleet
+    // is taller than the pane.
+    let offset = (selected + 1).saturating_sub(area.height as usize);
+    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), area);
+}
+
+/// One session as a padded, full-width row. Padding matters: the selected
+/// row's background is only visible where the line has cells.
+fn row_line(row: &RosterRow, width: usize) -> Line<'static> {
+    let (glyph, glyph_style) = palette::glyph_for_liveness(row.state);
+    let sems = row_sems(row.state);
+    let meta = format!("{} · {}", row.model, fmt_elapsed(row.elapsed));
+    let cost = format!("${:.4}", row.cost);
+    let w_summary = width.saturating_sub(W_GLYPH + W_KEY + W_META + W_COST);
+
+    let mut spans = vec![
+        Span::styled(format!("{glyph:<W_GLYPH$}"), glyph_style),
+        Span::styled(
+            format!("{:<W_KEY$}", clip(&row.key, W_KEY - 1)),
+            palette::style(sems.text),
+        ),
+        Span::styled(
+            format!("{:<W_META$}", clip(&meta, W_META - 1)),
+            palette::style(sems.meta),
+        ),
+    ];
+    if w_summary > 0 {
+        spans.push(Span::styled(
+            format!("{:<w_summary$}", clip(&row.last_line, w_summary - 1)),
+            palette::style(sems.text),
+        ));
+    }
+    spans.push(Span::styled(
+        format!("{cost:>W_COST$}"),
+        palette::style(sems.cost),
+    ));
+    Line::from(spans)
+}
+
+/// The colors a row paints with: a session needing attention tints its text
+/// and cost amber or red, a finished one goes dim throughout.
+pub struct RowSems {
+    pub text: Sem,
+    pub meta: Sem,
+    pub cost: Sem,
+}
+
+pub fn row_sems(state: Liveness) -> RowSems {
+    match state {
+        Liveness::Live => RowSems {
+            text: Sem::Plain,
+            meta: Sem::Dim,
+            cost: Sem::Stat,
+        },
+        Liveness::Attention(Attn::PermWait) => RowSems {
+            text: Sem::User,
+            meta: Sem::Dim,
+            cost: Sem::User,
+        },
+        Liveness::Attention(Attn::Stuck) => RowSems {
+            text: Sem::Error,
+            meta: Sem::Dim,
+            cost: Sem::Error,
+        },
+        Liveness::Done => RowSems {
+            text: Sem::Dim,
+            meta: Sem::Dim,
+            cost: Sem::Dim,
+        },
+    }
+}
+
+/// What a fresh, sessionless deck says: nothing found, and where it looked.
+fn empty_state(paths: &[String]) -> Vec<StyledLine> {
+    let mut lines = vec![
+        StyledLine(vec![Seg::new(Sem::Dim, "no agent sessions found")]),
+        StyledLine::default(),
+    ];
+    lines.extend(
+        paths
+            .iter()
+            .map(|p| StyledLine(vec![Seg::new(Sem::Dim, format!("  watching {p}"))])),
+    );
+    lines
+}
