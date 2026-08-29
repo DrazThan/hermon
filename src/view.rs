@@ -22,6 +22,28 @@ pub enum SortKey {
     Elapsed,
 }
 
+impl SortKey {
+    /// The five keys in the order the palette's `[1]`-`[5]` chips pick them.
+    pub const ALL: [SortKey; 5] = [
+        SortKey::Model,
+        SortKey::Tool,
+        SortKey::InOut,
+        SortKey::Cost,
+        SortKey::Elapsed,
+    ];
+
+    /// The chip label the sort/filter palette and header show.
+    pub fn label(self) -> &'static str {
+        match self {
+            SortKey::Model => "model",
+            SortKey::Tool => "tool",
+            SortKey::InOut => "in/out",
+            SortKey::Cost => "cost",
+            SortKey::Elapsed => "elapsed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SortDir {
     #[default]
@@ -34,6 +56,14 @@ impl SortDir {
         match self {
             SortDir::Asc => SortDir::Desc,
             SortDir::Desc => SortDir::Asc,
+        }
+    }
+
+    /// The arrow the header and palette chips show next to the active key.
+    pub fn arrow(self) -> &'static str {
+        match self {
+            SortDir::Asc => "\u{2191}",
+            SortDir::Desc => "\u{2193}",
         }
     }
 }
@@ -72,6 +102,15 @@ impl ViewState {
     pub fn set_filter(&mut self, input: &str) -> Result<(), String> {
         self.filter = Filter::parse(input)?;
         Ok(())
+    }
+
+    /// Drops the active sort and filter (the palette's `[c]`). Leaves
+    /// `attention_first` and `pinned` alone — those are set outside the
+    /// palette and `[c]` only clears what the palette itself controls.
+    pub fn clear(&mut self) {
+        self.sort_key = None;
+        self.sort_dir = SortDir::default();
+        self.filter = Filter::default();
     }
 
     pub fn pin(&mut self, id: &str) {
@@ -186,21 +225,39 @@ impl Term {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Filter {
     terms: Vec<Term>,
+    /// The original words, one per term, in the same order — kept so the
+    /// header and palette can show the filter back as chips without
+    /// re-serializing a [`Term`].
+    raw: Vec<String>,
 }
 
 impl Filter {
     /// Parse the mini-language. The first malformed term aborts the parse
     /// with a message naming the term and what was wrong — never a panic.
     pub fn parse(input: &str) -> Result<Filter, String> {
-        let terms = input
-            .split_whitespace()
-            .map(parse_term)
+        let words: Vec<&str> = input.split_whitespace().collect();
+        let terms = words
+            .iter()
+            .map(|w| parse_term(w))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Filter { terms })
+        let raw = words.into_iter().map(str::to_string).collect();
+        Ok(Filter { terms, raw })
     }
 
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
+    }
+
+    /// One chip's text per term, in filter order — what the header and the
+    /// palette's filter row display.
+    pub fn chips(&self) -> &[String] {
+        &self.raw
+    }
+
+    /// The terms rejoined the way they'd be retyped, for prefilling the
+    /// palette's input when it reopens over an already-active filter.
+    pub fn as_input(&self) -> String {
+        self.raw.join(" ")
     }
 
     fn matches(&self, r: &RosterRow) -> bool {
@@ -664,6 +721,14 @@ mod tests {
         assert_eq!(out.rows.len(), out.matched);
     }
 
+    #[test]
+    fn chips_and_as_input_round_trip_the_typed_words() {
+        let filter = Filter::parse("model=claude* cost>1.5").expect("parses");
+        assert_eq!(filter.chips(), ["model=claude*", "cost>1.5"]);
+        assert_eq!(filter.as_input(), "model=claude* cost>1.5");
+        assert!(Filter::default().chips().is_empty());
+    }
+
     // ------------------------------------------------------- parse errors
 
     #[test]
@@ -697,6 +762,36 @@ mod tests {
         let err = state.set_filter("cost>abc").expect_err("invalid filter");
         assert!(err.contains("not a number"));
         assert_eq!(state.filter, before);
+    }
+
+    #[test]
+    fn clear_resets_sort_and_filter_but_not_attention_or_pins() {
+        let mut state = ViewState {
+            sort_key: Some(SortKey::Cost),
+            sort_dir: SortDir::Desc,
+            attention_first: true,
+            filter: Filter::parse("cost>1").expect("parses"),
+            ..ViewState::default()
+        };
+        state.pin("id-a");
+        state.clear();
+        assert_eq!(state.sort_key, None);
+        assert_eq!(state.sort_dir, SortDir::Asc);
+        assert!(state.filter.is_empty());
+        assert!(
+            state.attention_first,
+            "attention toggle is outside the palette"
+        );
+        assert!(state.is_pinned("id-a"));
+    }
+
+    #[test]
+    fn sort_key_label_and_dir_arrow_cover_every_variant() {
+        for key in SortKey::ALL {
+            assert!(!key.label().is_empty());
+        }
+        assert_eq!(SortDir::Asc.arrow(), "\u{2191}");
+        assert_eq!(SortDir::Desc.arrow(), "\u{2193}");
     }
 
     // ---------------------------------------------------------------- pins

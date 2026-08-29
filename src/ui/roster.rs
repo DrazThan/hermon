@@ -26,8 +26,9 @@ const W_KEY: usize = 10;
 const W_META: usize = 26;
 const W_COST: usize = 9;
 
-/// Draws the roster into `area`, or the empty state when the deck is bare.
-/// Taller decks scroll just enough to keep the cursor on screen.
+/// Draws the roster into `area`, or the empty state when the deck is bare
+/// or the active filter hides every row. Taller decks scroll just enough to
+/// keep the cursor on screen.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     if app.roster.is_empty() {
         frame.render_widget(
@@ -37,9 +38,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let rows = app.visible_rows();
+    if rows.is_empty() {
+        frame.render_widget(Paragraph::new(palette::to_lines(&no_matches_state())), area);
+        return;
+    }
+
     let selected = app.selected_index();
-    let lines: Vec<Line> = app
-        .roster
+    let lines: Vec<Line> = rows
         .iter()
         .enumerate()
         .map(|(i, row)| {
@@ -122,6 +128,14 @@ pub fn row_sems(state: Liveness) -> RowSems {
             cost: Sem::Dim,
         },
     }
+}
+
+/// What the roster says when a filter is active but matches nothing.
+fn no_matches_state() -> Vec<StyledLine> {
+    vec![StyledLine(vec![Seg::new(
+        Sem::Dim,
+        "no sessions match the active filter",
+    )])]
 }
 
 /// What a fresh, sessionless deck says: nothing found, and where it looked.
