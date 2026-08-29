@@ -6,8 +6,8 @@
 //! tint the row, finished sessions go entirely dim.
 //!
 //! [`render_preview`] takes already-rendered [`StyledLine`]s rather than a
-//! [`RosterRow`], so M3 can swap the streaming transcript tail in for
-//! [`preview_lines`] without touching the layout.
+//! [`RosterRow`], so [`preview_lines`] can hand it either the pane's live
+//! transcript tail or the metadata fallback without touching the layout.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -31,6 +31,10 @@ const W_COST: usize = 9;
 /// ceiling the renderers use for tool results.
 const PREVIEW_CLIP: usize = 200;
 
+/// Transcript lines the preview box can show: its height less its border.
+/// Anything older stays in the pane buffer for grid mode's scrollback.
+const PREVIEW_BODY: usize = PREVIEW_HEIGHT as usize - 2;
+
 /// Draw the whole list mode into `area`: rows, stats, preview.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let stats = stats_lines(app);
@@ -46,7 +50,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let selected = app.selected_row();
     let title = selected.map_or("—", |r| r.key.as_str());
-    let body = selected.map(preview_lines).unwrap_or_default();
+    let body = selected
+        .map(|row| preview_lines(app, row))
+        .unwrap_or_default();
     render_preview(frame, preview_area, title, &body);
 }
 
@@ -169,9 +175,23 @@ fn empty_state(paths: &[String]) -> Vec<StyledLine> {
     lines
 }
 
-/// The preview body for a session, from roster data alone. M3 replaces this
-/// with the live transcript tail; [`render_preview`] stays as it is.
-pub fn preview_lines(row: &RosterRow) -> Vec<StyledLine> {
+/// The preview body: the live transcript tail as soon as the session's
+/// pane has produced lines, and roster metadata until then — a pane that
+/// was just opened, or a source whose tailer cannot read its store.
+pub fn preview_lines(app: &App, row: &RosterRow) -> Vec<StyledLine> {
+    match app.panes.get(&row.key) {
+        Some(buffer) if !buffer.is_empty() => buffer
+            .iter()
+            .skip(buffer.len().saturating_sub(PREVIEW_BODY))
+            .cloned()
+            .collect(),
+        _ => meta_lines(row),
+    }
+}
+
+/// What a session looks like before its tail arrives, from roster data
+/// alone.
+fn meta_lines(row: &RosterRow) -> Vec<StyledLine> {
     let sems = row_sems(row.state);
     vec![
         StyledLine(vec![
@@ -392,6 +412,45 @@ mod tests {
             rendered.contains("Σ 1,234,567 in / 890 out / $12.0000 [claude-sonnet-5]"),
             "{rendered}"
         );
+    }
+
+    /// Once the pane is streaming, the preview is the transcript tail — the
+    /// metadata summary it showed while waiting is gone.
+    #[test]
+    fn the_preview_shows_the_buffered_tail_once_the_pane_streams() {
+        let mut state = App::default();
+        state.apply_event(crate::engine::Event::Roster(fixture()));
+        state.apply_event(crate::engine::Event::PaneLines {
+            key: "C:aaaaaa".to_string(),
+            lines: (1..=6)
+                .map(|i| StyledLine(vec![Seg::new(Sem::Plain, format!("transcript line {i}"))]))
+                .collect(),
+        });
+        let rendered = all_text(&draw(&state, 100, 20));
+
+        assert!(rendered.contains("preview — C:aaaaaa"), "{rendered}");
+        // Only the last four fit; the box shows the newest end of the tail.
+        assert!(!rendered.contains("transcript line 2"), "{rendered}");
+        for i in 3..=6 {
+            assert!(
+                rendered.contains(&format!("transcript line {i}")),
+                "{rendered}"
+            );
+        }
+        assert!(
+            !rendered.contains("Σ 1,234,567 in"),
+            "metadata should have given way to the tail: {rendered}"
+        );
+    }
+
+    /// A session whose pane has produced nothing yet — just opened, or a
+    /// source with no tailer — still gets the metadata preview.
+    #[test]
+    fn the_preview_falls_back_to_metadata_with_no_buffered_lines() {
+        let mut state = App::default();
+        state.apply_event(crate::engine::Event::Roster(fixture()));
+        let rendered = all_text(&draw(&state, 100, 20));
+        assert!(rendered.contains("live · tool Bash · 3m07s"), "{rendered}");
     }
 
     #[test]

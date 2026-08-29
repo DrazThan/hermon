@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value};
 
 use crate::render::{clip, parse_ts};
-use crate::source::{LastEvent, SessionMeta};
+use crate::source::{LastEvent, Replay, SessionMeta, Tailer};
 
 /// Tool arguments are clipped at 120 chars, tool results at 200
 /// (`hermon.py:212`, `hermon.py:243`).
@@ -341,6 +341,14 @@ impl ClaudeSource {
             }
             None => "-".to_string(),
         }
+    }
+
+    /// Inherent twin of [`Source::open_tailer`](super::Source::open_tailer)
+    /// — this source is used by
+    /// concrete type, so the trait's default never applies to it.
+    /// `None` until the Claude transcript tailer lands.
+    pub fn open_tailer(&self, _session_id: &str, _replay: Replay) -> Option<Box<dyn Tailer>> {
+        None
     }
 }
 

@@ -15,7 +15,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
-use super::SessionMeta;
+use super::{Replay, SessionMeta, Tailer};
 
 pub struct OpenCodeSource {
     db_path: PathBuf,
@@ -118,6 +118,14 @@ impl OpenCodeSource {
             }
         }
         Ok("-".to_string())
+    }
+
+    /// Inherent twin of [`Source::open_tailer`](super::Source::open_tailer)
+    /// — this source is used by concrete type (its `sessions` takes a
+    /// `since` bound the trait has no room for), so the trait's default
+    /// never applies to it. `None` until the OpenCode part tailer lands.
+    pub fn open_tailer(&self, _session_id: &str, _replay: Replay) -> Option<Box<dyn Tailer>> {
+        None
     }
 
     fn warn(&mut self) {
