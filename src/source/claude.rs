@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -11,13 +11,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
-use crate::render::{clip, parse_ts};
+use crate::render::claude::render_claude_line;
+use crate::render::{Seg, Sem, StyledLine, clip, parse_ts};
 use crate::source::{LastEvent, Replay, SessionMeta, Tailer};
 
 /// Tool arguments are clipped at 120 chars, tool results at 200
-/// (`hermon.py:212`, `hermon.py:243`).
-const ARG_CLIP: usize = 120;
-const RESULT_CLIP: usize = 200;
+/// (`hermon.py:212`, `hermon.py:243`). Shared with [`crate::render::claude`],
+/// which clips the same fields for the full-line renderer.
+pub(crate) const ARG_CLIP: usize = 120;
+pub(crate) const RESULT_CLIP: usize = 200;
 
 /// Incremental per-transcript accumulator for the roster
 /// (`hermon.py:327 ClaudeStats`).
@@ -216,12 +218,12 @@ impl ClaudeStats {
 
 /// A JSON number as a token count, truncating floats like Python's `int()`;
 /// anything else counts as zero (`hermon.py:166`).
-fn count(v: Option<&Value>) -> u64 {
+pub(crate) fn count(v: Option<&Value>) -> u64 {
     v.and_then(Value::as_f64).map_or(0, |n| n as u64)
 }
 
 /// Input tokens plus both cache legs (`hermon.py:166 _usage_in`).
-fn usage_in(usage: &Map<String, Value>) -> u64 {
+pub(crate) fn usage_in(usage: &Map<String, Value>) -> u64 {
     [
         "input_tokens",
         "cache_creation_input_tokens",
@@ -234,7 +236,7 @@ fn usage_in(usage: &Map<String, Value>) -> u64 {
 
 /// The first cost field the event carries, oldest transcripts last
 /// (`hermon.py:175 _event_cost`).
-fn event_cost(ev: &Map<String, Value>) -> Option<f64> {
+pub(crate) fn event_cost(ev: &Map<String, Value>) -> Option<f64> {
     ["total_cost_usd", "cost_usd", "costUSD"]
         .iter()
         .find_map(|k| ev.get(*k).and_then(Value::as_f64))
@@ -242,7 +244,7 @@ fn event_cost(ev: &Map<String, Value>) -> Option<f64> {
 
 /// `tool_result` content is a plain string or a list of blocks
 /// (`hermon.py:155 _result_text`).
-fn result_text(content: Option<&Value>) -> String {
+pub(crate) fn result_text(content: Option<&Value>) -> String {
     match content {
         Some(Value::String(s)) => s.clone(),
         Some(Value::Array(blocks)) => blocks
@@ -415,11 +417,13 @@ impl ClaudeSource {
     }
 
     /// Inherent twin of [`Source::open_tailer`](super::Source::open_tailer)
-    /// — this source is used by
-    /// concrete type, so the trait's default never applies to it.
-    /// `None` until the Claude transcript tailer lands.
-    pub fn open_tailer(&self, _session_id: &str, _replay: Replay) -> Option<Box<dyn Tailer>> {
-        None
+    /// — this source is used by its concrete type, so the trait's default
+    /// never applies to it. `session_id` must already be in [`Self::stats`]
+    /// (i.e. surfaced by an earlier [`Self::sessions`] call) since this
+    /// takes `&self` and cannot scan for it.
+    pub fn open_tailer(&self, session_id: &str, replay: Replay) -> Option<Box<dyn Tailer>> {
+        let path = self.stats.get(session_id)?.path.clone();
+        Some(Box::new(ClaudeTailer::new(path, replay)))
     }
 }
 
@@ -480,6 +484,157 @@ fn walk_jsonl(dir: &Path, cutoff: Option<SystemTime>, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// A live tail of one Claude transcript file (`hermon.py:268
+/// cmd_render_claude`, as a value instead of a loop).
+///
+/// A freshly opened tailer replays up to `replay.bytes` from the end of the
+/// file on its first [`poll`](Tailer::poll), discarding the partial line at
+/// the seek point, then streams complete lines only. Truncation and
+/// deletion are detected at end-of-file, emit one dim status line each, and
+/// self-heal on the next successful open — from byte zero, since only the
+/// very first open replays history.
+pub struct ClaudeTailer {
+    path: PathBuf,
+    replay_bytes: u64,
+    state: TailState,
+    /// Whether the replay seek/discard still needs to happen. Cleared after
+    /// the very first successful open and never set again, so a later
+    /// reopen (after truncation or deletion) reads its file from byte zero.
+    first_open: bool,
+    /// Set once a "not found" line has been emitted, so a file that stays
+    /// missing across many polls gets exactly one status line rather than
+    /// one per tick.
+    warned_missing: bool,
+}
+
+enum TailState {
+    Closed,
+    Open {
+        file: File,
+        /// Bytes read from `file` so far, used only to notice a shrink
+        /// (truncation) by comparing against the on-disk size at EOF.
+        offset: u64,
+        /// Bytes read since the last complete (`\n`-terminated) line,
+        /// carried across polls so a line split across two polls is not
+        /// parsed until it is whole.
+        partial: Vec<u8>,
+    },
+}
+
+impl ClaudeTailer {
+    pub fn new(path: impl Into<PathBuf>, replay: Replay) -> Self {
+        ClaudeTailer {
+            path: path.into(),
+            replay_bytes: replay.bytes,
+            state: TailState::Closed,
+            first_open: true,
+            warned_missing: false,
+        }
+    }
+
+    /// Opens the file if closed, seeding the replay window on the very
+    /// first successful open, then drains whatever is available.
+    fn poll_impl(&mut self) -> Vec<StyledLine> {
+        if matches!(self.state, TailState::Closed) {
+            let mut file = match File::open(&self.path) {
+                Ok(file) => file,
+                Err(_) => {
+                    if self.warned_missing {
+                        return Vec::new();
+                    }
+                    self.warned_missing = true;
+                    return vec![dim_status("· transcript not found — waiting")];
+                }
+            };
+            self.warned_missing = false;
+            if self.first_open {
+                self.first_open = false;
+                let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+                if size > self.replay_bytes {
+                    let start = size - self.replay_bytes;
+                    if file.seek(SeekFrom::Start(start)).is_ok() {
+                        discard_one_line(&mut file);
+                    }
+                }
+            }
+            let offset = file.stream_position().unwrap_or(0);
+            self.state = TailState::Open {
+                file,
+                offset,
+                partial: Vec::new(),
+            };
+        }
+
+        let TailState::Open {
+            file,
+            offset,
+            partial,
+        } = &mut self.state
+        else {
+            unreachable!("just ensured Open above")
+        };
+        let mut out = Vec::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            match file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    partial.extend_from_slice(&buf[..n]);
+                    *offset += n as u64;
+                }
+                Err(_) => break,
+            }
+        }
+        while let Some(pos) = partial.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = partial.drain(..=pos).collect();
+            out.extend(render_claude_line(&String::from_utf8_lossy(&line)));
+        }
+
+        match fs::metadata(&self.path) {
+            Ok(meta) if meta.len() < *offset => {
+                out.push(dim_status("· transcript truncated — reloading"));
+                self.state = TailState::Closed;
+            }
+            Ok(_) => {}
+            Err(_) => {
+                out.push(dim_status(
+                    "· transcript removed — waiting for it to return",
+                ));
+                self.state = TailState::Closed;
+                self.warned_missing = true;
+            }
+        }
+        out
+    }
+}
+
+impl Tailer for ClaudeTailer {
+    fn poll(&mut self) -> Vec<StyledLine> {
+        self.poll_impl()
+    }
+}
+
+fn dim_status(text: &str) -> StyledLine {
+    StyledLine(vec![Seg::new(Sem::Dim, text)])
+}
+
+/// Reads and discards bytes up to and including the next `\n`, or to EOF —
+/// the partial line left at a replay seek point (`hermon.py:294`).
+fn discard_one_line(file: &mut File) {
+    let mut byte = [0u8; 1];
+    loop {
+        match file.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -527,6 +682,16 @@ mod tests {
     fn assistant(text: &str, in_tok: u64, out_tok: u64, cost: f64) -> String {
         format!(
             r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}],"usage":{{"input_tokens":{in_tok},"output_tokens":{out_tok}}}}},"costUSD":{cost}}}"#
+        )
+    }
+
+    /// An assistant text line with no `usage`, so it renders as exactly one
+    /// line — what the tailer tests want when they're proving line framing
+    /// (append/partial/truncate/delete), not stat rendering (already covered
+    /// by `render::claude`'s tests).
+    fn assistant_text(text: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}]}}}}"#
         )
     }
 
@@ -1139,6 +1304,228 @@ mod tests {
         assert_eq!(
             classify(&sessions2[0], now_ts2, idle_timeout, 3600.0),
             Liveness::Done
+        );
+    }
+
+    // -------------------------------------------------------- ClaudeTailer
+
+    const NO_REPLAY: Replay = Replay { bytes: 0, rows: 0 };
+    const HUGE_REPLAY: Replay = Replay {
+        bytes: 1_000_000,
+        rows: 0,
+    };
+
+    #[test]
+    fn tailer_waits_for_a_missing_file_and_self_heals() {
+        let (_dir, path) = temp_transcript();
+        let mut t = ClaudeTailer::new(&path, HUGE_REPLAY);
+
+        let first = t.poll();
+        assert_eq!(first.len(), 1);
+        assert!(first[0].to_plain().contains("not found"), "{:?}", first);
+
+        // No repeated status line while it stays missing.
+        assert_eq!(t.poll(), Vec::new());
+        assert_eq!(t.poll(), Vec::new());
+
+        append(&path, assistant_text("hi").as_bytes());
+        append(&path, b"\n");
+        let out = t.poll();
+        assert_eq!(
+            out.iter().map(StyledLine::to_plain).collect::<Vec<_>>(),
+            vec!["hi"]
+        );
+    }
+
+    #[test]
+    fn tailer_streams_appended_lines_exactly_once() {
+        let (_dir, path) = temp_transcript();
+        append(&path, assistant_text("one").as_bytes());
+        append(&path, b"\n");
+
+        let mut t = ClaudeTailer::new(&path, HUGE_REPLAY);
+        assert_eq!(
+            t.poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["one"]
+        );
+        assert_eq!(
+            t.poll(),
+            Vec::new(),
+            "already-consumed bytes must not repeat"
+        );
+
+        append(&path, assistant_text("two").as_bytes());
+        append(&path, b"\n");
+        assert_eq!(
+            t.poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["two"]
+        );
+    }
+
+    #[test]
+    fn tailer_buffers_a_partial_line_until_the_newline_arrives() {
+        let (_dir, path) = temp_transcript();
+        let mut t = ClaudeTailer::new(&path, HUGE_REPLAY);
+        t.poll(); // consume the initial "not found" line
+
+        let line = assistant_text("partial");
+        append(&path, line.as_bytes()); // no trailing newline
+        assert_eq!(
+            t.poll(),
+            Vec::new(),
+            "unterminated line must not render yet"
+        );
+        assert_eq!(t.poll(), Vec::new(), "still nothing on a repeat poll");
+
+        append(&path, b"\n");
+        assert_eq!(
+            t.poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["partial"]
+        );
+    }
+
+    #[test]
+    fn tailer_truncate_emits_reset_line_and_tailing_resumes() {
+        let (_dir, path) = temp_transcript();
+        append(&path, assistant_text("before").as_bytes());
+        append(&path, b"\n");
+
+        let mut t = ClaudeTailer::new(&path, HUGE_REPLAY);
+        t.poll(); // replay "before"
+
+        fs::write(&path, b"").expect("truncate transcript to empty");
+        let out = t.poll();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].to_plain().contains("truncated"), "{:?}", out);
+
+        append(&path, assistant_text("after").as_bytes());
+        append(&path, b"\n");
+        assert_eq!(
+            t.poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["after"],
+            "tailing must resume from byte zero of the reloaded file"
+        );
+    }
+
+    #[test]
+    fn tailer_delete_recreate_emits_wait_line_and_self_heals() {
+        let (_dir, path) = temp_transcript();
+        append(&path, assistant_text("before").as_bytes());
+        append(&path, b"\n");
+
+        let mut t = ClaudeTailer::new(&path, HUGE_REPLAY);
+        t.poll(); // replay "before"
+
+        fs::remove_file(&path).expect("delete transcript");
+        let out = t.poll();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].to_plain().contains("removed"), "{:?}", out);
+        assert_eq!(
+            t.poll(),
+            Vec::new(),
+            "no repeated wait line while still missing"
+        );
+
+        append(&path, assistant_text("recreated").as_bytes());
+        append(&path, b"\n");
+        assert_eq!(
+            t.poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["recreated"]
+        );
+    }
+
+    #[test]
+    fn tailer_replay_seeks_near_the_end_and_discards_the_partial_first_line() {
+        let (_dir, path) = temp_transcript();
+        let one = assistant_text("one") + "\n";
+        let two = assistant_text("two") + "\n";
+        append(&path, one.as_bytes());
+        append(&path, two.as_bytes());
+
+        // A replay window that lands inside `two`: the seek point's partial
+        // line is discarded, so neither `one` (before the seek) nor the
+        // fragment of `two` (partial at the seek point) should appear.
+        let replay = Replay {
+            bytes: (two.len() / 2) as u64,
+            rows: 0,
+        };
+        let mut t = ClaudeTailer::new(&path, replay);
+        assert_eq!(t.poll(), Vec::new());
+
+        // Tailing resumes cleanly from that point onward.
+        append(&path, assistant_text("three").as_bytes());
+        append(&path, b"\n");
+        assert_eq!(
+            t.poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["three"]
+        );
+    }
+
+    #[test]
+    fn tailer_replay_zero_bytes_skips_all_existing_content() {
+        let (_dir, path) = temp_transcript();
+        append(&path, assistant_text("stale").as_bytes());
+        append(&path, b"\n");
+
+        let mut t = ClaudeTailer::new(&path, NO_REPLAY);
+        assert_eq!(t.poll(), Vec::new());
+
+        append(&path, assistant_text("fresh").as_bytes());
+        append(&path, b"\n");
+        assert_eq!(
+            t.poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["fresh"]
+        );
+    }
+
+    #[test]
+    fn source_open_tailer_is_none_for_an_unknown_session() {
+        let dir = TempDir::new().expect("create temp dir");
+        let src = ClaudeSource::new(dir.path());
+        assert!(src.open_tailer("nope", HUGE_REPLAY).is_none());
+    }
+
+    #[test]
+    fn source_open_tailer_streams_a_session_seen_by_sessions() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        append(&path, assistant_text("hi").as_bytes());
+        append(&path, b"\n");
+
+        let mut src = ClaudeSource::new(dir.path());
+        src.sessions(now(), HUGE_IDLE);
+
+        let mut tailer = src
+            .open_tailer("s", HUGE_REPLAY)
+            .expect("known session tails");
+        assert_eq!(
+            tailer
+                .poll()
+                .iter()
+                .map(StyledLine::to_plain)
+                .collect::<Vec<_>>(),
+            vec!["hi"]
         );
     }
 }
