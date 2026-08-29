@@ -22,6 +22,8 @@ use crate::ui::palette;
 /// Row column widths. The glyph column is two wide because the ASCII
 /// fallback for `⏸` is `||`; the summary column takes the remainder.
 pub const W_GLYPH: usize = 2;
+/// The pin column: 📌 (or its `*` fallback) plus a pad space.
+pub const W_PIN: usize = 2;
 const W_KEY: usize = 10;
 const W_META: usize = 26;
 const W_COST: usize = 9;
@@ -49,7 +51,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, row)| {
-            let line = row_line(row, area.width as usize);
+            let pinned = app.view.is_pinned(&row.id);
+            let line = row_line(row, pinned, area.width as usize);
             if i == selected {
                 line.patch_style(palette::selection_bg())
             } else {
@@ -66,15 +69,25 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 /// One session as a padded, full-width row. Padding matters: the selected
 /// row's background is only visible where the line has cells.
-fn row_line(row: &RosterRow, width: usize) -> Line<'static> {
+fn row_line(row: &RosterRow, pinned: bool, width: usize) -> Line<'static> {
     let (glyph, glyph_style) = palette::glyph_for_liveness(row.state);
     let sems = row_sems(row.state);
     let meta = format!("{} · {}", row.model, fmt_elapsed(row.elapsed));
     let cost = format!("${:.4}", row.cost);
-    let w_summary = width.saturating_sub(W_GLYPH + W_KEY + W_META + W_COST);
+    let w_summary = width.saturating_sub(W_GLYPH + W_PIN + W_KEY + W_META + W_COST);
+
+    // An unpinned row leaves the column blank in the row's own text color, so
+    // a finished row still goes dim end to end; a pinned one always pops
+    // amber, done or not — the accent the pane border echoes.
+    let (pin_glyph, pin_style) = if pinned {
+        (palette::pin_glyph(), palette::style(Sem::User))
+    } else {
+        ("", palette::style(sems.text))
+    };
 
     let mut spans = vec![
         Span::styled(format!("{glyph:<W_GLYPH$}"), glyph_style),
+        Span::styled(format!("{pin_glyph:<W_PIN$}"), pin_style),
         Span::styled(
             format!("{:<W_KEY$}", clip(&row.key, W_KEY - 1)),
             palette::style(sems.text),

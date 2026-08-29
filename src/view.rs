@@ -382,6 +382,12 @@ fn attn_rank(state: Liveness) -> u8 {
     }
 }
 
+/// Pinned rows first, so they land on grid page 1 and the top of the list
+/// regardless of sort or attention grouping.
+fn pin_rank(state: &ViewState, id: &str) -> u8 {
+    u8::from(!state.is_pinned(id))
+}
+
 fn key_cmp(a: &RosterRow, b: &RosterRow, key: SortKey) -> Ordering {
     match key {
         SortKey::Model => a.model.cmp(&b.model),
@@ -406,21 +412,24 @@ fn key_cmp(a: &RosterRow, b: &RosterRow, key: SortKey) -> Ordering {
 pub fn apply<'a>(rows: &'a [RosterRow], state: &ViewState) -> ViewOutput<'a> {
     let mut out: Vec<&RosterRow> = rows.iter().filter(|r| state.filter.matches(r)).collect();
     out.sort_by(|a, b| {
-        let group = if state.attention_first {
+        let pin_group = pin_rank(state, &a.id).cmp(&pin_rank(state, &b.id));
+        let attn_group = if state.attention_first {
             attn_rank(a.state).cmp(&attn_rank(b.state))
         } else {
             Ordering::Equal
         };
-        group.then_with(|| match state.sort_key {
-            None => Ordering::Equal,
-            Some(key) => {
-                let ord = key_cmp(a, b, key);
-                match state.sort_dir {
-                    SortDir::Asc => ord,
-                    SortDir::Desc => ord.reverse(),
+        pin_group
+            .then(attn_group)
+            .then_with(|| match state.sort_key {
+                None => Ordering::Equal,
+                Some(key) => {
+                    let ord = key_cmp(a, b, key);
+                    match state.sort_dir {
+                        SortDir::Asc => ord,
+                        SortDir::Desc => ord.reverse(),
+                    }
                 }
-            }
-        })
+            })
     });
     ViewOutput {
         matched: out.len(),
@@ -796,6 +805,52 @@ mod tests {
     }
 
     // ---------------------------------------------------------------- pins
+
+    /// A pinned row sorts to the front regardless of sort key or direction —
+    /// what puts it on grid page 1.
+    #[test]
+    fn pinned_rows_sort_first_regardless_of_sort_key() {
+        let rows = [row("a", 1), row("b", 2), row("c", 3)];
+        let mut state = ViewState {
+            sort_key: Some(SortKey::Cost),
+            sort_dir: SortDir::Desc,
+            ..ViewState::default()
+        };
+        state.pin("id-a");
+        assert_eq!(keys(&apply(&rows, &state)), ["a", "c", "b"]);
+    }
+
+    /// Pinning multiple rows keeps them all up front, ordered by the active
+    /// sort among themselves; attention grouping is still an inner group.
+    #[test]
+    fn pin_group_is_outermost_ahead_of_attention_grouping() {
+        let mut rows = [row("stuck", 1), row("pinned-done", 2), row("live", 3)];
+        rows[0].state = Liveness::Attention(Attn::Stuck);
+        rows[1].state = Liveness::Done;
+        let mut state = ViewState {
+            attention_first: true,
+            ..ViewState::default()
+        };
+        state.pin("id-pinned-done");
+        assert_eq!(
+            keys(&apply(&rows, &state)),
+            ["pinned-done", "stuck", "live"]
+        );
+    }
+
+    /// A pinned session hidden by the active filter still doesn't show up in
+    /// `apply`'s rows — the filter's job is untouched by pinning. (The pane
+    /// grid keeping its slot anyway is the UI's concern, not this pure core.)
+    #[test]
+    fn a_pinned_row_hidden_by_the_filter_is_still_filtered_out() {
+        let rows = fleet();
+        let mut state = ViewState {
+            filter: Filter::parse("model=claude*").expect("parses"),
+            ..ViewState::default()
+        };
+        state.pin("id-r3"); // r3 is gpt-6, filtered out by model=claude*
+        assert_eq!(keys(&apply(&rows, &state)), ["r1", "r2"]);
+    }
 
     #[test]
     fn pin_unpin_is_pinned_round_trip() {
