@@ -4,11 +4,21 @@
 //! cmd_watch`) — the `while True: … time.sleep(args.interval)` body that
 //! rebuilds the roster every tick — minus tmux, restructured as a thread
 //! talking to the UI over two `mpsc` channels rather than driving panes
-//! directly. Panes are tailed here too, on a faster tick than the scan;
-//! eviction/linger (M4) is not here yet.
+//! directly. Panes are tailed here too, on a faster tick than the scan.
+//!
+//! Lifecycle (`hermon.py:1352` the tracked-dict loop, `hermon.py:1389
+//! self_evict`) lives here too: [`Tracked`] remembers, per key, when a
+//! session last finished and whether its tailer has since been closed —
+//! by [`linger_expire`] aging it out, or by [`try_open`] evicting it to
+//! make room under `--max-panes`. A key survives in [`Tracked`] past its
+//! own disappearance from the roster until [`forget`] can drop it, so a
+//! session that vanishes mid-linger still ages out on schedule rather than
+//! being forgotten (and its slot silently freed) the instant its source
+//! goes quiet.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -55,6 +65,10 @@ pub enum Lifecycle {
     Finished,
     /// Done last tick, live or needing attention again this tick.
     Resumed,
+    /// A finished session's pane was closed to make room for a new live one
+    /// under `--max-panes` (`hermon.py:1389 self_evict`), not because its
+    /// own linger expired.
+    Evicted,
 }
 
 /// UI → engine. Pane commands follow the cursor: the UI keeps exactly the
@@ -99,6 +113,30 @@ impl Deck for Sources {
     }
 }
 
+/// A wall clock the engine reads instead of calling [`SystemTime::now`]
+/// directly, so tests can drive linger/eviction deterministically without
+/// sleeping real seconds. `Arc<dyn Fn…>` rather than `FnMut` because it is
+/// shared between the run loop and the command handlers it calls into.
+pub type Clock = Arc<dyn Fn() -> f64 + Send + Sync>;
+
+/// What a tracked key remembers between ticks: when it last finished, and
+/// whether its pane has since been closed by policy rather than by the UI.
+/// Ported from `hermon.py:1352`'s per-session `Tracked` record, minus the
+/// tmux pane id — [`Engine`]'s `panes` map is the pane now.
+#[derive(Debug, Clone, Copy)]
+struct Tracked {
+    liveness: Liveness,
+    /// Set the instant `liveness` last became [`Liveness::Done`]; cleared on
+    /// resumption. The linger clock and eviction's oldest-first pick both
+    /// read this.
+    finished_at: Option<f64>,
+    /// The pane was closed by [`linger_expire`] or by [`try_open`] evicting
+    /// it, not by an explicit [`UiCmd::ClosePane`]. A killed-and-still-done
+    /// key is not retried until it resumes; a killed key gone from the
+    /// roster is what [`forget`] prunes.
+    killed: bool,
+}
+
 pub struct Engine;
 
 impl Engine {
@@ -108,19 +146,33 @@ impl Engine {
     pub fn spawn(config: EngineConfig, tx: Sender<Event>, rx: Receiver<UiCmd>) -> JoinHandle<()> {
         thread::spawn(move || {
             let mut deck = Sources::new(&config.claude_dir, &config.hermes_db, &config.opencode_db);
-            run(&config, &mut deck, &tx, &rx);
+            let clock: Clock = Arc::new(now_secs);
+            run(&config, &mut deck, &clock, &tx, &rx);
         })
     }
 
-    /// The same loop against a caller-supplied [`Deck`] — the seam tests use
-    /// to drive panes without fixture stores.
+    /// The same loop against a caller-supplied [`Deck`], on the real wall
+    /// clock — the seam tests use to drive panes without fixture stores.
     pub fn spawn_with<D: Deck + Send + 'static>(
         config: EngineConfig,
-        mut deck: D,
+        deck: D,
         tx: Sender<Event>,
         rx: Receiver<UiCmd>,
     ) -> JoinHandle<()> {
-        thread::spawn(move || run(&config, &mut deck, &tx, &rx))
+        Self::spawn_with_clock(config, deck, Arc::new(now_secs), tx, rx)
+    }
+
+    /// [`Engine::spawn_with`] plus an injectable [`Clock`] — the seam
+    /// lifecycle tests use to walk linger and eviction deterministically
+    /// without sleeping real seconds.
+    pub fn spawn_with_clock<D: Deck + Send + 'static>(
+        config: EngineConfig,
+        mut deck: D,
+        clock: Clock,
+        tx: Sender<Event>,
+        rx: Receiver<UiCmd>,
+    ) -> JoinHandle<()> {
+        thread::spawn(move || run(&config, &mut deck, &clock, &tx, &rx))
     }
 }
 
@@ -128,19 +180,41 @@ impl Engine {
 /// `config.interval`, and a fast [`PANE_TICK`] polling open panes. The
 /// `recv_timeout` wait is cut short to whichever falls due first, so
 /// commands are still handled the moment they arrive.
-fn run(config: &EngineConfig, deck: &mut dyn Deck, tx: &Sender<Event>, rx: &Receiver<UiCmd>) {
-    let mut prev_liveness: HashMap<String, Liveness> = HashMap::new();
+fn run(
+    config: &EngineConfig,
+    deck: &mut dyn Deck,
+    clock: &Clock,
+    tx: &Sender<Event>,
+    rx: &Receiver<UiCmd>,
+) {
+    let mut tracked: HashMap<String, Tracked> = HashMap::new();
     // Full session ids by roster key, refreshed each scan: a key carries
     // only a shortened id, and opening a tailer needs the real one.
     let mut ids: HashMap<String, String> = HashMap::new();
     let mut panes: HashMap<String, Box<dyn Tailer>> = HashMap::new();
+    // Keys the UI has asked to be tailed. Usually equal to `panes.keys()`;
+    // lifecycle policy can make `panes` lag behind it (a pane lingered or
+    // evicted away) or catch back up on its own (a resumption reopening
+    // one), all without the UI ever sending another command.
+    let mut wanted: HashSet<String> = HashSet::new();
 
     let mut next_scan = Instant::now();
     let mut next_pane_tick = Instant::now();
 
     loop {
         if Instant::now() >= next_scan {
-            if scan(config, deck, tx, &mut prev_liveness, &mut ids).is_err() {
+            if scan(
+                config,
+                deck,
+                clock,
+                tx,
+                &mut tracked,
+                &mut ids,
+                &mut panes,
+                &wanted,
+            )
+            .is_err()
+            {
                 return; // UI hung up.
             }
             next_scan = Instant::now() + config.interval;
@@ -156,13 +230,22 @@ fn run(config: &EngineConfig, deck: &mut dyn Deck, tx: &Sender<Event>, rx: &Rece
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(UiCmd::Shutdown) => return,
             Ok(UiCmd::OpenPane(key)) => {
-                if let Some(tailer) = open_pane(deck, &panes, &ids, &key) {
-                    panes.insert(key, tailer);
-                    // Replay should hit the screen now, not a tick from now.
-                    next_pane_tick = Instant::now();
+                wanted.insert(key.clone());
+                if !panes.contains_key(&key) && !killed_and_done(&tracked, &key) {
+                    match try_open(deck, &mut panes, &mut tracked, &ids, &key, config.max_panes) {
+                        OpenOutcome::Skipped => {}
+                        OpenOutcome::Opened => next_pane_tick = Instant::now(),
+                        OpenOutcome::Evicted(victim) => {
+                            next_pane_tick = Instant::now();
+                            if tx.send(evicted_event(victim)).is_err() {
+                                return;
+                            }
+                        }
+                    }
                 }
             }
             Ok(UiCmd::ClosePane(key)) => {
+                wanted.remove(&key);
                 panes.remove(&key);
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -171,26 +254,70 @@ fn run(config: &EngineConfig, deck: &mut dyn Deck, tx: &Sender<Event>, rx: &Rece
     }
 }
 
-/// One scan tick: rebuild the deck, send it with its lifecycle changes and
-/// the API ticker. `Err` means the UI dropped its receiver.
+fn evicted_event(key: String) -> Event {
+    Event::Lifecycle {
+        key,
+        change: Lifecycle::Evicted,
+    }
+}
+
+fn killed_and_done(tracked: &HashMap<String, Tracked>, key: &str) -> bool {
+    tracked
+        .get(key)
+        .is_some_and(|t| t.killed && t.liveness == Liveness::Done)
+}
+
+/// One scan tick: rebuild the deck, apply the lifecycle state machine over
+/// it, and send the roster with its lifecycle changes and the API ticker.
+/// `Err` means the UI dropped its receiver.
+#[allow(clippy::too_many_arguments)]
 fn scan(
     config: &EngineConfig,
     deck: &mut dyn Deck,
+    clock: &Clock,
     tx: &Sender<Event>,
-    prev_liveness: &mut HashMap<String, Liveness>,
+    tracked: &mut HashMap<String, Tracked>,
     ids: &mut HashMap<String, String>,
+    panes: &mut HashMap<String, Box<dyn Tailer>>,
+    wanted: &HashSet<String>,
 ) -> Result<(), ()> {
-    let now = now_secs();
+    let now = clock();
     let rows = deck.roster(now, config.fresh_window, config.idle_timeout);
-    let liveness = lifecycle_events(prev_liveness, &rows);
-    *prev_liveness = rows.iter().map(|r| (r.key.clone(), r.state)).collect();
+
+    let prev_liveness: HashMap<String, Liveness> = tracked
+        .iter()
+        .map(|(k, t)| (k.clone(), t.liveness))
+        .collect();
+    let mut events = lifecycle_events(&prev_liveness, &rows);
+    events.extend(vanished_events(tracked, &rows));
+
+    apply_lifecycle(tracked, &events, &rows, now);
+    refresh_liveness(tracked, &rows);
+    linger_expire(tracked, panes, config.linger, now);
+    forget(tracked, panes, &rows);
     *ids = rows.iter().map(|r| (r.key.clone(), r.id.clone())).collect();
+
+    // Satisfy whatever the UI still wants but doesn't have: newly wanted
+    // keys the last scan couldn't reach yet, and resumptions reopening a
+    // pane linger or eviction closed without the UI ever asking again.
+    let pending: Vec<String> = wanted
+        .iter()
+        .filter(|k| !panes.contains_key(*k) && !killed_and_done(tracked, k))
+        .cloned()
+        .collect();
+    for key in pending {
+        if let OpenOutcome::Evicted(victim) =
+            try_open(deck, panes, tracked, ids, &key, config.max_panes)
+        {
+            events.push(evicted_event(victim));
+        }
+    }
 
     let ticker = api_call_ticker(Path::new(&config.hermes_log), TICKER_LIMIT);
 
     tx.send(Event::Roster(rows)).map_err(|_| ())?;
     tx.send(Event::Ticker(ticker)).map_err(|_| ())?;
-    for event in liveness {
+    for event in events {
         tx.send(event).map_err(|_| ())?;
     }
     Ok(())
@@ -211,21 +338,6 @@ fn pump_panes(panes: &mut HashMap<String, Box<dyn Tailer>>, tx: &Sender<Event>) 
         .map_err(|_| ())?;
     }
     Ok(())
-}
-
-/// A tailer for a newly opened pane, or `None` if the pane is already open,
-/// the key is not on the deck, or the source cannot tail that session.
-fn open_pane(
-    deck: &mut dyn Deck,
-    panes: &HashMap<String, Box<dyn Tailer>>,
-    ids: &HashMap<String, String>,
-    key: &str,
-) -> Option<Box<dyn Tailer>> {
-    if panes.contains_key(key) {
-        return None;
-    }
-    let session_id = ids.get(key)?;
-    deck.open_tailer(key, session_id, Replay::DEFAULT)
 }
 
 /// Diffs this tick's rows against the last tick's liveness, in roster order,
@@ -249,6 +361,218 @@ fn lifecycle_events(prev: &HashMap<String, Liveness>, rows: &[RosterRow]) -> Vec
             })
         })
         .collect()
+}
+
+/// A tracked key that drops out of the roster entirely, without first
+/// reading as done, is an implicit finish — every source stopped reporting
+/// it before `classify` ever got the chance to. Mirrors Python's
+/// `state = snap.state if snap else "done"` (`hermon.py:1352`): the linger
+/// clock starts the moment a session disappears, not never.
+fn vanished_events(tracked: &HashMap<String, Tracked>, rows: &[RosterRow]) -> Vec<Event> {
+    tracked
+        .iter()
+        .filter(|(_, t)| t.liveness != Liveness::Done)
+        .filter(|(key, _)| !rows.iter().any(|r| &r.key == *key))
+        .map(|(key, _)| Event::Lifecycle {
+            key: key.clone(),
+            change: Lifecycle::Finished,
+        })
+        .collect()
+}
+
+/// Folds this tick's [`Lifecycle::Started`]/`Finished`/`Resumed` events into
+/// [`Tracked`]: starts or clears the linger clock, and clears `killed` so a
+/// resumed session is eligible for a pane again.
+fn apply_lifecycle(
+    tracked: &mut HashMap<String, Tracked>,
+    events: &[Event],
+    rows: &[RosterRow],
+    now: f64,
+) {
+    for event in events {
+        let Event::Lifecycle { key, change } = event else {
+            continue;
+        };
+        match change {
+            Lifecycle::Started => {
+                let liveness = rows
+                    .iter()
+                    .find(|r| &r.key == key)
+                    .map_or(Liveness::Done, |r| r.state);
+                tracked.insert(
+                    key.clone(),
+                    Tracked {
+                        liveness,
+                        finished_at: (liveness == Liveness::Done).then_some(now),
+                        killed: false,
+                    },
+                );
+            }
+            Lifecycle::Finished => match tracked.get_mut(key) {
+                Some(t) => {
+                    t.liveness = Liveness::Done;
+                    t.finished_at = Some(now);
+                    t.killed = false;
+                }
+                None => {
+                    tracked.insert(
+                        key.clone(),
+                        Tracked {
+                            liveness: Liveness::Done,
+                            finished_at: Some(now),
+                            killed: false,
+                        },
+                    );
+                }
+            },
+            Lifecycle::Resumed => {
+                let liveness = rows
+                    .iter()
+                    .find(|r| &r.key == key)
+                    .map_or(Liveness::Live, |r| r.state);
+                match tracked.get_mut(key) {
+                    Some(t) => {
+                        t.liveness = liveness;
+                        t.finished_at = None;
+                        t.killed = false;
+                    }
+                    None => {
+                        tracked.insert(
+                            key.clone(),
+                            Tracked {
+                                liveness,
+                                finished_at: None,
+                                killed: false,
+                            },
+                        );
+                    }
+                }
+            }
+            Lifecycle::Evicted => {}
+        }
+    }
+}
+
+/// Syncs every tracked key still on the roster to its row's exact liveness.
+/// [`apply_lifecycle`] only reacts to the live/done boundary the UI narrates
+/// (`Started`/`Finished`/`Resumed`); a change within the "not done" side of
+/// it — say `Live` to `Attention(Stuck)` — fires no event but still has to
+/// land here so later ticks compare against the truth, not a stale value.
+fn refresh_liveness(tracked: &mut HashMap<String, Tracked>, rows: &[RosterRow]) {
+    for row in rows {
+        if let Some(t) = tracked.get_mut(&row.key) {
+            t.liveness = row.state;
+        }
+    }
+}
+
+/// Closes the pane of every tracked key that has been done longer than
+/// `linger` seconds, freeing its slot for `try_open` to hand to someone
+/// else. `linger <= 0.0` means "forever" — Python's `args.linger` `0`
+/// (`hermon.py:1294`) — so nothing here ever kills on age alone; only
+/// [`try_open`]'s eviction can still reclaim the slot.
+fn linger_expire(
+    tracked: &mut HashMap<String, Tracked>,
+    panes: &mut HashMap<String, Box<dyn Tailer>>,
+    linger: f64,
+    now: f64,
+) {
+    if linger <= 0.0 {
+        return;
+    }
+    for (key, t) in tracked.iter_mut() {
+        if t.liveness == Liveness::Done
+            && !t.killed
+            && t.finished_at.is_some_and(|f| now - f >= linger)
+        {
+            panes.remove(key);
+            t.killed = true;
+        }
+    }
+}
+
+/// Drops a tracked key once it is both killed (its pane closed by linger or
+/// eviction, never by the UI) and gone from every source — the roster no
+/// longer lists it at all. Port of `hermon.py:1352`'s
+/// `if t.killed and snap is None: del tracked[key]`.
+fn forget(
+    tracked: &mut HashMap<String, Tracked>,
+    panes: &mut HashMap<String, Box<dyn Tailer>>,
+    rows: &[RosterRow],
+) {
+    let present: HashSet<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    tracked.retain(|key, t| !(t.killed && !present.contains(key.as_str())));
+    panes.retain(|key, _| tracked.contains_key(key));
+}
+
+/// What [`try_open`] managed to do for the key it was asked to open.
+enum OpenOutcome {
+    /// Opened with a free slot to spare.
+    Opened,
+    /// Opened by closing a finished pane to make room; the evicted key's
+    /// [`Lifecycle::Evicted`] event is the caller's to send.
+    Evicted(String),
+    /// Not opened: the key isn't on the deck, its source can't tail it, or
+    /// every occupied slot belongs to a still-live session — Python's
+    /// `self_evict` returning `false` and the caller moving on
+    /// (`hermon.py:1389`).
+    Skipped,
+}
+
+/// Opens `key`'s tailer, first evicting the oldest-finished pane if
+/// `max_panes` is already full. Eviction only ever takes a *finished*
+/// pane's slot — a fleet that is entirely live never loses one, and `key`
+/// simply waits for a slot on a later tick, without the deck ever being
+/// asked to open it. The chosen victim isn't actually removed until `key`'s
+/// own tailer opens successfully, so a source that can't tail `key` costs
+/// nobody their slot.
+fn try_open(
+    deck: &mut dyn Deck,
+    panes: &mut HashMap<String, Box<dyn Tailer>>,
+    tracked: &mut HashMap<String, Tracked>,
+    ids: &HashMap<String, String>,
+    key: &str,
+    max_panes: usize,
+) -> OpenOutcome {
+    let Some(session_id) = ids.get(key) else {
+        return OpenOutcome::Skipped;
+    };
+
+    let mut victim = None;
+    if panes.len() >= max_panes {
+        victim = panes
+            .keys()
+            .filter(|k| {
+                tracked
+                    .get(k.as_str())
+                    .is_some_and(|t| t.liveness == Liveness::Done)
+            })
+            .min_by(|a, b| {
+                let at = tracked[a.as_str()].finished_at.unwrap_or(0.0);
+                let bt = tracked[b.as_str()].finished_at.unwrap_or(0.0);
+                at.total_cmp(&bt)
+            })
+            .cloned();
+        if victim.is_none() {
+            return OpenOutcome::Skipped;
+        }
+    }
+
+    let Some(tailer) = deck.open_tailer(key, session_id, Replay::DEFAULT) else {
+        return OpenOutcome::Skipped;
+    };
+
+    if let Some(victim) = &victim {
+        panes.remove(victim);
+        if let Some(t) = tracked.get_mut(victim) {
+            t.killed = true;
+        }
+    }
+    panes.insert(key.to_string(), tailer);
+    match victim {
+        Some(victim) => OpenOutcome::Evicted(victim),
+        None => OpenOutcome::Opened,
+    }
 }
 
 fn now_secs() -> f64 {
@@ -340,5 +664,327 @@ mod tests {
         let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Live)]);
         let rows = vec![row("C:aaaaaa", Liveness::Live)];
         assert!(lifecycle_events(&prev, &rows).is_empty());
+    }
+
+    // -------------------------------------------------- lifecycle helpers
+
+    fn done(finished_at: Option<f64>, killed: bool) -> Tracked {
+        Tracked {
+            liveness: Liveness::Done,
+            finished_at,
+            killed,
+        }
+    }
+
+    fn live() -> Tracked {
+        Tracked {
+            liveness: Liveness::Live,
+            finished_at: None,
+            killed: false,
+        }
+    }
+
+    #[test]
+    fn a_key_missing_from_the_roster_is_a_vanished_finish() {
+        let tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
+        assert_eq!(
+            vanished_events(&tracked, &[]),
+            vec![Event::Lifecycle {
+                key: "C:aaaaaa".to_string(),
+                change: Lifecycle::Finished,
+            }]
+        );
+    }
+
+    #[test]
+    fn an_already_done_vanished_key_fires_nothing_again() {
+        let tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(1.0), false))]);
+        assert!(vanished_events(&tracked, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_key_still_on_the_roster_never_vanishes() {
+        let tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
+        let rows = vec![row("C:aaaaaa", Liveness::Live)];
+        assert!(vanished_events(&tracked, &rows).is_empty());
+    }
+
+    #[test]
+    fn apply_lifecycle_starts_a_fresh_key_at_its_row_state() {
+        let mut tracked = HashMap::new();
+        let rows = vec![row("C:aaaaaa", Liveness::Live)];
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Started,
+        }];
+        apply_lifecycle(&mut tracked, &events, &rows, 100.0);
+        let t = tracked["C:aaaaaa"];
+        assert_eq!(t.liveness, Liveness::Live);
+        assert_eq!(t.finished_at, None);
+        assert!(!t.killed);
+    }
+
+    #[test]
+    fn apply_lifecycle_starts_a_key_already_done_with_the_linger_clock_running() {
+        let mut tracked = HashMap::new();
+        let rows = vec![row("C:aaaaaa", Liveness::Done)];
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Started,
+        }];
+        apply_lifecycle(&mut tracked, &events, &rows, 100.0);
+        assert_eq!(tracked["C:aaaaaa"].finished_at, Some(100.0));
+    }
+
+    #[test]
+    fn apply_lifecycle_finish_starts_the_linger_clock_and_clears_killed() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Finished,
+        }];
+        apply_lifecycle(&mut tracked, &events, &[], 200.0);
+        let t = tracked["C:aaaaaa"];
+        assert_eq!(t.liveness, Liveness::Done);
+        assert_eq!(t.finished_at, Some(200.0));
+        assert!(!t.killed);
+    }
+
+    #[test]
+    fn apply_lifecycle_resume_clears_the_linger_clock_and_killed() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(50.0), true))]);
+        let rows = vec![row("C:aaaaaa", Liveness::Live)];
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Resumed,
+        }];
+        apply_lifecycle(&mut tracked, &events, &rows, 300.0);
+        let t = tracked["C:aaaaaa"];
+        assert_eq!(t.liveness, Liveness::Live);
+        assert_eq!(t.finished_at, None);
+        assert!(!t.killed);
+    }
+
+    #[test]
+    fn refresh_liveness_syncs_a_state_change_that_fired_no_event() {
+        // Live -> Attention(Stuck) fires no Lifecycle event (neither side is
+        // Done), but the stored liveness still has to track it so a later
+        // Attention -> Done comparison sees a real transition.
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
+        let rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::Stuck))];
+        refresh_liveness(&mut tracked, &rows);
+        assert_eq!(
+            tracked["C:aaaaaa"].liveness,
+            Liveness::Attention(Attn::Stuck)
+        );
+    }
+
+    #[test]
+    fn refresh_liveness_ignores_keys_no_longer_on_the_roster() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(1.0), false))]);
+        refresh_liveness(&mut tracked, &[]);
+        assert_eq!(tracked["C:aaaaaa"].liveness, Liveness::Done, "unchanged");
+    }
+
+    fn panes_with(keys: &[&str]) -> HashMap<String, Box<dyn Tailer>> {
+        struct Mute;
+        impl Tailer for Mute {
+            fn poll(&mut self) -> Vec<StyledLine> {
+                Vec::new()
+            }
+        }
+        keys.iter()
+            .map(|k| (k.to_string(), Box::new(Mute) as Box<dyn Tailer>))
+            .collect()
+    }
+
+    #[test]
+    fn linger_expire_closes_a_pane_once_it_has_been_done_long_enough() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(0.0), false))]);
+        let mut panes = panes_with(&["C:aaaaaa"]);
+        linger_expire(&mut tracked, &mut panes, 60.0, 60.0);
+        assert!(panes.is_empty(), "pane should have closed");
+        assert!(tracked["C:aaaaaa"].killed);
+    }
+
+    #[test]
+    fn linger_expire_leaves_a_pane_that_has_not_yet_aged_out() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(0.0), false))]);
+        let mut panes = panes_with(&["C:aaaaaa"]);
+        linger_expire(&mut tracked, &mut panes, 60.0, 59.999);
+        assert!(!panes.is_empty());
+        assert!(!tracked["C:aaaaaa"].killed);
+    }
+
+    #[test]
+    fn linger_zero_never_expires_a_pane() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(0.0), false))]);
+        let mut panes = panes_with(&["C:aaaaaa"]);
+        linger_expire(&mut tracked, &mut panes, 0.0, 1_000_000.0);
+        assert!(!panes.is_empty(), "linger=0 keeps the pane forever");
+        assert!(!tracked["C:aaaaaa"].killed);
+    }
+
+    #[test]
+    fn linger_expire_never_touches_a_live_session() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
+        let mut panes = panes_with(&["C:aaaaaa"]);
+        linger_expire(&mut tracked, &mut panes, 60.0, 1_000_000.0);
+        assert!(!panes.is_empty());
+    }
+
+    #[test]
+    fn forget_drops_a_killed_key_once_it_leaves_the_roster() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(0.0), true))]);
+        let mut panes = HashMap::new();
+        forget(&mut tracked, &mut panes, &[]);
+        assert!(tracked.is_empty());
+    }
+
+    #[test]
+    fn forget_keeps_a_killed_key_still_on_the_roster() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(0.0), true))]);
+        let mut panes = HashMap::new();
+        let rows = vec![row("C:aaaaaa", Liveness::Done)];
+        forget(&mut tracked, &mut panes, &rows);
+        assert!(tracked.contains_key("C:aaaaaa"));
+    }
+
+    #[test]
+    fn forget_keeps_a_gone_key_that_was_never_killed() {
+        // linger=0: the session lingers forever, so disappearing from every
+        // source still must not forget it.
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), done(Some(0.0), false))]);
+        let mut panes = HashMap::new();
+        forget(&mut tracked, &mut panes, &[]);
+        assert!(
+            tracked.contains_key("C:aaaaaa"),
+            "linger=0 sessions are never forgotten just for vanishing"
+        );
+    }
+
+    // ------------------------------------------------------------ try_open
+
+    struct StubTailer;
+    impl Tailer for StubTailer {
+        fn poll(&mut self) -> Vec<StyledLine> {
+            Vec::new()
+        }
+    }
+
+    /// A [`Deck`] whose roster is irrelevant to `try_open` — only
+    /// `open_tailer` matters here — configurable to refuse a chosen key,
+    /// standing in for a source that can't tail that session.
+    struct StubDeck {
+        refuse: HashSet<String>,
+    }
+
+    impl Deck for StubDeck {
+        fn roster(&mut self, _now: f64, _fresh_window: f64, _idle_timeout: f64) -> Vec<RosterRow> {
+            Vec::new()
+        }
+
+        fn open_tailer(
+            &mut self,
+            key: &str,
+            _session_id: &str,
+            _replay: Replay,
+        ) -> Option<Box<dyn Tailer>> {
+            if self.refuse.contains(key) {
+                None
+            } else {
+                Some(Box::new(StubTailer))
+            }
+        }
+    }
+
+    fn ids(keys: &[&str]) -> HashMap<String, String> {
+        keys.iter()
+            .map(|k| (k.to_string(), format!("id-{k}")))
+            .collect()
+    }
+
+    #[test]
+    fn try_open_opens_directly_under_the_cap() {
+        let mut deck = StubDeck {
+            refuse: HashSet::new(),
+        };
+        let mut panes = HashMap::new();
+        let mut tracked = HashMap::new();
+        let ids = ids(&["a"]);
+        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "a", 2);
+        assert!(matches!(outcome, OpenOutcome::Opened));
+        assert!(panes.contains_key("a"));
+    }
+
+    #[test]
+    fn try_open_evicts_the_oldest_finished_pane_when_full() {
+        let mut deck = StubDeck {
+            refuse: HashSet::new(),
+        };
+        let mut panes = panes_with(&["old", "new"]);
+        let mut tracked = HashMap::from([
+            ("old".to_string(), done(Some(1.0), false)),
+            ("new".to_string(), done(Some(2.0), false)),
+        ]);
+        let ids = ids(&["fresh"]);
+        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "fresh", 2);
+        assert!(matches!(outcome, OpenOutcome::Evicted(ref v) if v == "old"));
+        assert!(
+            !panes.contains_key("old"),
+            "the oldest finish should be evicted"
+        );
+        assert!(panes.contains_key("new"), "the newer finish should survive");
+        assert!(panes.contains_key("fresh"));
+        assert!(tracked["old"].killed);
+    }
+
+    #[test]
+    fn try_open_skips_when_every_occupied_slot_is_live() {
+        let mut deck = StubDeck {
+            refuse: HashSet::new(),
+        };
+        let mut panes = panes_with(&["a"]);
+        let mut tracked = HashMap::from([("a".to_string(), live())]);
+        let ids = ids(&["b"]);
+        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "b", 1);
+        assert!(matches!(outcome, OpenOutcome::Skipped));
+        assert!(!panes.contains_key("b"));
+        assert!(panes.contains_key("a"), "an all-live fleet loses no slot");
+    }
+
+    #[test]
+    fn try_open_skips_an_unknown_key_without_touching_the_deck() {
+        let mut deck = StubDeck {
+            refuse: HashSet::new(),
+        };
+        let mut panes = HashMap::new();
+        let mut tracked = HashMap::new();
+        let outcome = try_open(
+            &mut deck,
+            &mut panes,
+            &mut tracked,
+            &HashMap::new(),
+            "ghost",
+            2,
+        );
+        assert!(matches!(outcome, OpenOutcome::Skipped));
+    }
+
+    #[test]
+    fn try_open_evicts_nobody_when_the_source_refuses_the_new_key() {
+        let mut deck = StubDeck {
+            refuse: HashSet::from(["fresh".to_string()]),
+        };
+        let mut panes = panes_with(&["old"]);
+        let mut tracked = HashMap::from([("old".to_string(), done(Some(1.0), false))]);
+        let ids = ids(&["fresh"]);
+        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "fresh", 1);
+        assert!(matches!(outcome, OpenOutcome::Skipped));
+        assert!(
+            panes.contains_key("old"),
+            "a failed open must not cost the victim its slot"
+        );
+        assert!(!tracked["old"].killed);
     }
 }

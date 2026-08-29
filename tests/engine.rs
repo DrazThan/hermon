@@ -39,6 +39,8 @@ fn config(hermes_db: &std::path::Path) -> EngineConfig {
         idle_timeout: 180.0,
         fresh_window: 300.0,
         interval: TICK,
+        linger: 60.0,
+        max_panes: 8,
     }
 }
 
@@ -148,6 +150,8 @@ fn shutdown_joins_promptly_with_no_sessions() {
             idle_timeout: 180.0,
             fresh_window: 300.0,
             interval: TICK,
+            linger: 60.0,
+            max_panes: 8,
         },
         tx,
         rx,
@@ -183,6 +187,8 @@ fn a_hung_up_ui_ends_the_loop_via_the_failing_send() {
             idle_timeout: 180.0,
             fresh_window: 300.0,
             interval: TICK,
+            linger: 60.0,
+            max_panes: 8,
         },
         tx,
         rx,
@@ -280,6 +286,8 @@ fn pane_config() -> EngineConfig {
         idle_timeout: 180.0,
         fresh_window: 300.0,
         interval: Duration::from_millis(500),
+        linger: 60.0,
+        max_panes: 8,
     }
 }
 
