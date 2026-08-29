@@ -450,6 +450,7 @@ mod tests {
             elapsed: Some(n as f64 * 60.0),
             last_ts: 0.0,
             title: format!("title {n}"),
+            attn_elapsed: None,
         }
     }
 

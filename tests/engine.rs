@@ -117,7 +117,7 @@ fn engine_emits_roster_then_a_lifecycle_finished_on_turn_done() {
         {
             Event::Lifecycle {
                 key,
-                change: Lifecycle::Finished,
+                change: Lifecycle::Finished(_),
             } if key == "H:ngine1" => {
                 finished = true;
                 break;
@@ -255,6 +255,7 @@ impl Deck for FakeDeck {
             elapsed: None,
             last_ts: now,
             title: String::new(),
+            attn_elapsed: None,
         }]
     }
 

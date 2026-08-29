@@ -26,7 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::config::EngineConfig;
 use crate::render::StyledLine;
 use crate::roster::{RosterRow, Sources, TICKER_LIMIT, api_call_ticker, build_roster};
-use crate::source::{Liveness, Replay, Tailer};
+use crate::source::{Attn, Liveness, Replay, Tailer};
 
 /// How often open panes are polled for new transcript lines. Far quicker
 /// than the roster scan: a pane should read like a terminal, not like a
@@ -61,14 +61,36 @@ pub enum Event {
 pub enum Lifecycle {
     /// First tick a session's key was seen.
     Started,
-    /// Live or needing attention last tick, done this tick.
-    Finished,
+    /// Live or needing attention last tick, done this tick. Carries why, so
+    /// M6's `decide_alerts` can tell a session that timed out while stuck
+    /// apart from one that just finished its turn cleanly.
+    Finished(Cause),
     /// Done last tick, live or needing attention again this tick.
     Resumed,
     /// A finished session's pane was closed to make room for a new live one
     /// under `--max-panes` (`hermon.py:1389 self_evict`), not because its
     /// own linger expired.
     Evicted,
+    /// Live (or a resumed Done) crossed into [`Liveness::Attention`], or
+    /// switched from one attention reason to the other without ever
+    /// clearing. Carries which.
+    Attention(Attn),
+    /// Was needing attention, is plain live again — a permission prompt
+    /// answered, a wedged tool producing output again.
+    Cleared,
+}
+
+/// Why a [`Lifecycle::Finished`] fired: the session either stopped cleanly
+/// (a turn closed, or the source reported it ended) or was still needing
+/// attention when it aged out past `fresh_window` — the same silence a
+/// human would read as "gave up waiting", not "done".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cause {
+    /// Stopped mid-attention: [`Attn::PermWait`] or [`Attn::Stuck`] never
+    /// resolved before the session aged out of the roster.
+    Timeout,
+    /// Stopped without ever needing attention.
+    Clean,
 }
 
 /// UI → engine. Pane commands follow the cursor: the UI keeps exactly the
@@ -135,6 +157,12 @@ struct Tracked {
     /// key is not retried until it resumes; a killed key gone from the
     /// roster is what [`forget`] prunes.
     killed: bool,
+    /// Set the instant `liveness` last became the [`Liveness::Attention`]
+    /// variant it currently is; cleared the instant it leaves attention
+    /// (cleared to live, or finished). Reset — not preserved — on
+    /// re-entry, and on switching from one attention reason to the other,
+    /// so elapsed-in-state always measures the *current* reason.
+    attn_since: Option<f64>,
 }
 
 pub struct Engine;
@@ -282,17 +310,19 @@ fn scan(
     wanted: &HashSet<String>,
 ) -> Result<(), ()> {
     let now = clock();
-    let rows = deck.roster(now, config.fresh_window, config.idle_timeout);
+    let mut rows = deck.roster(now, config.fresh_window, config.idle_timeout);
 
     let prev_liveness: HashMap<String, Liveness> = tracked
         .iter()
         .map(|(k, t)| (k.clone(), t.liveness))
         .collect();
     let mut events = lifecycle_events(&prev_liveness, &rows);
+    events.extend(attention_events(&prev_liveness, &rows));
     events.extend(vanished_events(tracked, &rows));
 
     apply_lifecycle(tracked, &events, &rows, now);
     refresh_liveness(tracked, &rows);
+    attach_attn_elapsed(tracked, &mut rows, now);
     linger_expire(tracked, panes, config.linger, now);
     forget(tracked, panes, &rows);
     *ids = rows.iter().map(|r| (r.key.clone(), r.id.clone())).collect();
@@ -351,7 +381,46 @@ fn lifecycle_events(prev: &HashMap<String, Liveness>, rows: &[RosterRow]) -> Vec
                 Some(prev_state)
                     if *prev_state != Liveness::Done && row.state == Liveness::Done =>
                 {
-                    Lifecycle::Finished
+                    Lifecycle::Finished(finish_cause(*prev_state))
+                }
+                _ => return None,
+            };
+            Some(Event::Lifecycle {
+                key: row.key.clone(),
+                change,
+            })
+        })
+        .collect()
+}
+
+/// A session that was mid-attention when it stopped timed out waiting for a
+/// human or a wedged tool; anything else stopped on its own.
+fn finish_cause(prev_state: Liveness) -> Cause {
+    if matches!(prev_state, Liveness::Attention(_)) {
+        Cause::Timeout
+    } else {
+        Cause::Clean
+    }
+}
+
+/// Diffs this tick's rows against the last tick's liveness for the
+/// live-side boundary `lifecycle_events` doesn't cover: crossing into or out
+/// of [`Liveness::Attention`] without touching [`Liveness::Done`] at all.
+/// Firing on a brand-new key that starts already needing attention is
+/// deliberate — [`Lifecycle::Started`] narrates the session appearing,
+/// this narrates that it needs eyes on it right away — and a resumption
+/// landing straight in `Attention` fires both `Resumed` and this, since
+/// both are true.
+fn attention_events(prev: &HashMap<String, Liveness>, rows: &[RosterRow]) -> Vec<Event> {
+    rows.iter()
+        .filter_map(|row| {
+            let prev_state = prev.get(&row.key).copied();
+            let change = match row.state {
+                Liveness::Attention(attn) if prev_state != Some(row.state) => {
+                    Lifecycle::Attention(attn)
+                }
+                Liveness::Live if matches!(prev_state, Some(Liveness::Attention(_))) => {
+                    Lifecycle::Cleared
                 }
                 _ => return None,
             };
@@ -373,16 +442,20 @@ fn vanished_events(tracked: &HashMap<String, Tracked>, rows: &[RosterRow]) -> Ve
         .iter()
         .filter(|(_, t)| t.liveness != Liveness::Done)
         .filter(|(key, _)| !rows.iter().any(|r| &r.key == *key))
-        .map(|(key, _)| Event::Lifecycle {
+        .map(|(key, t)| Event::Lifecycle {
             key: key.clone(),
-            change: Lifecycle::Finished,
+            change: Lifecycle::Finished(finish_cause(t.liveness)),
         })
         .collect()
 }
 
-/// Folds this tick's [`Lifecycle::Started`]/`Finished`/`Resumed` events into
-/// [`Tracked`]: starts or clears the linger clock, and clears `killed` so a
-/// resumed session is eligible for a pane again.
+/// Folds this tick's [`Lifecycle`] events into [`Tracked`]: starts or clears
+/// the linger clock, clears `killed` so a resumed session is eligible for a
+/// pane again, and starts or clears the attention clock `Attention`/`Cleared`
+/// carry. `events` always orders a key's [`Lifecycle::Started`] before any
+/// [`Lifecycle::Attention`] for the same tick (`lifecycle_events`'s output
+/// precedes `attention_events`'s in `scan`), so the branches below can
+/// assume the tracked entry already exists by the time attention fires.
 fn apply_lifecycle(
     tracked: &mut HashMap<String, Tracked>,
     events: &[Event],
@@ -405,14 +478,16 @@ fn apply_lifecycle(
                         liveness,
                         finished_at: (liveness == Liveness::Done).then_some(now),
                         killed: false,
+                        attn_since: None,
                     },
                 );
             }
-            Lifecycle::Finished => match tracked.get_mut(key) {
+            Lifecycle::Finished(_) => match tracked.get_mut(key) {
                 Some(t) => {
                     t.liveness = Liveness::Done;
                     t.finished_at = Some(now);
                     t.killed = false;
+                    t.attn_since = None;
                 }
                 None => {
                     tracked.insert(
@@ -421,6 +496,7 @@ fn apply_lifecycle(
                             liveness: Liveness::Done,
                             finished_at: Some(now),
                             killed: false,
+                            attn_since: None,
                         },
                     );
                 }
@@ -443,9 +519,33 @@ fn apply_lifecycle(
                                 liveness,
                                 finished_at: None,
                                 killed: false,
+                                attn_since: None,
                             },
                         );
                     }
+                }
+            }
+            Lifecycle::Attention(attn) => match tracked.get_mut(key) {
+                Some(t) => {
+                    t.liveness = Liveness::Attention(*attn);
+                    t.attn_since = Some(now);
+                }
+                None => {
+                    tracked.insert(
+                        key.clone(),
+                        Tracked {
+                            liveness: Liveness::Attention(*attn),
+                            finished_at: None,
+                            killed: false,
+                            attn_since: Some(now),
+                        },
+                    );
+                }
+            },
+            Lifecycle::Cleared => {
+                if let Some(t) = tracked.get_mut(key) {
+                    t.liveness = Liveness::Live;
+                    t.attn_since = None;
                 }
             }
             Lifecycle::Evicted => {}
@@ -463,6 +563,20 @@ fn refresh_liveness(tracked: &mut HashMap<String, Tracked>, rows: &[RosterRow]) 
         if let Some(t) = tracked.get_mut(&row.key) {
             t.liveness = row.state;
         }
+    }
+}
+
+/// Stamps each row with how long its session has held its current
+/// [`Liveness::Attention`] state, read from the `attn_since` [`apply_lifecycle`]
+/// just settled — `None` outside attention. This is the only place
+/// [`RosterRow::attn_elapsed`] is ever set: [`build_roster`] itself has no
+/// memory of a previous tick to compute it from.
+fn attach_attn_elapsed(tracked: &HashMap<String, Tracked>, rows: &mut [RosterRow], now: f64) {
+    for row in rows.iter_mut() {
+        row.attn_elapsed = tracked
+            .get(&row.key)
+            .and_then(|t| t.attn_since)
+            .map(|since| now - since);
     }
 }
 
@@ -600,6 +714,7 @@ mod tests {
             elapsed: None,
             last_ts: 0.0,
             title: String::new(),
+            attn_elapsed: None,
         }
     }
 
@@ -617,14 +732,14 @@ mod tests {
     }
 
     #[test]
-    fn live_to_done_is_finished() {
+    fn live_to_done_is_finished_cleanly() {
         let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Live)]);
         let rows = vec![row("C:aaaaaa", Liveness::Done)];
         assert_eq!(
             lifecycle_events(&prev, &rows),
             vec![Event::Lifecycle {
                 key: "C:aaaaaa".to_string(),
-                change: Lifecycle::Finished,
+                change: Lifecycle::Finished(Cause::Clean),
             }]
         );
     }
@@ -643,20 +758,86 @@ mod tests {
     }
 
     #[test]
-    fn attention_counts_as_live_for_lifecycle() {
+    fn attention_counts_as_live_for_the_done_boundary() {
+        // lifecycle_events only narrates the live/done boundary; entering
+        // Attention fires nothing on this side (attention_events covers it).
         let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Live)]);
         let rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::Stuck))];
         assert!(lifecycle_events(&prev, &rows).is_empty());
+    }
 
+    #[test]
+    fn finishing_from_attention_is_a_timeout() {
         let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Attention(Attn::PermWait))]);
         let rows = vec![row("C:aaaaaa", Liveness::Done)];
         assert_eq!(
             lifecycle_events(&prev, &rows),
             vec![Event::Lifecycle {
                 key: "C:aaaaaa".to_string(),
-                change: Lifecycle::Finished,
+                change: Lifecycle::Finished(Cause::Timeout),
             }]
         );
+    }
+
+    // ------------------------------------------------------- attention events
+
+    #[test]
+    fn live_to_attention_fires_the_reason() {
+        let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Live)]);
+        let rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::PermWait))];
+        assert_eq!(
+            attention_events(&prev, &rows),
+            vec![Event::Lifecycle {
+                key: "C:aaaaaa".to_string(),
+                change: Lifecycle::Attention(Attn::PermWait),
+            }]
+        );
+    }
+
+    #[test]
+    fn attention_to_live_is_cleared() {
+        let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Attention(Attn::Stuck))]);
+        let rows = vec![row("C:aaaaaa", Liveness::Live)];
+        assert_eq!(
+            attention_events(&prev, &rows),
+            vec![Event::Lifecycle {
+                key: "C:aaaaaa".to_string(),
+                change: Lifecycle::Cleared,
+            }]
+        );
+    }
+
+    #[test]
+    fn switching_attention_reason_fires_again() {
+        let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Attention(Attn::PermWait))]);
+        let rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::Stuck))];
+        assert_eq!(
+            attention_events(&prev, &rows),
+            vec![Event::Lifecycle {
+                key: "C:aaaaaa".to_string(),
+                change: Lifecycle::Attention(Attn::Stuck),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_brand_new_key_starting_in_attention_fires_it_too() {
+        let prev = HashMap::new();
+        let rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::Stuck))];
+        assert_eq!(
+            attention_events(&prev, &rows),
+            vec![Event::Lifecycle {
+                key: "C:aaaaaa".to_string(),
+                change: Lifecycle::Attention(Attn::Stuck),
+            }]
+        );
+    }
+
+    #[test]
+    fn unchanged_attention_emits_nothing() {
+        let prev = HashMap::from([("C:aaaaaa".to_string(), Liveness::Attention(Attn::Stuck))]);
+        let rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::Stuck))];
+        assert!(attention_events(&prev, &rows).is_empty());
     }
 
     #[test]
@@ -673,6 +854,7 @@ mod tests {
             liveness: Liveness::Done,
             finished_at,
             killed,
+            attn_since: None,
         }
     }
 
@@ -681,6 +863,16 @@ mod tests {
             liveness: Liveness::Live,
             finished_at: None,
             killed: false,
+            attn_since: None,
+        }
+    }
+
+    fn attention(attn: Attn, attn_since: f64) -> Tracked {
+        Tracked {
+            liveness: Liveness::Attention(attn),
+            finished_at: None,
+            killed: false,
+            attn_since: Some(attn_since),
         }
     }
 
@@ -691,7 +883,19 @@ mod tests {
             vanished_events(&tracked, &[]),
             vec![Event::Lifecycle {
                 key: "C:aaaaaa".to_string(),
-                change: Lifecycle::Finished,
+                change: Lifecycle::Finished(Cause::Clean),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_vanished_attention_key_finishes_as_a_timeout() {
+        let tracked = HashMap::from([("C:aaaaaa".to_string(), attention(Attn::Stuck, 0.0))]);
+        assert_eq!(
+            vanished_events(&tracked, &[]),
+            vec![Event::Lifecycle {
+                key: "C:aaaaaa".to_string(),
+                change: Lifecycle::Finished(Cause::Timeout),
             }]
         );
     }
@@ -741,13 +945,119 @@ mod tests {
         let mut tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
         let events = vec![Event::Lifecycle {
             key: "C:aaaaaa".to_string(),
-            change: Lifecycle::Finished,
+            change: Lifecycle::Finished(Cause::Clean),
         }];
         apply_lifecycle(&mut tracked, &events, &[], 200.0);
         let t = tracked["C:aaaaaa"];
         assert_eq!(t.liveness, Liveness::Done);
         assert_eq!(t.finished_at, Some(200.0));
         assert!(!t.killed);
+    }
+
+    #[test]
+    fn apply_lifecycle_finish_clears_the_attention_clock() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), attention(Attn::Stuck, 10.0))]);
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Finished(Cause::Timeout),
+        }];
+        apply_lifecycle(&mut tracked, &events, &[], 200.0);
+        assert_eq!(tracked["C:aaaaaa"].attn_since, None);
+    }
+
+    #[test]
+    fn apply_lifecycle_attention_starts_the_clock() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Attention(Attn::PermWait),
+        }];
+        apply_lifecycle(&mut tracked, &events, &[], 50.0);
+        let t = tracked["C:aaaaaa"];
+        assert_eq!(t.liveness, Liveness::Attention(Attn::PermWait));
+        assert_eq!(t.attn_since, Some(50.0));
+    }
+
+    #[test]
+    fn apply_lifecycle_attention_resets_the_clock_on_re_entry() {
+        let mut tracked =
+            HashMap::from([("C:aaaaaa".to_string(), attention(Attn::PermWait, 10.0))]);
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Attention(Attn::PermWait),
+        }];
+        apply_lifecycle(&mut tracked, &events, &[], 999.0);
+        assert_eq!(
+            tracked["C:aaaaaa"].attn_since,
+            Some(999.0),
+            "re-entering resets elapsed-in-state rather than preserving the old clock"
+        );
+    }
+
+    #[test]
+    fn apply_lifecycle_cleared_stops_the_clock() {
+        let mut tracked = HashMap::from([("C:aaaaaa".to_string(), attention(Attn::Stuck, 10.0))]);
+        let events = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Cleared,
+        }];
+        apply_lifecycle(&mut tracked, &events, &[], 50.0);
+        let t = tracked["C:aaaaaa"];
+        assert_eq!(t.liveness, Liveness::Live);
+        assert_eq!(t.attn_since, None);
+    }
+
+    #[test]
+    fn attn_elapsed_reflects_time_since_the_tracked_clock_started() {
+        let tracked = HashMap::from([("C:aaaaaa".to_string(), attention(Attn::Stuck, 100.0))]);
+        let mut rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::Stuck))];
+        attach_attn_elapsed(&tracked, &mut rows, 145.0);
+        assert_eq!(rows[0].attn_elapsed, Some(45.0));
+    }
+
+    #[test]
+    fn attn_elapsed_is_none_outside_attention() {
+        let tracked = HashMap::from([("C:aaaaaa".to_string(), live())]);
+        let mut rows = vec![row("C:aaaaaa", Liveness::Live)];
+        attach_attn_elapsed(&tracked, &mut rows, 145.0);
+        assert_eq!(rows[0].attn_elapsed, None);
+    }
+
+    /// End-to-end through `apply_lifecycle` + `attach_attn_elapsed`, as
+    /// `scan` runs them: entering PermWait starts the clock, a tick later
+    /// elapsed has grown, clearing to Live stops it, and re-entering PermWait
+    /// starts the clock over rather than picking the old one back up.
+    #[test]
+    fn elapsed_in_state_resets_on_re_entry_end_to_end() {
+        let mut tracked = HashMap::new();
+
+        let enter = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Attention(Attn::PermWait),
+        }];
+        apply_lifecycle(&mut tracked, &enter, &[], 0.0);
+        let mut rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::PermWait))];
+        attach_attn_elapsed(&tracked, &mut rows, 45.0);
+        assert_eq!(rows[0].attn_elapsed, Some(45.0));
+
+        let clear = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Cleared,
+        }];
+        apply_lifecycle(&mut tracked, &clear, &[], 46.0);
+
+        let reenter = vec![Event::Lifecycle {
+            key: "C:aaaaaa".to_string(),
+            change: Lifecycle::Attention(Attn::PermWait),
+        }];
+        apply_lifecycle(&mut tracked, &reenter, &[], 100.0);
+        let mut rows = vec![row("C:aaaaaa", Liveness::Attention(Attn::PermWait))];
+        attach_attn_elapsed(&tracked, &mut rows, 105.0);
+        assert_eq!(
+            rows[0].attn_elapsed,
+            Some(5.0),
+            "re-entry should measure from the new since, not the original one"
+        );
     }
 
     #[test]
