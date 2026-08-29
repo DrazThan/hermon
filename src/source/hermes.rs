@@ -196,6 +196,7 @@ impl Source for HermesSource {
                 last_ts: row.get(10)?,
                 turn_done,
                 tool_pending,
+                force_live: false,
                 last_tool: "-".to_string(),
                 last_line,
                 last_event: None,
