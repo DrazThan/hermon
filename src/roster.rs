@@ -417,7 +417,14 @@ mod tests {
             "/nonexistent/h.db",
             "/nonexistent/o.db",
         );
-        for key in ["C:aaaaaa", "H:bbbbbb", "O:cccccc", "Z:dddddd", "nocolon"] {
+        // OpenCode tails through a missing database (it waits for it);
+        // the sources whose tailers have not landed yet do not.
+        assert!(
+            sources
+                .open_tailer("O:cccccc", "id", Replay::DEFAULT)
+                .is_some()
+        );
+        for key in ["C:aaaaaa", "H:bbbbbb", "Z:dddddd", "nocolon"] {
             assert!(sources.open_tailer(key, "id", Replay::DEFAULT).is_none());
         }
     }
