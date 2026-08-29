@@ -7,6 +7,7 @@
 //! over a wall of tiled [`pane`]s, laid out here.
 
 pub mod list;
+pub mod overlay;
 pub mod palette;
 pub mod pane;
 pub mod roster;
@@ -23,7 +24,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::{Frame, Terminal};
 
@@ -31,9 +32,12 @@ use crate::config::EngineConfig;
 use crate::engine::{Engine, Event, UiCmd};
 use crate::render::{Sem, StyledLine};
 use crate::roster::RosterRow;
+use crate::ui::overlay::{Palette, PaletteFocus};
+use crate::view::{self, ViewState};
 
-const FOOTER_LIST: &str = "[q]uit [j/k]select [l]grid [?]help";
-const FOOTER_GRID: &str = "[q]uit [j/k]select [l]list [Tab]page [z]oom [x/o]close/open [?]help";
+const FOOTER_LIST: &str = "[q]uit [j/k]select [l]grid [s]ort [f]ilter [a]ttn [?]help";
+const FOOTER_GRID: &str =
+    "[q]uit [j/k]select [l]list [Tab]page [z]oom [x/o]close/open [s]ort [f]ilter [a]ttn [?]help";
 const FOOTER_ZOOM: &str = "[q]uit [Esc]back [PgUp/PgDn]scroll [g/G]top/tail [?]help";
 const HELP: &str = "q / Ctrl-C  quit\nj / \u{2193}       next\nk / \u{2191}       previous\nl           list / grid\nTab         next page\n\u{21b5} / z       zoom\nEsc         leave zoom\nPgUp/PgDn   scroll pane\ng / G       top / follow tail\nx / o       close / reopen\n?           toggle help";
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -106,6 +110,13 @@ pub struct App {
     open_panes: Vec<String>,
     /// Commands the run loop has not yet handed to the engine.
     cmds: Vec<UiCmd>,
+    /// The active sort, filter and attention-first flag (#40's pure core).
+    /// Everything that lists sessions — list mode, the grid's slots, the
+    /// header chips — reads the fleet through [`App::visible_rows`] rather
+    /// than `roster` directly, so it stays in sync with this.
+    pub view: ViewState,
+    /// The sort/filter overlay, open while `[s]`/`[f]` has it up.
+    pub palette: Option<Palette>,
 }
 
 impl App {
@@ -124,6 +135,14 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+        if let Some(palette) = &mut self.palette {
+            if palette.handle_key(key.code, &mut self.view) {
+                self.palette = None;
+            }
+            self.resync_selection();
+            self.sync_panes();
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -133,6 +152,20 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => self.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.select_prev(),
             KeyCode::Char('l') => self.toggle_mode(),
+            KeyCode::Char('s') => {
+                self.palette = Some(Palette::open(&self.view, PaletteFocus::Sort))
+            }
+            KeyCode::Char('f') => {
+                self.palette = Some(Palette::open(&self.view, PaletteFocus::Filter))
+            }
+            KeyCode::Char('a') => {
+                self.view.attention_first = !self.view.attention_first;
+                self.resync_selection();
+            }
+            KeyCode::Char('c') => {
+                self.view.clear();
+                self.resync_selection();
+            }
             code if self.mode == ViewMode::Grid => self.handle_grid_key(code),
             _ => {}
         }
@@ -250,10 +283,18 @@ impl App {
         self.open_panes = wanted;
     }
 
-    /// Sessions eligible for a grid slot: the roster in order, minus the ones
-    /// dismissed with `[x]`. First-come — eviction policy is M4.
+    /// The fleet sorted and filtered by [`App::view`] — what list mode
+    /// shows and grid mode hands out slots from. Recomputed from `roster`
+    /// each call rather than cached, since it is cheap and every mutation
+    /// site would otherwise have to remember to invalidate it.
+    pub fn visible_rows(&self) -> Vec<&RosterRow> {
+        view::apply(&self.roster, &self.view).rows
+    }
+
+    /// Sessions eligible for a grid slot: the filtered, sorted fleet minus
+    /// the ones dismissed with `[x]`. First-come — eviction policy is M4.
     fn grid_keys(&self) -> Vec<String> {
-        self.roster
+        self.visible_rows()
             .iter()
             .map(|row| row.key.clone())
             .filter(|key| !self.closed.contains(key))
@@ -320,24 +361,38 @@ impl App {
         std::mem::take(&mut self.cmds)
     }
 
-    /// The selected session, or `None` while the roster is empty.
+    /// The selected session, or `None` while the roster is empty or the
+    /// filter hides it.
     pub fn selected_row(&self) -> Option<&RosterRow> {
-        let id = self.selected_id.as_ref()?;
-        self.roster.iter().find(|r| &r.id == id)
+        let id = self.selected_id.clone()?;
+        self.visible_rows().into_iter().find(|r| r.id == id)
     }
 
-    /// Where the selected session currently sits; 0 when it is gone, which
-    /// is also where an untouched cursor starts.
+    /// Snaps the cursor onto a visible row when the current selection has
+    /// gone missing — a session ending or a filter hiding it both look the
+    /// same here: `selected_row` comes back empty. Falling back to the same
+    /// position beats jumping to the top.
+    fn resync_selection(&mut self) {
+        let position = self.selected_index();
+        if self.selected_row().is_none() {
+            self.select_at(position);
+        }
+    }
+
+    /// Where the selected session currently sits among the visible
+    /// (filtered, sorted) rows; 0 when it is gone, which is also where an
+    /// untouched cursor starts.
     pub fn selected_index(&self) -> usize {
         self.selected_id
             .as_ref()
-            .and_then(|id| self.roster.iter().position(|r| &r.id == id))
+            .and_then(|id| self.visible_rows().iter().position(|r| &r.id == id))
             .unwrap_or(0)
     }
 
     fn select_at(&mut self, position: usize) {
-        let position = position.min(self.roster.len().saturating_sub(1));
-        self.selected_id = self.roster.get(position).map(|r| r.id.clone());
+        let rows = self.visible_rows();
+        let position = position.min(rows.len().saturating_sub(1));
+        self.selected_id = rows.get(position).map(|r| r.id.clone());
     }
 
     fn select_next(&mut self) {
@@ -445,16 +500,30 @@ fn run_terminal(mut app: App, rx: &Receiver<Event>, cmd_tx: &Sender<UiCmd>) -> a
     Ok(())
 }
 
-/// A frame: the active mode's body over a one-line footer, with the help
-/// overlay on top when it is open.
+/// A frame: the header chip bar (artboard 3a, only while a sort or filter is
+/// active) over the active mode's body over a one-line footer, with the
+/// sort/filter overlay and the help overlay on top when either is open.
 pub fn draw(frame: &mut Frame, app: &App) {
-    let [body, footer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+    let header_height = u16::from(header_active(app));
+    let [header, body, footer] = Layout::vertical([
+        Constraint::Length(header_height),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    if header_height > 0 {
+        render_header(frame, header, app);
+    }
     match app.mode {
         ViewMode::List => list::render(frame, body, app),
         ViewMode::Grid => render_grid(frame, body, app),
     }
     frame.render_widget(Paragraph::new(footer_text(app)), footer);
+
+    if let Some(palette) = &app.palette {
+        let (matched, total) = overlay::draft_matches(&app.roster, &app.view, &palette.input);
+        overlay::render(frame, frame.area(), &app.view, palette, matched, total);
+    }
 
     if app.show_help {
         let area = centered(frame.area(), 30, 13);
@@ -464,6 +533,46 @@ pub fn draw(frame: &mut Frame, app: &App) {
             area,
         );
     }
+}
+
+/// Whether the header chip bar has anything to show: an active sort or a
+/// non-empty filter. `attention_first` alone (`[a]`) does not raise it —
+/// that toggle has no chip of its own, per the artboard.
+fn header_active(app: &App) -> bool {
+    app.view.sort_key.is_some() || !app.view.filter.is_empty()
+}
+
+/// The chip bar (artboard 3a): `sort: cost ↓` plus one green chip per
+/// filter term on the left, `N/M shown · [s]ort [f]ilter [c]lear`
+/// right-aligned.
+fn render_header(frame: &mut Frame, area: Rect, app: &App) {
+    let out = view::apply(&app.roster, &app.view);
+
+    let mut left: Vec<Span> = Vec::new();
+    if let Some(key) = app.view.sort_key {
+        left.push(Span::styled(
+            format!("sort: {} {}", key.label(), app.view.sort_dir.arrow()),
+            palette::style(Sem::Stat),
+        ));
+        left.push(Span::raw("  "));
+    }
+    for chip in app.view.filter.chips() {
+        left.push(Span::styled(format!("[{chip}]"), palette::style(Sem::Ok)));
+        left.push(Span::raw(" "));
+    }
+
+    let left_width: usize = left.iter().map(|s| s.content.chars().count()).sum();
+    let right = format!(
+        "{}/{} shown \u{b7} [s]ort [f]ilter [c]lear",
+        out.matched, out.total
+    );
+    let width = area.width as usize;
+    let pad = width.saturating_sub(left_width + right.chars().count());
+
+    let mut spans = left;
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.push(Span::styled(right, palette::style(Sem::Dim)));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn footer_text(app: &App) -> &'static str {
@@ -564,6 +673,7 @@ mod tests {
 
     use super::*;
     use crate::source::{Attn, Liveness};
+    use crate::view::SortKey;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -801,7 +911,7 @@ mod tests {
 
     #[test]
     fn draws_the_empty_state_and_footer_before_the_first_roster() {
-        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
         let app = App {
             paths: vec!["/tmp/claude".to_string()],
             ..App::default()
@@ -918,7 +1028,9 @@ mod tests {
                 "border at {x},{y}:\n{rendered}"
             );
         }
-        assert!(rendered.contains(FOOTER_GRID), "{rendered}");
+        // The footer line is wider than the 80-column tiling grid above, so
+        // it gets its own wider buffer rather than clipping mid-assertion.
+        assert!(screen(&app, 100, 24).contains(FOOTER_GRID));
     }
 
     #[test]
@@ -1143,5 +1255,255 @@ mod tests {
         let app = grid(Vec::new());
         let rendered = screen(&app, 60, 12);
         assert!(rendered.contains("no agent sessions found"), "{rendered}");
+    }
+
+    // ------------------------------------------------- sort/filter palette
+
+    fn model_row(key: &str, model: &str) -> RosterRow {
+        RosterRow {
+            model: model.to_string(),
+            ..row(key)
+        }
+    }
+
+    fn fleet() -> Vec<RosterRow> {
+        vec![
+            model_row("C:aaaaaa", "claude-sonnet-5"),
+            model_row("H:bbbbbb", "claude-opus-5"),
+            model_row("O:cccccc", "gpt-6"),
+        ]
+    }
+
+    #[test]
+    fn s_opens_sort_focus_and_f_opens_filter_focus() {
+        let mut app = App::default();
+        app.handle_key(key(KeyCode::Char('s')));
+        assert_eq!(app.palette.as_ref().unwrap().focus, PaletteFocus::Sort);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.palette.is_none());
+
+        app.handle_key(key(KeyCode::Char('f')));
+        assert_eq!(app.palette.as_ref().unwrap().focus, PaletteFocus::Filter);
+    }
+
+    /// While the palette is open every key belongs to it — `q` must not
+    /// quit and `j`/`k` must not move the roster cursor out from under it.
+    #[test]
+    fn the_open_palette_swallows_quit_and_navigation_keys() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        app.handle_key(key(KeyCode::Char('s')));
+        app.handle_key(key(KeyCode::Char('q')));
+        app.handle_key(key(KeyCode::Char('j')));
+        assert!(!app.quit);
+        assert_eq!(selected_key(&app), Some("C:aaaaaa"));
+        assert!(app.palette.is_some());
+    }
+
+    /// `[1]` then `[1]` again picks cost ascending, then flips to
+    /// descending — the palette's sort focus routes straight to
+    /// `ViewState::toggle_sort`.
+    #[test]
+    fn digit_then_same_digit_flips_sort_direction_through_the_app() {
+        let mut app = App::default();
+        app.handle_key(key(KeyCode::Char('s')));
+        app.handle_key(key(KeyCode::Char('4'))); // [4] cost
+        assert_eq!(app.view.sort_key, Some(SortKey::Cost));
+        assert_eq!(app.view.sort_dir, crate::view::SortDir::Asc);
+        app.handle_key(key(KeyCode::Char('4')));
+        assert_eq!(app.view.sort_dir, crate::view::SortDir::Desc);
+    }
+
+    /// Typing a filter updates the live count, `[Enter]` commits it and
+    /// closes the overlay, and it applies identically whether the fleet is
+    /// shown as a list or a grid.
+    #[test]
+    fn typing_a_filter_updates_the_count_and_enter_applies_it() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        app.handle_key(key(KeyCode::Char('f')));
+        for c in "model=claude*".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        let (matched, total) =
+            overlay::draft_matches(&app.roster, &app.view, &app.palette.as_ref().unwrap().input);
+        assert_eq!((matched, total), (2, 3), "live count while still typing");
+
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.palette.is_none(), "enter closes the overlay");
+        assert_eq!(app.view.filter.chips(), ["model=claude*"]);
+        assert_eq!(
+            app.visible_rows()
+                .iter()
+                .map(|r| r.key.as_str())
+                .collect::<Vec<_>>(),
+            ["C:aaaaaa", "H:bbbbbb"]
+        );
+    }
+
+    /// `[Esc]` restores the sort and filter exactly as they were before the
+    /// overlay opened, discarding whatever was picked or typed inside it.
+    #[test]
+    fn esc_restores_the_prior_sort_and_filter() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        app.handle_key(key(KeyCode::Char('f')));
+        for c in "model=claude*".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        let committed = app.view.clone();
+
+        app.handle_key(key(KeyCode::Char('s')));
+        app.handle_key(key(KeyCode::Char('2'))); // [2] tool
+        assert_ne!(
+            app.view.sort_key, committed.sort_key,
+            "sanity: chip applied"
+        );
+        app.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(app.view, committed);
+        assert!(app.palette.is_none());
+    }
+
+    /// `[c]` in sort focus clears both the sort and the filter in one go.
+    #[test]
+    fn c_in_sort_focus_clears_sort_and_filter() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        app.view.set_filter("model=claude*").unwrap();
+        app.view.toggle_sort(SortKey::Cost);
+
+        app.handle_key(key(KeyCode::Char('s')));
+        app.handle_key(key(KeyCode::Char('c')));
+        app.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(app.view.sort_key, None);
+        assert!(app.view.filter.is_empty());
+        assert_eq!(app.visible_rows().len(), 3, "clearing shows every session");
+    }
+
+    /// Outside the overlay, the header's own `[c]` clears immediately with
+    /// no palette round trip.
+    #[test]
+    fn header_c_clears_without_opening_the_palette() {
+        let mut app = App::default();
+        app.view.toggle_sort(SortKey::Cost);
+        app.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(app.view.sort_key, None);
+        assert!(app.palette.is_none());
+    }
+
+    #[test]
+    fn the_header_chip_bar_appears_only_once_a_sort_or_filter_is_active() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        assert!(!screen(&app, 80, 20).contains("shown"), "no chips yet");
+
+        app.view.toggle_sort(SortKey::Cost);
+        let rendered = screen(&app, 80, 20);
+        assert!(rendered.contains("sort: cost \u{2191}"), "{rendered}");
+        assert!(rendered.contains("3/3 shown"), "{rendered}");
+        assert!(rendered.contains("[s]ort [f]ilter [c]lear"), "{rendered}");
+    }
+
+    #[test]
+    fn the_header_shows_a_green_chip_per_filter_term_and_the_live_count() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        app.view.set_filter("model=claude*").unwrap();
+        let rendered = screen(&app, 80, 20);
+        assert!(rendered.contains("[model=claude*]"), "{rendered}");
+        assert!(rendered.contains("2/3 shown"), "{rendered}");
+    }
+
+    /// List mode only shows the matching rows, and the cursor re-lands on
+    /// one of them instead of tracking a now-hidden session.
+    #[test]
+    fn a_filter_hides_non_matching_rows_in_list_mode() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        app.view.set_filter("model=claude*").unwrap();
+        app.resync_selection();
+        let rendered = screen(&app, 80, 20);
+        assert!(rendered.contains("C:aaaaaa"), "{rendered}");
+        assert!(rendered.contains("H:bbbbbb"), "{rendered}");
+        assert!(!rendered.contains("O:cccccc"), "{rendered}");
+    }
+
+    /// Grid mode hands out slots from the same filtered set: only the
+    /// matching sessions get tiled.
+    #[test]
+    fn a_filter_hides_non_matching_sessions_in_grid_mode() {
+        let mut app = grid(fleet());
+        app.view.set_filter("model=claude*").unwrap();
+        let rendered = screen(&app, 80, 24);
+        assert!(rendered.contains("C:aaaaaa"), "{rendered}");
+        assert!(rendered.contains("H:bbbbbb"), "{rendered}");
+        assert!(
+            !rendered.contains("O:cccccc"),
+            "grid still tiling a filtered-out session:\n{rendered}"
+        );
+    }
+
+    /// The overlay itself: both sections visible, the active sort chip in
+    /// its highlighted style, and the live match count for the typed
+    /// filter.
+    #[test]
+    fn the_overlay_shows_both_sections_and_the_active_chip() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(fleet()));
+        app.handle_key(key(KeyCode::Char('s')));
+        app.handle_key(key(KeyCode::Char('4'))); // [4] cost, ascending
+        let rendered = screen(&app, 80, 24);
+
+        assert!(rendered.contains("sort / filter"), "{rendered}");
+        for label in ["model", "tool", "in/out", "cost", "elapsed"] {
+            assert!(
+                rendered.contains(label),
+                "chip {label} missing:\n{rendered}"
+            );
+        }
+        assert!(rendered.contains("cost \u{2191}"), "{rendered}");
+        assert!(rendered.contains("filter:"), "{rendered}");
+        assert!(rendered.contains("matches: 3 of 3"), "{rendered}");
+        assert!(rendered.contains("apply"), "{rendered}");
+        assert!(rendered.contains("clear all"), "{rendered}");
+        assert!(rendered.contains("cancel"), "{rendered}");
+
+        let buf = buffer(&app, 80, 24);
+        let overlay_rect = centered(buf.area, 62, 7);
+        // The active chip's bracket is cyan (border_selected); an inactive
+        // one is dim. "[1] model  [2] tool  [3] in/out  " is 33 columns, so
+        // the [4] cost chip's own bracket starts right after that.
+        let inactive_x = overlay_rect.x + 1; // "[1"
+        let active_x = overlay_rect.x + 1 + 33; // "[4"
+        let y = overlay_rect.y + 1; // first row inside the border
+        assert_eq!(
+            buf[(inactive_x, y)].fg,
+            palette::style(Sem::Dim).fg.unwrap(),
+            "inactive chip should not be highlighted"
+        );
+        assert_eq!(
+            buf[(active_x, y)].fg,
+            palette::border_selected().fg.unwrap(),
+            "active chip's bracket should be cyan"
+        );
+    }
+
+    /// A malformed filter shows the parse error instead of a stale count,
+    /// and does not close the overlay or touch the committed filter.
+    #[test]
+    fn the_overlay_shows_a_parse_error_instead_of_a_count() {
+        let mut app = App::default();
+        app.handle_key(key(KeyCode::Char('f')));
+        for c in "cost>abc".chars() {
+            app.handle_key(key(KeyCode::Char(c)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.palette.is_some(), "a bad filter keeps the overlay open");
+        let rendered = screen(&app, 80, 24);
+        assert!(rendered.contains("not a number"), "{rendered}");
+        assert!(app.view.filter.is_empty());
     }
 }
