@@ -109,12 +109,13 @@ pub fn resolve_key<'a>(rows: &'a [RosterRow], key: &str) -> anyhow::Result<&'a R
 /// A session is dropped only when it is both finished and older than
 /// `fresh_window` — a live session is never hidden by age.
 ///
-/// Two deliberate departures from Python: liveness comes from
-/// [`classify`] for *all* sources, so Claude sessions can surface the
-/// attention states too (Python has only live/done), and the `lsof`
-/// escalation Python uses to keep a quiet-but-open transcript live
-/// (`hermon.py:447`) is not ported — it exists to keep panes from being
-/// unsplit, which is the watcher's problem, not the roster's.
+/// One deliberate departure from Python: liveness comes from [`classify`]
+/// for *all* sources, so Claude sessions can surface the attention states
+/// too (Python has only live/done). The `lsof` write-handle escalation
+/// Python uses to keep a quiet-but-open transcript live (`hermon.py:447`)
+/// *is* ported, via [`crate::source::claude::ClaudeSource`] setting
+/// [`crate::source::SessionMeta::force_live`] before `classify` ever sees
+/// the session.
 pub fn build_roster(
     sources: &mut Sources,
     now: f64,
@@ -123,7 +124,7 @@ pub fn build_roster(
 ) -> Vec<RosterRow> {
     let mut rows = Vec::new();
 
-    for s in sources.claude.sessions() {
+    for s in sources.claude.sessions(now, idle_timeout) {
         let tool = s.last_tool.clone();
         rows.extend(roster_row("C", &s, tool, now, fresh_window, idle_timeout));
     }
