@@ -87,6 +87,7 @@ impl OpenCodeSource {
                 last_ts: updated.or(created).unwrap_or(0.0) / 1000.0,
                 turn_done: role == Some("assistant") && finish == Some("stop"),
                 tool_pending: role == Some("assistant") && finish == Some("tool-calls"),
+                force_live: false,
                 last_tool: "-".to_string(),
                 last_line: last_line(role, finish),
                 last_event: None,

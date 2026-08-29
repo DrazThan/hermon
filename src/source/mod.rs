@@ -32,6 +32,13 @@ pub struct SessionMeta {
     pub last_ts: f64,
     pub turn_done: bool,
     pub tool_pending: bool,
+    /// Forces the raw live/done rule to read live regardless of the
+    /// `last_ts`-vs-`idle_timeout` ceiling. Set only by
+    /// [`crate::source::claude::ClaudeSource`], when `lsof` reports an open
+    /// write handle on a transcript whose mtime alone would read stale — the
+    /// process is still running even though nothing new has been written
+    /// yet (`hermon.py:447`). Other sources always leave this `false`.
+    pub force_live: bool,
     pub last_tool: String,
     pub last_line: String,
     /// Claude fills this; DB sources leave `None`.
@@ -100,6 +107,9 @@ fn turn_liveness_raw(s: &SessionMeta, now: f64, idle_timeout: f64) -> bool {
     if s.turn_done {
         return false;
     }
+    if s.force_live {
+        return true;
+    }
     let ceiling = if s.tool_pending {
         idle_timeout * TOOL_PENDING_CEILING_MULT
     } else {
@@ -147,6 +157,7 @@ mod tests {
         ended: bool,
         turn_done: bool,
         tool_pending: bool,
+        force_live: bool,
         age: f64,
         last_event: Option<LastEvent>,
     }
@@ -157,6 +168,7 @@ mod tests {
                 ended: false,
                 turn_done: false,
                 tool_pending: false,
+                force_live: false,
                 age: 0.0,
                 last_event: None,
             }
@@ -176,6 +188,7 @@ mod tests {
             last_ts: NOW - m.age,
             turn_done: m.turn_done,
             tool_pending: m.tool_pending,
+            force_live: m.force_live,
             last_tool: "-".into(),
             last_line: String::new(),
             last_event: m.last_event,
@@ -456,6 +469,46 @@ mod tests {
                     ..M::default()
                 },
                 Attention(Stuck),
+            ),
+            // --- force_live (lsof write-handle escalation) ---
+            (
+                "force_live overrides a blown plain ceiling",
+                M {
+                    force_live: true,
+                    age: 999.0,
+                    ..M::default()
+                },
+                Live,
+            ),
+            (
+                "force_live plus silent ToolUse still yields PermWait",
+                M {
+                    force_live: true,
+                    age: 999.0,
+                    last_event: tool_use(),
+                    ..M::default()
+                },
+                Attention(PermWait),
+            ),
+            (
+                "ended still wins over force_live",
+                M {
+                    ended: true,
+                    force_live: true,
+                    age: 999.0,
+                    ..M::default()
+                },
+                Done,
+            ),
+            (
+                "turn_done still wins over force_live",
+                M {
+                    turn_done: true,
+                    force_live: true,
+                    age: 999.0,
+                    ..M::default()
+                },
+                Done,
             ),
         ];
 

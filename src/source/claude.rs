@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::rc::Rc;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
@@ -258,6 +261,52 @@ fn result_text(content: Option<&Value>) -> String {
 /// this old is a live session worth tracking.
 const RECENCY_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// A stale transcript this many multiples of `idle_timeout` past its mtime
+/// is not worth an `lsof` call — port of the `now - mtime <= idle_timeout *
+/// 5` leg of `hermon.py:447`'s cost bound.
+const LSOF_STALE_MULT: f64 = 5.0;
+
+/// True if any descriptor line from `lsof -F a` output reports write (`w`)
+/// or update (`u`) access. Read-only (`r`) handles are deliberately
+/// excluded: hermon's own tailers hold transcripts open read-only, and
+/// counting those would pin every session live forever
+/// (`hermon.py:127 has_open_handle`).
+fn parse_write_access(stdout: &str) -> bool {
+    stdout
+        .lines()
+        .any(|line| line.starts_with('a') && (line.contains('w') || line.contains('u')))
+}
+
+/// Detects `lsof` on `PATH` exactly once per process, warning to stderr the
+/// first time it's found missing (`hermon.py:1314`).
+fn lsof_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let available = Command::new("lsof").arg("-v").output().is_ok();
+        if !available {
+            eprintln!("hermon: lsof not found — mtime-only liveness for claude transcripts");
+        }
+        available
+    })
+}
+
+/// A write-handle check, real or (in tests) a call-counting stub.
+type WriteHandleProbe = Rc<dyn Fn(&Path) -> Option<bool>>;
+
+/// True if some process holds `path` open for writing, else false; `None`
+/// when `lsof` is unavailable (`hermon.py:127 has_open_handle`).
+fn has_open_write_handle(path: &Path) -> Option<bool> {
+    if !lsof_available() {
+        return None;
+    }
+    let output = Command::new("lsof")
+        .args(["-F", "a", "--"])
+        .arg(path)
+        .output()
+        .ok()?;
+    Some(parse_write_access(&String::from_utf8_lossy(&output.stdout)))
+}
+
 /// Discovers Claude Code sessions by walking transcript files on disk
 /// (`hermon.py:424 scan_claude_root`, `hermon.py:431 ClaudeSource`).
 /// Claude has no session database, so each `*.jsonl` file under the root
@@ -268,7 +317,17 @@ pub struct ClaudeSource {
     /// Keyed by transcript file stem (the session id), so it doubles as
     /// the `last_tool` lookup index. Kept across calls to `sessions()` so
     /// each transcript is re-parsed only from its last byte offset.
+    ///
+    /// It also stands in for "already tracked" in the `lsof` cost bound
+    /// (`hermon.py:447`): Python's `tracked_keys` is the watcher's live
+    /// tmux-pane set, but this port has no pane manager yet, so a session
+    /// this map already holds an entry for is the closest available
+    /// analogue — one hermon has already started following, as opposed to
+    /// one just now noticed deep in `RECENCY_WINDOW`.
     stats: HashMap<String, ClaudeStats>,
+    /// Swappable so tests can inject a call counter instead of shelling out
+    /// to the real `lsof` (`has_open_write_handle` by default).
+    probe: WriteHandleProbe,
 }
 
 impl ClaudeSource {
@@ -276,28 +335,31 @@ impl ClaudeSource {
         ClaudeSource {
             root: root.into(),
             stats: HashMap::new(),
+            probe: Rc::new(has_open_write_handle),
         }
     }
 
     /// One [`SessionMeta`] per transcript modified within
     /// [`RECENCY_WINDOW`]. Claude carries no turn-completion signal, so
-    /// `turn_done`, `tool_pending` and `ended` are always false — the
-    /// engine special-cases this source's liveness from `last_ts`/mtime
-    /// instead of calling `turn_liveness` (`hermon.py:431`).
-    pub fn sessions(&mut self) -> Vec<SessionMeta> {
+    /// `turn_done`, `tool_pending` and `ended` are always false — liveness
+    /// is keyed off `last_ts`/mtime instead (`hermon.py:431`), with
+    /// [`SessionMeta::force_live`] set when a stale transcript still has an
+    /// open `lsof` write handle (`hermon.py:447`).
+    pub fn sessions(&mut self, now: f64, idle_timeout: f64) -> Vec<SessionMeta> {
         scan_jsonl_files(&self.root, RECENCY_WINDOW)
             .into_iter()
-            .filter_map(|path| self.session_for(path))
+            .filter_map(|path| self.session_for(path, now, idle_timeout))
             .collect()
     }
 
-    fn session_for(&mut self, path: PathBuf) -> Option<SessionMeta> {
+    fn session_for(&mut self, path: PathBuf, now: f64, idle_timeout: f64) -> Option<SessionMeta> {
         let id = path.file_stem()?.to_str()?.to_string();
         let mtime = mtime_secs(&path);
+        let already_tracked = self.stats.contains_key(&id);
         let stats = self
             .stats
             .entry(id.clone())
-            .or_insert_with(|| ClaudeStats::new(path));
+            .or_insert_with(|| ClaudeStats::new(path.clone()));
         stats.update();
         // File mtime is a floor, not a substitute: a transcript recently
         // appended with an untimestamped tail event (e.g. a tool result
@@ -312,6 +374,14 @@ impl ClaudeSource {
             (None, Some(mt)) => mt,
             (None, None) => 0.0,
         };
+        // A fresh transcript is already live via the plain `last_ts`
+        // ceiling downstream; only pay for an `lsof` call where the answer
+        // could change the verdict, and only within a window where the
+        // answer could still matter (`hermon.py:447`).
+        let stale = now - last_ts > idle_timeout;
+        let worth_checking =
+            stale && (already_tracked || now - last_ts <= idle_timeout * LSOF_STALE_MULT);
+        let force_live = worth_checking && (self.probe)(&path).unwrap_or(false);
         let started_at = stats.first_ts.unwrap_or(last_ts);
         Some(SessionMeta {
             id,
@@ -325,6 +395,7 @@ impl ClaudeSource {
             last_ts,
             turn_done: false,
             tool_pending: false,
+            force_live,
             last_tool: stats.last_tool.clone(),
             last_line: stats.last_line.clone(),
             last_event: stats.last_event.clone(),
@@ -403,6 +474,7 @@ fn walk_jsonl(dir: &Path, cutoff: Option<SystemTime>, out: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -410,6 +482,18 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// A huge `idle_timeout` so `sessions()` always reads its sessions as
+    /// fresh — used by tests that don't care about the `lsof` escalation,
+    /// so they never trigger a real `lsof` call.
+    const HUGE_IDLE: f64 = 1e12;
+
+    fn now() -> f64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before epoch")
+            .as_secs_f64()
+    }
 
     fn fixture_bytes() -> Vec<u8> {
         let path =
@@ -661,7 +745,7 @@ mod tests {
         append(&path, &fixture_bytes());
 
         let mut src = ClaudeSource::new(dir.path());
-        let sessions = src.sessions();
+        let sessions = src.sessions(now(), HUGE_IDLE);
 
         assert_eq!(sessions.len(), 1);
         let s = &sessions[0];
@@ -695,7 +779,11 @@ mod tests {
         append(&b.join("s2.jsonl"), b"\n");
 
         let mut src = ClaudeSource::new(dir.path());
-        let mut ids: Vec<_> = src.sessions().into_iter().map(|s| s.id).collect();
+        let mut ids: Vec<_> = src
+            .sessions(now(), HUGE_IDLE)
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
         ids.sort();
         assert_eq!(ids, vec!["s1".to_string(), "s2".to_string()]);
     }
@@ -704,13 +792,13 @@ mod tests {
     fn empty_dir_returns_empty_vec() {
         let dir = TempDir::new().expect("create temp dir");
         let mut src = ClaudeSource::new(dir.path());
-        assert_eq!(src.sessions(), Vec::new());
+        assert_eq!(src.sessions(now(), HUGE_IDLE), Vec::new());
     }
 
     #[test]
     fn missing_root_returns_empty_vec_not_error() {
         let mut src = ClaudeSource::new("/nonexistent/claude/projects/root");
-        assert_eq!(src.sessions(), Vec::new());
+        assert_eq!(src.sessions(now(), HUGE_IDLE), Vec::new());
     }
 
     #[test]
@@ -720,7 +808,7 @@ mod tests {
         append(&path, b"{malformed\n[1, 2, 3]\nnot json at all\n");
 
         let mut src = ClaudeSource::new(dir.path());
-        let sessions = src.sessions();
+        let sessions = src.sessions(now(), HUGE_IDLE);
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].model, "?");
@@ -736,12 +824,12 @@ mod tests {
         append(&path, b"\n");
 
         let mut src = ClaudeSource::new(dir.path());
-        let first = src.sessions();
+        let first = src.sessions(now(), HUGE_IDLE);
         assert_eq!(first[0].in_tok, 1);
 
         append(&path, assistant("b", 2, 2, 0.0).as_bytes());
         append(&path, b"\n");
-        let second = src.sessions();
+        let second = src.sessions(now(), HUGE_IDLE);
         // Incremental: totals accumulate rather than resetting each scan.
         assert_eq!(second[0].in_tok, 3);
         assert_eq!(second[0].out_tok, 3);
@@ -754,7 +842,7 @@ mod tests {
         append(&path, &fixture_bytes());
 
         let mut src = ClaudeSource::new(dir.path());
-        src.sessions();
+        src.sessions(now(), HUGE_IDLE);
         assert_eq!(src.last_tool("s"), "Read");
     }
 
@@ -778,7 +866,7 @@ mod tests {
             .expect("set stale mtime");
 
         let mut src = ClaudeSource::new(dir.path());
-        assert_eq!(src.sessions(), Vec::new());
+        assert_eq!(src.sessions(now(), HUGE_IDLE), Vec::new());
     }
 
     #[test]
@@ -802,7 +890,7 @@ mod tests {
             .expect("set fresh mtime");
 
         let mut src = ClaudeSource::new(dir.path());
-        let sessions = src.sessions();
+        let sessions = src.sessions(now(), HUGE_IDLE);
         assert_eq!(sessions.len(), 1);
         let mtime = mtime_secs(&path).expect("mtime");
         assert!(
@@ -834,9 +922,215 @@ mod tests {
         append(&path, b"\n");
 
         let mut src = ClaudeSource::new(dir.path());
-        let sessions = src.sessions();
+        let sessions = src.sessions(now(), HUGE_IDLE);
         assert_eq!(sessions.len(), 1);
         let expected = parse_ts(future_ts).expect("parse future ts");
         assert_eq!(sessions[0].last_ts, expected);
+    }
+
+    // -------------------------------------------------------- lsof `-F a` parsing
+
+    #[test]
+    fn parse_write_access_true_for_write_line() {
+        assert!(parse_write_access("p1234\nf5\naw\n"));
+    }
+
+    #[test]
+    fn parse_write_access_false_for_read_only_line() {
+        assert!(!parse_write_access("p1234\nf5\nar\n"));
+    }
+
+    #[test]
+    fn parse_write_access_true_for_update_line() {
+        assert!(parse_write_access("p1234\nf5\nau\n"));
+    }
+
+    #[test]
+    fn parse_write_access_false_for_empty_output() {
+        assert!(!parse_write_access(""));
+    }
+
+    #[test]
+    fn parse_write_access_false_for_garbage() {
+        assert!(!parse_write_access("not lsof output at all\n123\n\n"));
+    }
+
+    #[test]
+    fn parse_write_access_true_when_any_descriptor_has_write_access() {
+        // A read-only fd alongside a write fd: any match wins.
+        assert!(parse_write_access("p1234\nf5\nar\nf6\naw\n"));
+    }
+
+    // -------------------------------------------------------- lsof cost bounding
+
+    /// A probe stub that counts its own invocations instead of shelling out,
+    /// so "at most one `lsof` spawn per session per tick" is provable
+    /// without depending on `lsof` being installed.
+    fn counting_probe(counter: Rc<Cell<usize>>, verdict: bool) -> WriteHandleProbe {
+        Rc::new(move |_: &Path| {
+            counter.set(counter.get() + 1);
+            Some(verdict)
+        })
+    }
+
+    fn source_with_probe(root: &Path, probe: WriteHandleProbe) -> ClaudeSource {
+        ClaudeSource {
+            root: root.to_path_buf(),
+            stats: HashMap::new(),
+            probe,
+        }
+    }
+
+    #[test]
+    fn fresh_session_never_probes_lsof() {
+        let dir = TempDir::new().expect("create temp dir");
+        append(
+            &dir.path().join("s.jsonl"),
+            assistant("a", 1, 1, 0.0).as_bytes(),
+        );
+        append(&dir.path().join("s.jsonl"), b"\n");
+
+        let calls = Rc::new(Cell::new(0));
+        let mut src = source_with_probe(dir.path(), counting_probe(calls.clone(), true));
+
+        let sessions = src.sessions(now(), 100.0);
+        assert_eq!(sessions.len(), 1);
+        assert!(!sessions[0].force_live);
+        assert_eq!(
+            calls.get(),
+            0,
+            "a fresh transcript must not shell out to lsof"
+        );
+    }
+
+    #[test]
+    fn stale_far_beyond_the_window_and_untracked_never_probes_lsof() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        append(&path, assistant("a", 1, 1, 0.0).as_bytes());
+        append(&path, b"\n");
+        let idle_timeout = 1.0;
+        let stale =
+            SystemTime::now() - Duration::from_secs_f64(idle_timeout * LSOF_STALE_MULT + 10.0);
+        File::open(&path)
+            .expect("open transcript")
+            .set_modified(stale)
+            .expect("set stale mtime");
+
+        let calls = Rc::new(Cell::new(0));
+        let mut src = source_with_probe(dir.path(), counting_probe(calls.clone(), true));
+
+        let sessions = src.sessions(now(), idle_timeout);
+        assert_eq!(sessions.len(), 1);
+        assert!(!sessions[0].force_live);
+        assert_eq!(
+            calls.get(),
+            0,
+            "far-stale, never-tracked session must not shell out"
+        );
+    }
+
+    #[test]
+    fn stale_within_window_probes_at_most_once_per_tick() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        append(&path, assistant("a", 1, 1, 0.0).as_bytes());
+        append(&path, b"\n");
+        let idle_timeout = 1.0;
+        let stale = SystemTime::now() - Duration::from_secs_f64(idle_timeout * 2.0);
+        File::open(&path)
+            .expect("open transcript")
+            .set_modified(stale)
+            .expect("set stale mtime");
+
+        let calls = Rc::new(Cell::new(0));
+        let mut src = source_with_probe(dir.path(), counting_probe(calls.clone(), true));
+
+        let now_ts = now();
+        let first = src.sessions(now_ts, idle_timeout);
+        assert_eq!(first.len(), 1);
+        assert!(first[0].force_live);
+        assert_eq!(
+            calls.get(),
+            1,
+            "exactly one lsof spawn for the one stale session this tick"
+        );
+
+        // Second tick: still stale, and now "already tracked" — the cost
+        // bound's other leg keeps checking it, but still only once.
+        let second = src.sessions(now_ts, idle_timeout);
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            calls.get(),
+            2,
+            "one more spawn on the second tick, not more"
+        );
+    }
+
+    // -------------------------------------------------------- lsof integration
+
+    #[test]
+    fn open_write_handle_keeps_a_stale_session_live_past_idle_timeout() {
+        use crate::source::{Liveness, classify};
+
+        if !lsof_available() {
+            eprintln!(
+                "hermon: lsof not available on this system — skipping the open-write-\
+                 handle integration test and checking the mtime-only fallback instead"
+            );
+            let dir = TempDir::new().expect("create temp dir");
+            let path = dir.path().join("s.jsonl");
+            append(&path, b"{}\n");
+            assert_eq!(
+                has_open_write_handle(&path),
+                None,
+                "lsof unavailable must read as None, not a guessed verdict"
+            );
+            return;
+        }
+
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("s.jsonl");
+        append(&path, assistant("a", 1, 1, 0.0).as_bytes());
+        append(&path, b"\n");
+        let idle_timeout = 1.0;
+        let stale = SystemTime::now() - Duration::from_secs_f64(idle_timeout * 2.0);
+        File::open(&path)
+            .expect("open transcript")
+            .set_modified(stale)
+            .expect("set stale mtime");
+
+        // Hold our own write handle open, as a real Claude Code process
+        // would while still working on this transcript.
+        let handle = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open write handle");
+
+        let mut src = ClaudeSource::new(dir.path());
+        let now_ts = now();
+        let sessions = src.sessions(now_ts, idle_timeout);
+        assert_eq!(sessions.len(), 1);
+        assert!(
+            sessions[0].force_live,
+            "a stale transcript with an open write handle must read live"
+        );
+        assert_eq!(
+            classify(&sessions[0], now_ts, idle_timeout, 3600.0),
+            Liveness::Live
+        );
+
+        drop(handle);
+        let now_ts2 = now();
+        let sessions2 = src.sessions(now_ts2, idle_timeout);
+        assert_eq!(sessions2.len(), 1);
+        assert!(
+            !sessions2[0].force_live,
+            "once the write handle closes, the stale transcript must read done"
+        );
+        assert_eq!(
+            classify(&sessions2[0], now_ts2, idle_timeout, 3600.0),
+            Liveness::Done
+        );
     }
 }
