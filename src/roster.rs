@@ -410,9 +410,10 @@ mod tests {
     }
 
     /// The prefix picks the store; an unknown one is not a panic. Hermes
-    /// tailers open lazily against a possibly-missing db (self-healing per
-    /// `HermesTailer::poll`), so `H:` is the one prefix that always yields a
-    /// tailer even when the backing store doesn't exist yet.
+    /// and OpenCode tailers open lazily against a possibly-missing db
+    /// (self-healing per `HermesTailer::poll` / the opencode wait notice),
+    /// so `H:` and `O:` are the prefixes that always yield a tailer even
+    /// when the backing store doesn't exist yet.
     #[test]
     fn open_tailer_dispatches_on_the_key_prefix() {
         let sources = Sources::new(
@@ -420,14 +421,12 @@ mod tests {
             "/nonexistent/h.db",
             "/nonexistent/o.db",
         );
-        for key in ["C:aaaaaa", "O:cccccc", "Z:dddddd", "nocolon"] {
+        for key in ["C:aaaaaa", "Z:dddddd", "nocolon"] {
             assert!(sources.open_tailer(key, "id", Replay::DEFAULT).is_none());
         }
-        assert!(
-            sources
-                .open_tailer("H:bbbbbb", "id", Replay::DEFAULT)
-                .is_some()
-        );
+        for key in ["H:bbbbbb", "O:cccccc"] {
+            assert!(sources.open_tailer(key, "id", Replay::DEFAULT).is_some());
+        }
     }
 
     #[test]

@@ -18,4 +18,11 @@ pub struct EngineConfig {
     pub fresh_window: f64,
     /// How often the engine rescans every source.
     pub interval: Duration,
+    /// How long a finished session keeps its pane open before the engine
+    /// closes the tailer and frees the slot; `0` keeps it open forever
+    /// (`hermon.py:1294 cmd_watch`'s `args.linger`).
+    pub linger: f64,
+    /// Most sessions tailed at once; a new live one evicts the oldest
+    /// finished pane to make room (`hermon.py:1389 self_evict`).
+    pub max_panes: usize,
 }
