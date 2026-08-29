@@ -1,9 +1,6 @@
-//! List mode: the fleet as one dense row per session, the totals and API
-//! ticker under it, and a preview of the selected session at the bottom.
-//!
-//! A row is `glyph · key · model/elapsed · what it is doing · cost`, with the
-//! summary column absorbing whatever width is left over. Attention states
-//! tint the row, finished sessions go entirely dim.
+//! List mode: the fleet as one dense row per session (the shared
+//! [`roster`](crate::ui::roster) table), the totals and API ticker under it,
+//! and a preview of the selected session at the bottom.
 //!
 //! [`render_preview`] takes already-rendered [`StyledLine`]s rather than a
 //! [`RosterRow`], so [`preview_lines`] can hand it either the pane's live
@@ -11,21 +8,14 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed};
 use crate::roster::{RosterRow, commas, totals_line};
 use crate::source::{Attn, Liveness};
-use crate::ui::palette;
-use crate::ui::{App, PREVIEW_HEIGHT};
-
-/// Row column widths. The glyph column is two wide because the ASCII
-/// fallback for `⏸` is `||`; the summary column takes the remainder.
-const W_GLYPH: usize = 2;
-const W_KEY: usize = 10;
-const W_META: usize = 26;
-const W_COST: usize = 9;
+use crate::ui::palette::{self, to_lines};
+use crate::ui::roster::row_sems;
+use crate::ui::{App, PREVIEW_HEIGHT, roster};
 
 /// How much of `last_line` and the title the preview keeps — the same
 /// ceiling the renderers use for tool results.
@@ -45,7 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     ])
     .areas(area);
 
-    render_rows(frame, rows_area, app);
+    roster::render(frame, rows_area, app);
     frame.render_widget(Paragraph::new(to_lines(&stats)), stats_area);
 
     let selected = app.selected_row();
@@ -54,99 +44,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .map(|row| preview_lines(app, row))
         .unwrap_or_default();
     render_preview(frame, preview_area, title, &body);
-}
-
-fn render_rows(frame: &mut Frame, area: Rect, app: &App) {
-    if app.roster.is_empty() {
-        frame.render_widget(Paragraph::new(to_lines(&empty_state(&app.paths))), area);
-        return;
-    }
-
-    let selected = app.selected_index();
-    let lines: Vec<Line> = app
-        .roster
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let line = row_line(row, area.width as usize);
-            if i == selected {
-                line.patch_style(palette::selection_bg())
-            } else {
-                line
-            }
-        })
-        .collect();
-
-    // Scrollback is M3; this only keeps the cursor on screen when the fleet
-    // is taller than the pane.
-    let offset = (selected + 1).saturating_sub(area.height as usize);
-    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), area);
-}
-
-/// One session as a padded, full-width row. Padding matters: the selected
-/// row's background is only visible where the line has cells.
-fn row_line(row: &RosterRow, width: usize) -> Line<'static> {
-    let (glyph, glyph_style) = palette::glyph_for_liveness(row.state);
-    let sems = row_sems(row.state);
-    let meta = format!("{} · {}", row.model, fmt_elapsed(row.elapsed));
-    let cost = format!("${:.4}", row.cost);
-    let w_summary = width.saturating_sub(W_GLYPH + W_KEY + W_META + W_COST);
-
-    let mut spans = vec![
-        Span::styled(format!("{glyph:<W_GLYPH$}"), glyph_style),
-        Span::styled(
-            format!("{:<W_KEY$}", clip(&row.key, W_KEY - 1)),
-            palette::style(sems.text),
-        ),
-        Span::styled(
-            format!("{:<W_META$}", clip(&meta, W_META - 1)),
-            palette::style(sems.meta),
-        ),
-    ];
-    if w_summary > 0 {
-        spans.push(Span::styled(
-            format!("{:<w_summary$}", clip(&row.last_line, w_summary - 1)),
-            palette::style(sems.text),
-        ));
-    }
-    spans.push(Span::styled(
-        format!("{cost:>W_COST$}"),
-        palette::style(sems.cost),
-    ));
-    Line::from(spans)
-}
-
-/// The colors a row paints with: a session needing attention tints its text
-/// and cost amber or red, a finished one goes dim throughout.
-struct RowSems {
-    text: Sem,
-    meta: Sem,
-    cost: Sem,
-}
-
-fn row_sems(state: Liveness) -> RowSems {
-    match state {
-        Liveness::Live => RowSems {
-            text: Sem::Plain,
-            meta: Sem::Dim,
-            cost: Sem::Stat,
-        },
-        Liveness::Attention(Attn::PermWait) => RowSems {
-            text: Sem::User,
-            meta: Sem::Dim,
-            cost: Sem::User,
-        },
-        Liveness::Attention(Attn::Stuck) => RowSems {
-            text: Sem::Error,
-            meta: Sem::Dim,
-            cost: Sem::Error,
-        },
-        Liveness::Done => RowSems {
-            text: Sem::Dim,
-            meta: Sem::Dim,
-            cost: Sem::Dim,
-        },
-    }
 }
 
 /// Fleet totals, plus the newest API call when the ticker has one.
@@ -158,20 +55,6 @@ fn stats_lines(app: &App) -> Vec<StyledLine> {
             format!("api: {}", last.to_plain().trim()),
         )]));
     }
-    lines
-}
-
-/// What a fresh, sessionless deck says: nothing found, and where it looked.
-fn empty_state(paths: &[String]) -> Vec<StyledLine> {
-    let mut lines = vec![
-        StyledLine(vec![Seg::new(Sem::Dim, "no agent sessions found")]),
-        StyledLine::default(),
-    ];
-    lines.extend(
-        paths
-            .iter()
-            .map(|p| StyledLine(vec![Seg::new(Sem::Dim, format!("  watching {p}"))])),
-    );
     lines
 }
 
@@ -235,10 +118,6 @@ fn state_name(state: Liveness) -> &'static str {
         Liveness::Attention(Attn::Stuck) => "stuck",
         Liveness::Done => "done",
     }
-}
-
-fn to_lines(lines: &[StyledLine]) -> Vec<Line<'static>> {
-    lines.iter().map(palette::line_to_spans).collect()
 }
 
 #[cfg(test)]
@@ -351,8 +230,9 @@ mod tests {
         let amber = palette::style(Sem::User).fg.unwrap();
         let red = palette::style(Sem::Error).fg.unwrap();
         // The key column of the perm-wait row is amber, the stuck one red.
-        assert_eq!(buf[(W_GLYPH as u16, 1)].fg, amber);
-        assert_eq!(buf[(W_GLYPH as u16, 2)].fg, red);
+        let key_col = roster::W_GLYPH as u16;
+        assert_eq!(buf[(key_col, 1)].fg, amber);
+        assert_eq!(buf[(key_col, 2)].fg, red);
     }
 
     #[test]

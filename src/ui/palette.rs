@@ -111,6 +111,11 @@ pub fn line_to_spans(line: &StyledLine) -> Line<'static> {
     Line::from(spans)
 }
 
+/// [`line_to_spans`] over a whole block of lines, ready for a `Paragraph`.
+pub fn to_lines(lines: &[StyledLine]) -> Vec<Line<'static>> {
+    lines.iter().map(line_to_spans).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
