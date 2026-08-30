@@ -27,6 +27,13 @@ use engine::PANE_TICK;
 use roster::{Sources, TICKER_LIMIT, api_call_ticker, build_roster, resolve_key, roster_lines};
 use source::Replay;
 
+fn replay_from(src: &cli::SourceArgs) -> Replay {
+    Replay {
+        bytes: src.replay_bytes,
+        rows: src.replay_lines,
+    }
+}
+
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -34,6 +41,7 @@ pub fn run() -> anyhow::Result<()> {
         Command::Watch(args) => {
             // `watch` keeps the Python default 300s fresh window
             // (`hermon.py:1463`); only `ls` widens it to an hour.
+            let replay = replay_from(&args);
             let config = EngineConfig {
                 claude_dir: args.claude_dir,
                 hermes_db: args.hermes_db,
@@ -44,6 +52,7 @@ pub fn run() -> anyhow::Result<()> {
                 interval: Duration::from_secs_f64(args.interval),
                 linger: args.linger,
                 max_panes: args.max_panes,
+                replay,
             };
             ui::run_tui(config)
         }
@@ -74,12 +83,21 @@ fn render(args: &cli::RenderArgs) -> anyhow::Result<()> {
     let rows = build_roster(&mut sources, now, args.fresh_window, src.idle_timeout);
     let row = resolve_key(&rows, &args.key)?;
     let mut tailer = sources
-        .open_tailer(&row.key, &row.id, Replay::DEFAULT)
+        .open_tailer(&row.key, &row.id, replay_from(src))
         .ok_or_else(|| anyhow!("{}: this source cannot tail sessions yet", row.key))?;
 
+    // Same rule as `hermon.py:67 USE_COLOR`.
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     loop {
         for line in tailer.poll() {
-            println!("{}", line.to_plain());
+            println!(
+                "{}",
+                if color {
+                    line.to_ansi()
+                } else {
+                    line.to_plain()
+                }
+            );
         }
         thread::sleep(PANE_TICK);
     }

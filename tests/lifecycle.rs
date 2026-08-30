@@ -40,6 +40,7 @@ fn config(linger: f64, max_panes: usize) -> EngineConfig {
         interval: TICK,
         linger,
         max_panes,
+        replay: Replay::DEFAULT,
     }
 }
 

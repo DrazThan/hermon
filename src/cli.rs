@@ -3,6 +3,8 @@
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::source::Replay;
+
 /// Live tmux monitor deck for Hermes and Claude Code sessions.
 #[derive(Debug, Parser)]
 #[command(name = "hermon", version, about)]
@@ -87,6 +89,16 @@ pub struct SourceArgs {
     /// Keep finished panes this long before unsplitting; 0 = forever.
     #[arg(long, default_value_t = 60.0)]
     pub linger: f64,
+
+    /// Bytes of history a freshly opened pane replays from a file-backed
+    /// source (Claude transcripts); ignored by DB-backed sources.
+    #[arg(long, default_value_t = Replay::DEFAULT.bytes)]
+    pub replay_bytes: u64,
+
+    /// Rows of history a freshly opened pane replays from a DB-backed
+    /// source (Hermes, OpenCode); ignored by file-backed sources.
+    #[arg(long, default_value_t = Replay::DEFAULT.rows)]
+    pub replay_lines: u32,
 }
 
 fn default_claude_dir() -> String {
