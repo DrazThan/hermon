@@ -446,9 +446,10 @@ fn mtime_secs(path: &Path) -> Option<f64> {
 }
 
 /// Recursively collects `*.jsonl` files under `root` modified within
-/// `window` of now, sorted for a deterministic scan order. I/O errors
-/// (missing root, permission denied) are swallowed and yield an empty
-/// scan, matching Python's `except OSError: return []` (`hermon.py:424`).
+/// `window` of now, skipping `subagents/` directories, sorted for a
+/// deterministic scan order. I/O errors (missing root, permission denied)
+/// are swallowed and yield an empty scan, matching Python's
+/// `except OSError: return []` (`hermon.py:424`).
 fn scan_jsonl_files(root: &Path, window: Duration) -> Vec<PathBuf> {
     let cutoff = SystemTime::now().checked_sub(window);
     let mut out = Vec::new();
@@ -467,7 +468,12 @@ fn walk_jsonl(dir: &Path, cutoff: Option<SystemTime>, out: &mut Vec<PathBuf>) {
             continue;
         };
         if file_type.is_dir() {
-            walk_jsonl(&path, cutoff, out);
+            // Subagent transcripts are not top-level sessions: Python's
+            // one-level `*/*.jsonl` glob never sees them, and counting them
+            // inflates the roster and double-counts tokens.
+            if entry.file_name() != "subagents" {
+                walk_jsonl(&path, cutoff, out);
+            }
             continue;
         }
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
@@ -1024,6 +1030,21 @@ mod tests {
         let dir = TempDir::new().expect("create temp dir");
         let mut src = ClaudeSource::new(dir.path());
         assert_eq!(src.last_tool("nope"), "-");
+    }
+
+    #[test]
+    fn subagent_transcripts_are_not_scanned_as_sessions() {
+        let dir = TempDir::new().expect("create temp dir");
+        let session = dir.path().join("slug").join("9f7712");
+        fs::create_dir_all(session.join("subagents")).expect("create fixture tree");
+        let own = session.join("9f7712.jsonl");
+        append(&own, assistant("a", 1, 1, 0.0).as_bytes());
+        append(&own, b"\n");
+        let sub = session.join("subagents").join("agent-1.jsonl");
+        append(&sub, assistant("b", 2, 2, 0.0).as_bytes());
+        append(&sub, b"\n");
+
+        assert_eq!(scan_jsonl_files(dir.path(), RECENCY_WINDOW), vec![own]);
     }
 
     #[test]
