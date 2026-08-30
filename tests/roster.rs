@@ -435,3 +435,71 @@ fn ls_prints_a_row_per_fixture_session_without_ansi() {
     let colorless = run_ls(&args, false);
     assert!(!colorless.contains('\u{1b}'), "{colorless}");
 }
+
+#[test]
+fn render_prints_the_replay_without_ansi_under_no_color() {
+    let fx = fixtures_at(wall_clock_now());
+    let log = fx.claude_dir.join("agent.log");
+    let mut args = vec!["C:345678".to_string()];
+    args.extend(store_args(&fx, &log));
+
+    let mut cmd = Proc::new(env!("CARGO_BIN_EXE_hermon"));
+    cmd.arg("render").args(&args).env("NO_COLOR", "1");
+    cmd.stdout(std::process::Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn hermon render");
+    let mut stdout = child.stdout.take().expect("piped stdout");
+
+    let read = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = [0u8; 4096];
+        let n = stdout.read(&mut buf).unwrap_or(0);
+        String::from_utf8_lossy(&buf[..n]).to_string()
+    });
+    let output = read.join().expect("read replay output");
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(!output.is_empty(), "expected replayed transcript lines");
+    assert!(
+        !output.contains('\u{1b}'),
+        "NO_COLOR output carries escapes: {output}"
+    );
+}
+
+#[test]
+fn render_replay_bytes_zero_skips_all_existing_transcript_content() {
+    let fx = fixtures_at(wall_clock_now());
+    let log = fx.claude_dir.join("agent.log");
+    let mut args = vec![
+        "C:345678".to_string(),
+        "--replay-bytes".to_string(),
+        "0".to_string(),
+    ];
+    args.extend(store_args(&fx, &log));
+
+    let mut cmd = Proc::new(env!("CARGO_BIN_EXE_hermon"));
+    cmd.arg("render").args(&args).env("NO_COLOR", "1");
+    cmd.stdout(std::process::Stdio::piped());
+    let mut child = cmd.spawn().expect("spawn hermon render");
+    let mut stdout = child.stdout.take().expect("piped stdout");
+
+    // No replay means no output arrives before the pane tick, unlike the
+    // default-replay case above where the seeded transcript prints
+    // immediately — assert the read times out instead of racing it.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = [0u8; 4096];
+        let n = stdout.read(&mut buf).unwrap_or(0);
+        let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+    });
+    let output = rx.recv_timeout(std::time::Duration::from_millis(500));
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        output.is_err(),
+        "--replay-bytes 0 should skip the seeded transcript, got {output:?}"
+    );
+}
