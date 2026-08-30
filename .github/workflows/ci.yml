@@ -24,7 +24,3 @@ jobs:
 
       - name: Format
         run: cargo fmt --check
-
-      # Legacy Python tests for hermon.py; drop this step once the Rust port replaces it.
-      - name: Python tests
-        run: python3 -m unittest discover -s tests

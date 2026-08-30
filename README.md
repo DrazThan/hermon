@@ -66,8 +66,9 @@ hermon render C:0f865f   # key from `hermon ls`
 
 `hermon watch` is the whole app: a ratatui screen with a roster and live tail
 panes, redrawn from an engine thread polling all three stores. There's no
-tmux involved — that was the Python version's mechanism; see
-[Python version](#python-version).
+tmux involved — that was the mechanism of the original Python implementation
+this replaces; see
+[Predecessor](packaging/RELEASE_NOTES.md#7-predecessor-the-python-implementation).
 
 ## Views and keybindings
 
@@ -250,7 +251,7 @@ Defaults make `hermon watch` correct with zero flags.
 | `--linger` | `60` | finished panes stay this long before closing; `0` = keep forever |
 | `--replay-bytes` | `20480` | history a freshly opened pane replays from a file-backed source (Claude) |
 | `--replay-lines` | `40` | history a freshly opened pane replays from a DB-backed source (Hermes, OpenCode) |
-| `--fresh-window` (`ls`, `render` only) | `3600` | roster lookback for recently-finished sessions; `watch` isn't given this flag and keeps the tighter 300s Python default |
+| `--fresh-window` (`ls`, `render` only) | `3600` | roster lookback for recently-finished sessions; `watch` isn't given this flag and keeps the tighter 300s inherited default |
 
 `hermon ls` and `hermon render` honor `NO_COLOR` (and fall back to plain text
 automatically when stdout isn't a terminal); the ratatui screen (`hermon
@@ -294,7 +295,8 @@ Adding a tool is:
    against).
 3. Add a field to `Sources` and a match arm in its `open_tailer`
    (`src/roster.rs`), and a loop over the new source in `build_roster` —
-   that's the entire touch-point list now, versus the Python version's five.
+   that's the entire touch-point list now, versus the Python predecessor's
+   five.
 
 If the tool has no turn-completion signal at all, it still works via the
 flat `now - last_ts <= idle_timeout` fallback (like Claude transcripts) —
@@ -305,15 +307,6 @@ just less precise about mid-turn silence.
 Not a session manager — read-only, never sends input, never kills a session.
 No web UI, no persistence or analytics beyond what's on screen. No Windows
 (macOS primary, Linux best-effort); no plans to change that.
-
-## Python version
-
-`hermon.py` at the repo root is the original implementation this rewrite
-replaces — same read-only model, but driving real tmux panes instead of a
-built-in TUI. It's kept working (and its test suite green) until parity is
-signed off; removing it is tracked in
-[#47](https://github.com/DrazThan/hermon/issues/47). Don't build new features
-on it.
 
 ## Tests
 
