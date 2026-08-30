@@ -42,6 +42,7 @@ fn config(linger: f64, max_panes: usize) -> EngineConfig {
         linger,
         max_panes,
         notify: NotifyCfg::default(),
+        replay: Replay::DEFAULT,
     }
 }
 

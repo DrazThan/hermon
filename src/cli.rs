@@ -4,6 +4,7 @@
 use clap::{Args, Parser, Subcommand};
 
 use crate::notify::NotifyCfg;
+use crate::source::Replay;
 
 /// Live tmux monitor deck for Hermes and Claude Code sessions.
 #[derive(Debug, Parser)]
@@ -114,6 +115,16 @@ pub struct SourceArgs {
     /// Don't alert on an observed error line.
     #[arg(long)]
     pub no_notify_error: bool,
+
+    /// Bytes of history a freshly opened pane replays from a file-backed
+    /// source (Claude transcripts); ignored by DB-backed sources.
+    #[arg(long, default_value_t = Replay::DEFAULT.bytes)]
+    pub replay_bytes: u64,
+
+    /// Rows of history a freshly opened pane replays from a DB-backed
+    /// source (Hermes, OpenCode); ignored by file-backed sources.
+    #[arg(long, default_value_t = Replay::DEFAULT.rows)]
+    pub replay_lines: u32,
 }
 
 impl SourceArgs {

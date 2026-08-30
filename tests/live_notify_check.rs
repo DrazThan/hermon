@@ -36,6 +36,7 @@ fn config() -> EngineConfig {
         linger: 60.0,
         max_panes: 8,
         notify: NotifyCfg::default(),
+        replay: Replay::DEFAULT,
     }
 }
 

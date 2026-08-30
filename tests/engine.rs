@@ -43,6 +43,7 @@ fn config(hermes_db: &std::path::Path) -> EngineConfig {
         linger: 60.0,
         max_panes: 8,
         notify: NotifyCfg::default(),
+        replay: Replay::DEFAULT,
     }
 }
 
@@ -157,6 +158,7 @@ fn shutdown_joins_promptly_with_no_sessions() {
             linger: 60.0,
             max_panes: 8,
             notify: NotifyCfg::default(),
+            replay: Replay::DEFAULT,
         },
         tx,
         rx,
@@ -195,6 +197,7 @@ fn a_hung_up_ui_ends_the_loop_via_the_failing_send() {
             linger: 60.0,
             max_panes: 8,
             notify: NotifyCfg::default(),
+            replay: Replay::DEFAULT,
         },
         tx,
         rx,
@@ -296,6 +299,7 @@ fn pane_config() -> EngineConfig {
         linger: 60.0,
         max_panes: 8,
         notify: NotifyCfg::default(),
+        replay: Replay::DEFAULT,
     }
 }
 

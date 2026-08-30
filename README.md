@@ -1,90 +1,101 @@
 # hermon
 
-**Live monitor deck for Hermes and Claude Code agent sessions.**
+**Live monitor deck for Hermes, Claude Code, and OpenCode agent sessions.**
 *Hermes + monitor — and the mountain.*
 
-A CLI companion for devs working with [Hermes](https://github.com/NousResearch/hermes-agent):
-one terminal window you drag onto a spare monitor, where every agent session
-running on your machine — Hermes TUI/CLI/gateway sessions, sub-agents, small
-one-shot calls, `claude -p` invocations, `opencode run` invocations, calls to
-any provider — appears live in its own pane. The window **splits when a
-session starts and unsplits when it ends** (after a configurable linger,
-default 60s).
+A terminal UI for devs working with [Hermes](https://github.com/NousResearch/hermes-agent):
+one window you drag onto a spare monitor, where every agent session running
+on your machine — Hermes TUI/CLI/gateway sessions, sub-agents, small one-shot
+calls, `claude -p` invocations, `opencode run` invocations, calls to any
+provider — shows up live, with its own tail pane.
 
-*(demo GIF goes here)*
+hermon is read-only and needs zero changes to Hermes or your orchestration:
+it watches the on-disk stores those tools already write to, so nothing has to
+be instrumented, wrapped, or run through hermon to be seen. It never sends
+input to a session and never kills one.
+
+*(screenshot / asciinema link goes here — recorded after packaging, #46)*
 
 ## How it captures sessions
 
-hermon is read-only and needs zero changes to Hermes or your orchestration.
-It watches the places sessions already leave a live trail — including the
-session stores of tools Hermes shells out to, not just Hermes itself:
+hermon watches the places sessions already leave a live trail — including
+the stores of tools Hermes shells out to, not just Hermes itself:
 
-| Source | What it captures |
-|---|---|
-| `~/.hermes/state.db` (`sessions` + `messages`, WAL SQLite) | every Hermes session: TUI, CLI, gateway, sub-agents — any provider. Model, tool calls, tokens, cost, live-written mid-session |
-| `~/.claude/projects/**/*.jsonl` | every Claude Code session: interactive or `claude -p`, including ones Hermes spawns as subprocesses |
-| `~/.local/share/opencode/opencode.db` (`session`/`message`/`part`, WAL SQLite) | every OpenCode CLI session: `opencode run` or interactive, including ones Hermes spawns as subprocesses |
-| `~/.hermes/logs/agent.log` | per-API-call ticker in the roster (model, provider, tokens, latency) — catches small/auxiliary calls too |
+| Source | Key prefix | Store | What it captures |
+|---|---|---|---|
+| Claude Code | `C:` | `~/.claude/projects/**/*.jsonl` | every Claude Code session: interactive or `claude -p`, including ones Hermes spawns as subprocesses |
+| Hermes | `H:` | `~/.hermes/state.db` (`sessions` + `messages`, WAL SQLite) | every Hermes session: TUI, CLI, gateway, sub-agents — any provider. Model, tool calls, tokens, cost, live-written mid-session |
+| OpenCode | `O:` | `~/.local/share/opencode/opencode.db` (`session`/`message`/`part`, WAL SQLite) | every OpenCode CLI session: `opencode run` or interactive, including ones Hermes spawns as subprocesses |
+| API ticker | — | `~/.hermes/logs/agent.log` | per-API-call ticker in the roster (model, provider, tokens, latency) — catches small/auxiliary calls too |
 
-Adding another tool Hermes delegates to is mostly a matter of pointing a new
-source at wherever *that* tool keeps its own session history — see
-[Adding another source](#adding-another-source).
-
-It never sends input to sessions and never kills them.
+Each store path is overridable per subcommand: `--claude-dir`, `--hermes-db`,
+`--opencode-db`, `--hermes-log`. Both SQLite stores are opened read-only
+(`file:…?mode=ro`), safe alongside the real tool running (WAL).
 
 ## Install
 
-Single file, Python 3.9+ stdlib only. Runtime binaries: `tmux` (required),
-`lsof` (optional — sharper liveness for Claude transcripts).
+Not yet packaged — building from source with `cargo build --release` is the
+only path today. A Homebrew tap is tracked in
+[#46](https://github.com/DrazThan/hermon/issues/46).
 
-## Quickstart (iTerm2)
+## Quickstart
 
 ```bash
-# 1. start the daemon (any terminal, or launchd/background)
-python3 hermon.py watch &
+# the roster + tail panes in one self-contained TUI (no tmux)
+hermon watch
 
-# 2. attach as one native iTerm2 window — drop it on a monitor
-tmux -CC attach -t hermon
+# the roster once, to stdout, for scripting or a quick glance
+hermon ls
+
+# tail one session's transcript to stdout until Ctrl-C
+hermon render C:0f865f   # key from `hermon ls`
 ```
 
-Under iTerm2's `-CC` control mode the deck is one native window whose split
-panes appear and disappear as sessions come and go. Plain `tmux attach -t
-hermon` works in any terminal.
+`hermon watch` is the whole app: a ratatui screen with a roster and live tail
+panes, redrawn from an engine thread polling all three stores. There's no
+tmux involved — that was the Python version's mechanism; see
+[Python version](#python-version).
 
-The top pane is a **roster**: every recent session with state (● live /
-✓ done), model, last tool, cumulative tokens, cost, and elapsed time, plus a
-ticker of the last few raw Hermes API calls. Each other pane tails one
-session, labeled on its border: `C:0f865f` (Claude) / `H:b356d8` (Hermes) /
-`O:fiiDPP` (OpenCode), `✓`-prefixed once finished.
+## Views and keybindings
 
-## CLI
+`hermon watch` has two view modes, `l` toggles between them:
 
-```
-hermon watch  [--session NAME] [--interval SEC] [--fresh-window SEC]
-              [--idle-timeout SEC] [--linger SEC] [--max-panes N]
-              [--claude-root DIR] [--hermes-db PATH] [--hermes-log PATH]
-              [--opencode-db PATH] [--no-claude] [--no-hermes] [--no-opencode]
-hermon render FILE [--replay-bytes N]          # tail a Claude transcript
-hermon render --hermes SESSION_ID              # tail a Hermes session
-hermon render --opencode SESSION_ID            # tail an OpenCode session
-hermon render --summary                        # the roster (used by pane 0)
-hermon ls                                      # roster once, to stdout, no tmux
-```
+- **List** (default) — one dense row per session, with a preview pane for
+  the selected session, fleet totals in the footer.
+- **Grid** — the roster plus a wall of tiled live panes (up to 6 at once;
+  `Tab` pages through the rest). `Enter`/`z` zooms the selected pane to full
+  size.
 
-Defaults make `hermon watch` correct with zero flags.
-
-| Flag | Default | Meaning |
+| Key | View | Action |
 |---|---|---|
-| `--idle-timeout` | `180` | safety ceiling for a session stuck mid-turn with no activity (Hermes sessions go done immediately on a clean turn end — see Liveness) |
-| `--linger` | `60` | finished panes stay this long before unsplitting; `0` = keep forever |
-| `--max-panes` | `8` | pane cap; finished panes are evicted first, the roster always lists everything |
-| `--fresh-window` | `300` | roster lookback for recently-finished sessions |
-| `--interval` | `1` | scan interval, seconds |
+| `q`, `Ctrl-C` | any | Quit |
+| `j`/`↓`, `k`/`↑` | any | Select next / previous session |
+| `l` | any | Toggle list / grid |
+| `s` | any | Open the sort palette |
+| `f` | any | Open the filter palette |
+| `a` | any | Toggle attention-first grouping |
+| `p` | any | Pin / unpin the selected session (held panes survive `--max-panes` eviction) |
+| `c` | any | Clear sort + filter |
+| `?` | any | Toggle the help overlay |
+| `Tab` | grid | Next page of tiles |
+| `Enter`, `z` | grid | Zoom the selected pane |
+| `Esc` | grid, zoomed | Leave zoom |
+| `PageUp`/`PageDown` | grid | Scroll the selected pane's scrollback |
+| `g` / `G` | grid | Jump to oldest / back to the tail |
+| `x` / `o` | grid | Close / reopen the selected pane |
 
-Why 60s linger: panes share one screen (unlike windows), so a dead pane
-squeezes the live ones — but a `claude -p` that ran for ten seconds should
-survive long enough to glance at. If a session resumes after its pane was
-unsplit, the pane comes back.
+Sort/filter palette (open with `s`/`f`; `Esc` cancels, `Enter` commits):
+
+| Key | Focus | Action |
+|---|---|---|
+| `1`-`5` | sort | Pick sort key (model / tool / in-out tokens / cost / elapsed); pressing the active one flips direction |
+| `c` | sort | Clear sort + filter |
+| any character, `Backspace` | filter | Edit the filter text |
+
+The header shows chips only when something's active: an error-styled
+`📌 N over --max-panes` chip if pinned sessions exceed `--max-panes`, the
+current sort key and direction, one chip per filter term, and a
+`N/M shown` count on the right.
 
 ## Notifications
 
@@ -135,16 +146,31 @@ For OpenCode, the same shape maps onto its `part` rows instead of a flat
 message stream: a `tool` part starts as `▶ tool {input}` and is *updated in
 place* (not a new row) once it completes, so hermon detects that status
 change and appends `◀ result`/`◀ ERROR` — both lines appear together if the
-tool finished between two polls. `text`/`reasoning`/`file`/`patch`/
-`step-*` parts render once, on first sight.
+tool finished between two polls. `text`/`reasoning`/`file`/`patch`/`step-*`
+parts render once, on first sight.
 
 None of the three schemas (Claude transcript, Hermes DB, OpenCode DB) is a
 stable public API, so all three parsers are defensive: malformed rows become
 a dim `· parse-skip` marker, unknown shapes a `· <type>` line — never a
-crash, never a raw JSON dump. Both SQLite stores are opened read-only
-(`file:…?mode=ro`), safe alongside the real tool running (WAL).
+crash, never a raw JSON dump.
 
-## Liveness
+A freshly opened pane seeds its scrollback from `--replay-bytes` (file-backed
+sources — Claude transcripts) or `--replay-lines` (DB-backed sources —
+Hermes, OpenCode); the other budget is ignored by whichever kind of store
+backs that pane.
+
+## Liveness & attention
+
+Every session is one of:
+
+| State | Glyph (ASCII fallback) | Meaning |
+|---|---|---|
+| Live | `●` (`*`) | actively producing output, or a turn genuinely in progress |
+| Attention → PermWait | `⏸` (`||`) | a tool call has sat unanswered past the permission-prompt threshold — probably waiting on a human |
+| Attention → Stuck | `⚠` (`!`) | a tool call has been "running" long enough to be presumed wedged, but still fresh enough to surface |
+| Done | `✓` (`.`) | the session finished |
+
+Set `HERMON_ASCII=1` to force the ASCII glyph set (e.g. a font without them).
 
 For Claude transcripts: **live** on a fresh mtime, or a process holding the
 file open *for writing* (via `lsof` — hermon's own read-only panes don't
@@ -155,8 +181,7 @@ For Hermes and OpenCode, an explicit "session closed" flag (`ended_at`,
 sit for hours between turns without it ever being set — so it can't be the
 primary signal. hermon rides on each tool's own turn-completion signal
 instead: Hermes's last message `finish_reason`, OpenCode's last message
-`finish` (`'tool-calls'` / `'stop'`) — same shape, same classifier
-(`turn_liveness`):
+`finish` (`'tool-calls'` / `'stop'`) — same shape, same classifier:
 
 - a clean stop with no pending tool call ⇒ the assistant closed its turn and
   is idle waiting on the next user message — **done immediately**, no
@@ -171,57 +196,126 @@ instead: Hermes's last message `finish_reason`, OpenCode's last message
   ceiling; a multi-minute gap there is genuinely suspicious.
 - the explicit closed flag, when it is set ⇒ done, always.
 
-Either way, finished ⇒ pane marked `✓`, unsplit after `--linger`,
-resurrected if the session resumes.
+Either way, finished sessions stay on the roster for `--fresh-window`, and a
+finished pane in grid mode closes after `--linger` seconds unless pinned —
+if the session resumes, its pane comes back.
 
-The daemon is idempotent: restart it and it re-adopts existing panes by
-title instead of duplicating them, and it recreates the tmux session if you
-kill it externally. Only one `watch` may own a given `--session` at a time —
-a second one refuses to start with a clear error rather than racing the
-first to split duplicate panes (an flock on a temp lockfile, released
-automatically if the holder dies, so a crashed daemon never wedges a
-restart).
+## Notifications
+
+Attention states surface live in the TUI today: the roster glyph, a pane's
+border color, and (in grid mode) a status line under an attention pane's
+transcript (`⏸ waiting on permission prompt · <elapsed>` /
+`⚠ tool pending <elapsed> — no output`).
+
+Desktop notifications (`osascript`, a mute key, cooldowns per session/kind)
+have their decision core built and unit-tested (`decide_alerts`,
+`AlertHistory`) but aren't wired to actual delivery or CLI flags yet — that's
+[#44](https://github.com/DrazThan/hermon/issues/44), tracked under
+[M6](docs/roadmap.md).
+
+## CLI reference
+
+```
+hermon watch  [--claude-dir DIR] [--hermes-db PATH] [--opencode-db PATH]
+              [--hermes-log PATH] [--idle-timeout SEC] [--interval SEC]
+              [--max-panes N] [--linger SEC] [--replay-bytes N] [--replay-lines N]
+hermon ls     [...same source flags as watch...] [--fresh-window SEC]
+hermon render KEY [...same source flags as watch...] [--fresh-window SEC]
+```
+
+Defaults make `hermon watch` correct with zero flags.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--claude-dir` | `~/.claude/projects` | Claude Code transcript root |
+| `--hermes-db` | `~/.hermes/state.db` | Hermes state.db path |
+| `--opencode-db` | `~/.local/share/opencode/opencode.db` | OpenCode opencode.db path |
+| `--hermes-log` | `~/.hermes/logs/agent.log` | Hermes agent.log (roster API-call ticker) |
+| `--idle-timeout` | `180` | safety ceiling for a session stuck mid-turn with no activity |
+| `--interval` | `1` | roster scan interval, seconds |
+| `--max-panes` | `8` | pane cap (grid mode); finished panes are evicted first, the roster always lists everything |
+| `--linger` | `60` | finished panes stay this long before closing; `0` = keep forever |
+| `--replay-bytes` | `20480` | history a freshly opened pane replays from a file-backed source (Claude) |
+| `--replay-lines` | `40` | history a freshly opened pane replays from a DB-backed source (Hermes, OpenCode) |
+| `--fresh-window` (`ls`, `render` only) | `3600` | roster lookback for recently-finished sessions; `watch` isn't given this flag and keeps the tighter 300s Python default |
+
+`hermon ls` and `hermon render` honor `NO_COLOR` (and fall back to plain text
+automatically when stdout isn't a terminal); the ratatui screen (`hermon
+watch`) always renders in color — use `HERMON_ASCII=1` there instead if you
+need a plainer glyph set.
+
+Run any subcommand with `--help` for the exact flags and defaults shipped in
+this build, or `hermon --version` for the build version.
 
 ## Adding another source
 
-Hermes shells out to more than these two tools, and each one tends to keep
+Hermes shells out to more than these three tools, and each one tends to keep
 its own session store the same way Claude Code and OpenCode do — hermon
-watches that store directly rather than going through Hermes. If the store
-is a SQLite DB with a row-per-message shape and *some* field that marks a
-turn as cleanly finished vs. mid-tool-call (that's the part worth checking
-first — grep the tool's own source or DB schema for anything resembling
-`finish_reason`/`stop_reason`/`status`), adding it is mostly:
+watches that store directly rather than going through Hermes. Two traits in
+[`src/source/mod.rs`](src/source/mod.rs) are the whole contract:
 
-1. Subclass `DbTurnSource`, set `key_prefix`/`label_prefix`, implement
-   `sessions()` returning the shared dict shape (`id`, `started_at`,
-   `ended_at`, `model`, `title`, `in_tok`, `out_tok`, `cost`, `last_ts`,
-   `turn_done`, `tool_pending`) and `last_tool()`/`_render_argv()` — `Hermes-
-   Source`/`OpenCodeSource` in [hermon.py](hermon.py) are the templates.
-   `turn_liveness()` and the roster then work for it automatically.
-2. Write a `render_<tool>_*` function turning one row into printable lines,
-   and a `cmd_render_<tool>` polling loop — `render_hermes_row`/
-   `cmd_render_hermes` (append-only) or `render_opencode_part`/
-   `cmd_render_opencode` (in-place-updated rows) are the two shapes so far.
-3. Wire it into `add_source_flags`, `build_sources`, `source_flags`, the
-   `render` subparser, and `main()`'s dispatch.
+```rust
+pub trait Source {
+    fn sessions(&mut self) -> Vec<SessionMeta>;
+    fn last_tool(&mut self, session_id: &str) -> String;
+    fn open_tailer(&self, session_id: &str, replay: Replay) -> Option<Box<dyn Tailer>> { None }
+}
 
-If the tool has no such signal at all, it still works via the flat
-`now - last_ts <= idle_timeout` fallback (like Claude transcripts) — just
-less precise about mid-turn silence.
+pub trait Tailer {
+    fn poll(&mut self) -> Vec<StyledLine>;
+}
+```
+
+Adding a tool is:
+
+1. Implement `Source` for it — `sessions()` returns the shared
+   `SessionMeta` shape (id, timestamps, model, tokens, cost, `turn_done`,
+   `tool_pending`, …); `classify()` (`src/source/mod.rs`) then gives you
+   live/attention/done for free. `ClaudeSource`/`HermesSource`/
+   `OpenCodeSource` (`src/source/{claude,hermes,opencode}.rs`) are the
+   templates — pick whichever is closer to the new store's shape (flat file
+   vs. row-per-message SQLite with a turn-completion signal).
+2. Implement `Tailer` for its live view, and a renderer turning one raw row
+   into `StyledLine`s (`src/render/{claude,hermes,opencode}.rs` are the
+   templates; `hermon render KEY` is the parity harness these are diffed
+   against).
+3. Add a field to `Sources` and a match arm in its `open_tailer`
+   (`src/roster.rs`), and a loop over the new source in `build_roster` —
+   that's the entire touch-point list now, versus the Python version's five.
+
+If the tool has no turn-completion signal at all, it still works via the
+flat `now - last_ts <= idle_timeout` fallback (like Claude transcripts) —
+just less precise about mid-turn silence.
+
+## Non-goals
+
+Not a session manager — read-only, never sends input, never kills a session.
+No web UI, no persistence or analytics beyond what's on screen. No Windows
+(macOS primary, Linux best-effort); no plans to change that.
+
+## Python version
+
+`hermon.py` at the repo root is the original implementation this rewrite
+replaces — same read-only model, but driving real tmux panes instead of a
+built-in TUI. It's kept working (and its test suite green) until parity is
+signed off; removing it is tracked in
+[#47](https://github.com/DrazThan/hermon/issues/47). Don't build new features
+on it.
 
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests
+cargo test
 ```
 
 Fixtures only — synthetic transcripts and fixture SQLite DBs matching each
-tool's real schema; no tmux, no real sessions.
+tool's real schema; nothing here touches a real session or a real tmux/TUI
+session.
 
-## Non-goals (v1)
+## Roadmap
 
-Not a session manager (read-only), no web UI, no persistence or analytics,
-no Windows (macOS primary, Linux best-effort).
+See [docs/roadmap.md](docs/roadmap.md) for the milestone-by-milestone status
+and links to the GitHub milestones.
 
 ## License
 

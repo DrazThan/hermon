@@ -296,6 +296,7 @@ fn run(
                         &key,
                         config.max_panes,
                         &pinned,
+                        config.replay,
                     ) {
                         OpenOutcome::Skipped => {}
                         OpenOutcome::Opened => next_pane_tick = Instant::now(),
@@ -388,9 +389,16 @@ fn scan(
         .cloned()
         .collect();
     for key in pending {
-        if let OpenOutcome::Evicted(victim) =
-            try_open(deck, panes, tracked, ids, &key, config.max_panes, pinned)
-        {
+        if let OpenOutcome::Evicted(victim) = try_open(
+            deck,
+            panes,
+            tracked,
+            ids,
+            &key,
+            config.max_panes,
+            pinned,
+            config.replay,
+        ) {
             events.push(evicted_event(victim));
         }
     }
@@ -746,6 +754,7 @@ enum OpenOutcome {
 /// deck ever being asked to open it. The chosen victim isn't actually
 /// removed until `key`'s own tailer opens successfully, so a source that
 /// can't tail `key` costs nobody their slot.
+#[allow(clippy::too_many_arguments)]
 fn try_open(
     deck: &mut dyn Deck,
     panes: &mut HashMap<String, Box<dyn Tailer>>,
@@ -754,6 +763,7 @@ fn try_open(
     key: &str,
     max_panes: usize,
     pinned: &HashSet<String>,
+    replay: Replay,
 ) -> OpenOutcome {
     let Some(session_id) = ids.get(key) else {
         return OpenOutcome::Skipped;
@@ -780,7 +790,7 @@ fn try_open(
         }
     }
 
-    let Some(tailer) = deck.open_tailer(key, session_id, Replay::DEFAULT) else {
+    let Some(tailer) = deck.open_tailer(key, session_id, replay) else {
         return OpenOutcome::Skipped;
     };
 
@@ -1347,6 +1357,7 @@ mod tests {
             "a",
             2,
             &no_pins(),
+            Replay::DEFAULT,
         );
         assert!(matches!(outcome, OpenOutcome::Opened));
         assert!(panes.contains_key("a"));
@@ -1371,6 +1382,7 @@ mod tests {
             "fresh",
             2,
             &no_pins(),
+            Replay::DEFAULT,
         );
         assert!(matches!(outcome, OpenOutcome::Evicted(ref v) if v == "old"));
         assert!(
@@ -1404,6 +1416,7 @@ mod tests {
             "fresh",
             2,
             &pins(&["old-pinned"]),
+            Replay::DEFAULT,
         );
         assert!(matches!(outcome, OpenOutcome::Evicted(ref v) if v == "new"));
         assert!(panes.contains_key("old-pinned"), "the pin held its slot");
@@ -1433,6 +1446,7 @@ mod tests {
             "fresh",
             2,
             &pins(&["a", "b"]),
+            Replay::DEFAULT,
         );
         assert!(matches!(outcome, OpenOutcome::Skipped));
         assert!(panes.contains_key("a"));
@@ -1456,6 +1470,7 @@ mod tests {
             "b",
             1,
             &no_pins(),
+            Replay::DEFAULT,
         );
         assert!(matches!(outcome, OpenOutcome::Skipped));
         assert!(!panes.contains_key("b"));
@@ -1477,6 +1492,7 @@ mod tests {
             "ghost",
             2,
             &no_pins(),
+            Replay::DEFAULT,
         );
         assert!(matches!(outcome, OpenOutcome::Skipped));
     }
@@ -1497,6 +1513,7 @@ mod tests {
             "fresh",
             1,
             &no_pins(),
+            Replay::DEFAULT,
         );
         assert!(matches!(outcome, OpenOutcome::Skipped));
         assert!(

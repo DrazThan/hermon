@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::notify::NotifyCfg;
+use crate::source::Replay;
 
 /// Everything [`crate::engine::Engine`] needs to scan sources and pace its
 /// loop: the same store locations `Sources::new` takes, plus the watcher
@@ -16,6 +17,9 @@ pub struct EngineConfig {
     pub hermes_log: String,
     /// Safety ceiling for a session stuck mid-turn with no activity.
     pub idle_timeout: f64,
+    /// History replayed when a pane is freshly opened (`--replay-bytes` /
+    /// `--replay-lines`).
+    pub replay: Replay,
     /// How long a finished session stays on the roster before aging out.
     pub fresh_window: f64,
     /// How often the engine rescans every source.
