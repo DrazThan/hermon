@@ -57,6 +57,7 @@ pub struct GlyphSet {
     pub done: &'static str,
     pub perm_wait: &'static str,
     pub stuck: &'static str,
+    pub muted: &'static str,
 }
 
 impl GlyphSet {
@@ -68,6 +69,7 @@ impl GlyphSet {
                 done: ".",
                 perm_wait: "||",
                 stuck: "!",
+                muted: "[muted]",
             }
         } else {
             GlyphSet {
@@ -75,6 +77,7 @@ impl GlyphSet {
                 done: "✓",
                 perm_wait: "⏸",
                 stuck: "⚠",
+                muted: "🔕",
             }
         }
     }
@@ -88,6 +91,12 @@ fn glyphs() -> GlyphSet {
         let use_ascii = std::env::var_os("HERMON_ASCII").is_some();
         GlyphSet::for_mode(use_ascii)
     })
+}
+
+/// The mute indicator for the footer: empty when unmuted, else the glyph
+/// (`🔕`, or `[muted]` under `HERMON_ASCII`).
+pub fn mute_indicator(muted: bool) -> &'static str {
+    if muted { glyphs().muted } else { "" }
 }
 
 /// Return the glyph and style for a session's liveness state.

@@ -86,6 +86,40 @@ squeezes the live ones — but a `claude -p` that ran for ten seconds should
 survive long enough to glance at. If a session resumes after its pane was
 unsplit, the pane comes back.
 
+## Notifications
+
+`hermon watch` fires a desktop banner when a session finishes a clean turn,
+hits an error, gets stuck mid-tool-call, or sits waiting on a permission
+prompt. Delivery degrades gracefully depending on what's on `PATH`, probed
+once at startup:
+
+1. [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) —
+   richest option: a real app icon and `-sound`.
+2. `osascript -e 'display notification …'` — ships with every Mac, no
+   install required. **Caveat:** banners delivered this way show a generic
+   script-editor icon, since `osascript` has no notion of a custom app icon;
+   install `terminal-notifier` (`brew install terminal-notifier`) if that
+   bothers you.
+3. `notify-send` on Linux.
+4. Silent no-op if none of the above is found — alerts are still decided and
+   logged, just never shown.
+
+A banner never blocks the monitor: it's fired with a plain spawn-and-forget,
+so a slow or hung notifier can't stall a scan tick.
+
+`[m]` in the TUI mutes every banner for the rest of the session (shown as
+🔕 in the footer); it doesn't touch the roster or panes. Flags, for scripting
+or turning individual alert kinds off:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--no-notify` | off | skip desktop notifications entirely |
+| `--notify-cooldown` | `120` | seconds before the same session/kind can alert again |
+| `--no-notify-turn-done` | off | don't alert when a session finishes a clean turn |
+| `--no-notify-stuck` | off | don't alert when a tool call looks wedged |
+| `--no-notify-perm-wait` | off | don't alert when a session is waiting on a permission prompt |
+| `--no-notify-error` | off | don't alert on an observed error line |
+
 ## What a session pane shows
 
 | Event | Rendering |

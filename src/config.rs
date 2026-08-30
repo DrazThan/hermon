@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::notify::NotifyCfg;
+
 /// Everything [`crate::engine::Engine`] needs to scan sources and pace its
 /// loop: the same store locations `Sources::new` takes, plus the watcher
 /// tuning knobs (`hermon.py:1294 cmd_watch`).
@@ -25,4 +27,7 @@ pub struct EngineConfig {
     /// Most sessions tailed at once; a new live one evicts the oldest
     /// finished pane to make room (`hermon.py:1389 self_evict`).
     pub max_panes: usize,
+    /// Which alert kinds are enabled and their cooldowns, from `--no-notify*`
+    /// / `--notify-cooldown` (#44).
+    pub notify: NotifyCfg,
 }

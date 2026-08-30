@@ -24,7 +24,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::EngineConfig;
-use crate::render::StyledLine;
+use crate::notify::{self, Alert, AlertHistory, DoneCause, LifecycleTransition, Notifier};
+use crate::render::{Sem, StyledLine};
 use crate::roster::{RosterRow, Sources, TICKER_LIMIT, api_call_ticker, build_roster};
 use crate::source::{Attn, Liveness, Replay, Tailer};
 
@@ -51,8 +52,10 @@ pub enum Event {
         key: String,
         lines: Vec<StyledLine>,
     },
-    /// Placeholder for the attention-alert channel landing in M6.
-    Alert,
+    /// One notification [`notify::decide_alerts`] fired this tick.
+    /// Delivery to the desktop already happened by the time this lands — the
+    /// UI just gets to know about it too (a future history view, say).
+    Alert(Alert),
 }
 
 /// A session's liveness crossing a boundary the UI should narrate, keyed by
@@ -104,6 +107,9 @@ pub enum UiCmd {
     /// Stop tailing it. The engine drops the tailer, so a later
     /// [`UiCmd::OpenPane`] replays history again from scratch.
     ClosePane(String),
+    /// Sets the global mute flag `[m]` toggles — mirrors the UI's own copy,
+    /// which flips instantly rather than waiting on a round trip.
+    SetMuted(bool),
 }
 
 /// What the loop needs from the stores: the deck on each scan tick, and a
@@ -225,6 +231,15 @@ fn run(
     // evicted away) or catch back up on its own (a resumption reopening
     // one), all without the UI ever sending another command.
     let mut wanted: HashSet<String> = HashSet::new();
+    // Sem::Error lines seen on open panes since the last scan drained them,
+    // keyed by roster key — the only source `decide_alerts` has for
+    // [`LifecycleTransition::error_line`], since only tailed sessions have
+    // any transcript content to inspect at all.
+    let mut errors: HashMap<String, String> = HashMap::new();
+    let mut hist = AlertHistory::new();
+    // Probed once, not per tick: it's a filesystem walk, and the answer
+    // doesn't change while hermon is running.
+    let notifier = notify::probe();
 
     let mut next_scan = Instant::now();
     let mut next_pane_tick = Instant::now();
@@ -240,6 +255,9 @@ fn run(
                 &mut ids,
                 &mut panes,
                 &wanted,
+                &mut errors,
+                &mut hist,
+                &notifier,
             )
             .is_err()
             {
@@ -248,7 +266,7 @@ fn run(
             next_scan = Instant::now() + config.interval;
         }
         if Instant::now() >= next_pane_tick {
-            if pump_panes(&mut panes, tx).is_err() {
+            if pump_panes(&mut panes, tx, &mut errors).is_err() {
                 return;
             }
             next_pane_tick = Instant::now() + PANE_TICK;
@@ -257,6 +275,7 @@ fn run(
         let deadline = next_scan.min(next_pane_tick);
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(UiCmd::Shutdown) => return,
+            Ok(UiCmd::SetMuted(muted)) => hist.set_muted(muted),
             Ok(UiCmd::OpenPane(key)) => {
                 wanted.insert(key.clone());
                 if !panes.contains_key(&key) && !killed_and_done(&tracked, &key) {
@@ -308,6 +327,9 @@ fn scan(
     ids: &mut HashMap<String, String>,
     panes: &mut HashMap<String, Box<dyn Tailer>>,
     wanted: &HashSet<String>,
+    errors: &mut HashMap<String, String>,
+    hist: &mut AlertHistory,
+    notifier: &Notifier,
 ) -> Result<(), ()> {
     let now = clock();
     let mut rows = deck.roster(now, config.fresh_window, config.idle_timeout);
@@ -326,6 +348,17 @@ fn scan(
     linger_expire(tracked, panes, config.linger, now);
     forget(tracked, panes, &rows);
     *ids = rows.iter().map(|r| (r.key.clone(), r.id.clone())).collect();
+
+    // Decide and fire this tick's alerts, once liveness/attn-elapsed are
+    // final. A vanished session (finished with no row surviving this tick)
+    // gets no transition — there is no roster data left to describe it —
+    // so it can only ever raise TurnDone/Stuck/PermWait while its row is
+    // still on the deck.
+    let transitions = build_transitions(&prev_liveness, &rows, now, errors);
+    for alert in notify::decide_alerts(&transitions, now, &config.notify, hist) {
+        notify::deliver(notifier, "hermon", &alert.label, &alert.detail);
+        events.push(Event::Alert(alert));
+    }
 
     // Satisfy whatever the UI still wants but doesn't have: newly wanted
     // keys the last scan couldn't reach yet, and resumptions reopening a
@@ -355,11 +388,27 @@ fn scan(
 
 /// One fast tick: every open pane polled once, silent panes sending
 /// nothing. Closed panes are gone from the map, so they are never polled.
-fn pump_panes(panes: &mut HashMap<String, Box<dyn Tailer>>, tx: &Sender<Event>) -> Result<(), ()> {
+/// Any `Sem::Error` line seen is stashed in `errors`, keyed by roster key —
+/// the only source [`notify::decide_alerts`] has for
+/// [`LifecycleTransition::error_line`], since only tailed sessions have any
+/// transcript content to inspect at all. Overwritten by a later error the
+/// same tick; drained by the next scan tick's [`build_transitions`].
+fn pump_panes(
+    panes: &mut HashMap<String, Box<dyn Tailer>>,
+    tx: &Sender<Event>,
+    errors: &mut HashMap<String, String>,
+) -> Result<(), ()> {
     for (key, tailer) in panes.iter_mut() {
         let lines = tailer.poll();
         if lines.is_empty() {
             continue;
+        }
+        if let Some(line) = lines
+            .iter()
+            .rev()
+            .find(|line| line.0.iter().any(|seg| seg.sem == Sem::Error))
+        {
+            errors.insert(key.clone(), line.to_plain());
         }
         tx.send(Event::PaneLines {
             key: key.clone(),
@@ -368,6 +417,44 @@ fn pump_panes(panes: &mut HashMap<String, Box<dyn Tailer>>, tx: &Sender<Event>) 
         .map_err(|_| ())?;
     }
     Ok(())
+}
+
+/// Builds one [`LifecycleTransition`] per current row for
+/// [`notify::decide_alerts`], reading `from` off the pre-tick liveness
+/// snapshot and draining any error line [`pump_panes`] recorded for that key
+/// since the last scan. `started_at`/`state_since` are derived from the
+/// row's own `elapsed`/`attn_elapsed` rather than kept separately in
+/// [`Tracked`] — both already carry exactly this, computed the same tick.
+fn build_transitions(
+    prev: &HashMap<String, Liveness>,
+    rows: &[RosterRow],
+    now: f64,
+    errors: &mut HashMap<String, String>,
+) -> Vec<LifecycleTransition> {
+    rows.iter()
+        .map(|row| {
+            let from = prev.get(&row.key).copied().unwrap_or(row.state);
+            let done_cause =
+                (row.state == Liveness::Done && from != Liveness::Done).then(
+                    || match finish_cause(from) {
+                        Cause::Clean => DoneCause::TurnDone,
+                        Cause::Timeout => DoneCause::Timeout,
+                    },
+                );
+            LifecycleTransition {
+                key: row.key.clone(),
+                label: row.key.clone(),
+                from,
+                to: row.state,
+                done_cause,
+                started_at: row.last_ts - row.elapsed.unwrap_or(0.0),
+                state_since: now - row.attn_elapsed.unwrap_or(0.0),
+                cost: row.cost,
+                last_tool: row.last_tool.clone(),
+                error_line: errors.remove(&row.key),
+            }
+        })
+        .collect()
 }
 
 /// Diffs this tick's rows against the last tick's liveness, in roster order,
@@ -698,6 +785,7 @@ fn now_secs() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::Seg;
     use crate::source::Attn;
 
     fn row(key: &str, state: Liveness) -> RosterRow {
@@ -1296,5 +1384,136 @@ mod tests {
             "a failed open must not cost the victim its slot"
         );
         assert!(!tracked["old"].killed);
+    }
+
+    // ------------------------------------------------------ alert wiring
+
+    #[test]
+    fn build_transitions_covers_every_row_using_prev_liveness_as_from() {
+        let prev = HashMap::from([("a".to_string(), Liveness::Live)]);
+        let rows = vec![row("a", Liveness::Attention(Attn::Stuck))];
+        let mut errors = HashMap::new();
+        let transitions = build_transitions(&prev, &rows, 100.0, &mut errors);
+        assert_eq!(transitions.len(), 1);
+        assert_eq!(transitions[0].from, Liveness::Live);
+        assert_eq!(transitions[0].to, Liveness::Attention(Attn::Stuck));
+        assert_eq!(transitions[0].label, "a");
+    }
+
+    #[test]
+    fn build_transitions_defaults_from_to_the_current_state_for_a_brand_new_key() {
+        // No prior tick's liveness for this key: from == to, so a session
+        // that shows up already Done never reads as a fresh finish.
+        let rows = vec![row("a", Liveness::Done)];
+        let mut errors = HashMap::new();
+        let transitions = build_transitions(&HashMap::new(), &rows, 0.0, &mut errors);
+        assert_eq!(transitions[0].from, transitions[0].to);
+        assert_eq!(transitions[0].done_cause, None);
+    }
+
+    #[test]
+    fn build_transitions_maps_clean_and_timeout_finishes_to_done_cause() {
+        let prev = HashMap::from([
+            ("clean".to_string(), Liveness::Live),
+            ("timeout".to_string(), Liveness::Attention(Attn::PermWait)),
+        ]);
+        let rows = vec![row("clean", Liveness::Done), row("timeout", Liveness::Done)];
+        let mut errors = HashMap::new();
+        let transitions = build_transitions(&prev, &rows, 0.0, &mut errors);
+        assert_eq!(transitions[0].done_cause, Some(DoneCause::TurnDone));
+        assert_eq!(transitions[1].done_cause, Some(DoneCause::Timeout));
+    }
+
+    #[test]
+    fn build_transitions_leaves_done_cause_none_without_a_done_boundary() {
+        let prev = HashMap::from([("a".to_string(), Liveness::Live)]);
+        let rows = vec![row("a", Liveness::Live)];
+        let mut errors = HashMap::new();
+        let transitions = build_transitions(&prev, &rows, 0.0, &mut errors);
+        assert_eq!(transitions[0].done_cause, None);
+    }
+
+    #[test]
+    fn build_transitions_derives_started_at_and_state_since_from_the_row() {
+        let mut r = row("a", Liveness::Attention(Attn::Stuck));
+        r.last_ts = 1000.0;
+        r.elapsed = Some(30.0);
+        r.attn_elapsed = Some(15.0);
+        let prev = HashMap::from([("a".to_string(), Liveness::Live)]);
+        let mut errors = HashMap::new();
+        let transitions = build_transitions(&prev, &[r], 1000.0, &mut errors);
+        assert_eq!(transitions[0].started_at, 970.0);
+        assert_eq!(transitions[0].state_since, 985.0);
+    }
+
+    #[test]
+    fn build_transitions_drains_a_recorded_error_line() {
+        let rows = vec![row("a", Liveness::Live)];
+        let mut errors = HashMap::from([("a".to_string(), "boom".to_string())]);
+        let transitions = build_transitions(&HashMap::new(), &rows, 0.0, &mut errors);
+        assert_eq!(transitions[0].error_line, Some("boom".to_string()));
+        assert!(
+            errors.is_empty(),
+            "the error line should be drained, not just read"
+        );
+    }
+
+    #[test]
+    fn pump_panes_records_the_latest_error_line_per_key() {
+        struct ErrTailer(Vec<StyledLine>);
+        impl Tailer for ErrTailer {
+            fn poll(&mut self) -> Vec<StyledLine> {
+                std::mem::take(&mut self.0)
+            }
+        }
+        let lines = vec![
+            StyledLine(vec![Seg::new(Sem::Plain, "ok line")]),
+            StyledLine(vec![Seg::new(Sem::Error, "first error")]),
+            StyledLine(vec![Seg::new(Sem::Plain, "more output")]),
+            StyledLine(vec![Seg::new(Sem::Error, "second error")]),
+        ];
+        let mut panes: HashMap<String, Box<dyn Tailer>> = HashMap::new();
+        panes.insert("a".to_string(), Box::new(ErrTailer(lines)));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut errors = HashMap::new();
+
+        pump_panes(&mut panes, &tx, &mut errors).unwrap();
+
+        assert_eq!(
+            errors.get("a"),
+            Some(&"second error".to_string()),
+            "the most recent error line this tick wins"
+        );
+        match rx.recv().unwrap() {
+            Event::PaneLines { lines, .. } => {
+                assert_eq!(lines.len(), 4, "every polled line is still forwarded")
+            }
+            other => panic!("expected PaneLines, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pump_panes_leaves_errors_untouched_with_no_error_line_this_tick() {
+        struct QuietTailer(Vec<StyledLine>);
+        impl Tailer for QuietTailer {
+            fn poll(&mut self) -> Vec<StyledLine> {
+                std::mem::take(&mut self.0)
+            }
+        }
+        let mut panes: HashMap<String, Box<dyn Tailer>> = HashMap::new();
+        panes.insert(
+            "a".to_string(),
+            Box::new(QuietTailer(vec![StyledLine(vec![Seg::new(
+                Sem::Plain,
+                "all clear",
+            )])])),
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut errors = HashMap::new();
+
+        pump_panes(&mut panes, &tx, &mut errors).unwrap();
+
+        assert!(errors.is_empty());
+        assert!(rx.try_recv().is_ok());
     }
 }

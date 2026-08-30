@@ -16,6 +16,7 @@ use rusqlite::Connection;
 use common::{fixture_path, temp_db_from_schema};
 use hermon::config::EngineConfig;
 use hermon::engine::{Deck, Engine, Event, Lifecycle, PANE_TICK, UiCmd};
+use hermon::notify::NotifyCfg;
 use hermon::render::{Seg, Sem, StyledLine};
 use hermon::roster::RosterRow;
 use hermon::source::{Liveness, Replay, Tailer};
@@ -41,6 +42,7 @@ fn config(hermes_db: &std::path::Path) -> EngineConfig {
         interval: TICK,
         linger: 60.0,
         max_panes: 8,
+        notify: NotifyCfg::default(),
     }
 }
 
@@ -97,8 +99,10 @@ fn engine_emits_roster_then_a_lifecycle_finished_on_turn_done() {
                     break;
                 }
             }
-            Event::Ticker(_) | Event::Lifecycle { .. } | Event::PaneLines { .. } | Event::Alert => {
-            }
+            Event::Ticker(_)
+            | Event::Lifecycle { .. }
+            | Event::PaneLines { .. }
+            | Event::Alert(_) => {}
         }
     }
     assert!(saw_live, "engine never reported the live session");
@@ -152,6 +156,7 @@ fn shutdown_joins_promptly_with_no_sessions() {
             interval: TICK,
             linger: 60.0,
             max_panes: 8,
+            notify: NotifyCfg::default(),
         },
         tx,
         rx,
@@ -189,6 +194,7 @@ fn a_hung_up_ui_ends_the_loop_via_the_failing_send() {
             interval: TICK,
             linger: 60.0,
             max_panes: 8,
+            notify: NotifyCfg::default(),
         },
         tx,
         rx,
@@ -289,6 +295,7 @@ fn pane_config() -> EngineConfig {
         interval: Duration::from_millis(500),
         linger: 60.0,
         max_panes: 8,
+        notify: NotifyCfg::default(),
     }
 }
 

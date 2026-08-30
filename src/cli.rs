@@ -3,6 +3,8 @@
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::notify::NotifyCfg;
+
 /// Live tmux monitor deck for Hermes and Claude Code sessions.
 #[derive(Debug, Parser)]
 #[command(name = "hermon", version, about)]
@@ -87,6 +89,49 @@ pub struct SourceArgs {
     /// Keep finished panes this long before unsplitting; 0 = forever.
     #[arg(long, default_value_t = 60.0)]
     pub linger: f64,
+
+    /// Skip desktop notifications entirely.
+    #[arg(long)]
+    pub no_notify: bool,
+
+    /// Per-(session, kind) cooldown before a turn-done/error alert can fire
+    /// again for the same session.
+    #[arg(long, default_value_t = NotifyCfg::default().cooldown_secs)]
+    pub notify_cooldown: f64,
+
+    /// Don't alert when a session finishes a clean turn.
+    #[arg(long)]
+    pub no_notify_turn_done: bool,
+
+    /// Don't alert when a tool call looks wedged.
+    #[arg(long)]
+    pub no_notify_stuck: bool,
+
+    /// Don't alert when a session is waiting on a permission prompt.
+    #[arg(long)]
+    pub no_notify_perm_wait: bool,
+
+    /// Don't alert on an observed error line.
+    #[arg(long)]
+    pub no_notify_error: bool,
+}
+
+impl SourceArgs {
+    /// Builds [`NotifyCfg`] from the `--no-notify*`/`--notify-cooldown`
+    /// flags. `--no-notify` is the master switch: it wins over any per-kind
+    /// flag rather than combining with it, so `--no-notify
+    /// --no-notify-error` isn't a contradiction to reason about.
+    pub fn notify_cfg(&self) -> NotifyCfg {
+        let enabled = !self.no_notify;
+        NotifyCfg {
+            turn_done: enabled && !self.no_notify_turn_done,
+            error: enabled && !self.no_notify_error,
+            stuck: enabled && !self.no_notify_stuck,
+            perm_wait: enabled && !self.no_notify_perm_wait,
+            cooldown_secs: self.notify_cooldown,
+            ..NotifyCfg::default()
+        }
+    }
 }
 
 fn default_claude_dir() -> String {

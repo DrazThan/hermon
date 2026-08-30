@@ -35,11 +35,10 @@ use crate::roster::RosterRow;
 use crate::ui::overlay::{Palette, PaletteFocus};
 use crate::view::{self, ViewState};
 
-const FOOTER_LIST: &str = "[q]uit [j/k]select [l]grid [s]ort [f]ilter [a]ttn [?]help";
-const FOOTER_GRID: &str =
-    "[q]uit [j/k]select [l]list [Tab]page [z]oom [x/o]close/open [s]ort [f]ilter [a]ttn [?]help";
-const FOOTER_ZOOM: &str = "[q]uit [Esc]back [PgUp/PgDn]scroll [g/G]top/tail [?]help";
-const HELP: &str = "q / Ctrl-C  quit\nj / \u{2193}       next\nk / \u{2191}       previous\nl           list / grid\nTab         next page\n\u{21b5} / z       zoom\nEsc         leave zoom\nPgUp/PgDn   scroll pane\ng / G       top / follow tail\nx / o       close / reopen\n?           toggle help";
+const FOOTER_LIST: &str = "[q]uit [j/k]select [l]grid [s]ort [f]ilter [a]ttn [m]ute [?]help";
+const FOOTER_GRID: &str = "[q]uit [j/k]select [l]list [Tab]page [z]oom [x/o]close/open [s]ort [f]ilter [a]ttn [m]ute [?]help";
+const FOOTER_ZOOM: &str = "[q]uit [Esc]back [PgUp/PgDn]scroll [g/G]top/tail [m]ute [?]help";
+const HELP: &str = "q / Ctrl-C  quit\nj / \u{2193}       next\nk / \u{2191}       previous\nl           list / grid\nTab         next page\n\u{21b5} / z       zoom\nEsc         leave zoom\nPgUp/PgDn   scroll pane\ng / G       top / follow tail\nx / o       close / reopen\nm           mute notifications\n?           toggle help";
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const REDRAW_INTERVAL: Duration = Duration::from_millis(100);
 /// Preview box: four lines of session detail plus its border.
@@ -117,6 +116,10 @@ pub struct App {
     pub view: ViewState,
     /// The sort/filter overlay, open while `[s]`/`[f]` has it up.
     pub palette: Option<Palette>,
+    /// Global notification mute, `[m]` toggles. Mirrors the engine's own
+    /// [`AlertHistory`](crate::notify::AlertHistory) copy, which flips
+    /// instantly here rather than waiting on a round trip through it.
+    pub muted: bool,
 }
 
 impl App {
@@ -147,6 +150,10 @@ impl App {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
+            }
+            KeyCode::Char('m') => {
+                self.muted = !self.muted;
+                self.cmds.push(UiCmd::SetMuted(self.muted));
             }
             KeyCode::Char('?') => self.show_help = !self.show_help,
             KeyCode::Char('j') | KeyCode::Down => self.select_next(),
@@ -234,7 +241,10 @@ impl App {
             Event::Ticker(lines) => self.ticker = lines,
             Event::PaneLines { key, lines } => self.buffer_pane(&key, lines),
             Event::Lifecycle { key, change } => self.apply_lifecycle(&key, change),
-            Event::Alert => {}
+            // Delivery already happened in the engine by the time this
+            // lands; the UI has nothing further to do with it yet (a future
+            // history view, say).
+            Event::Alert(_) => {}
         }
     }
 
@@ -549,7 +559,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ViewMode::List => list::render(frame, body, app),
         ViewMode::Grid => render_grid(frame, body, app),
     }
-    frame.render_widget(Paragraph::new(footer_text(app)), footer);
+    frame.render_widget(Paragraph::new(footer_line(app)), footer);
 
     if let Some(palette) = &app.palette {
         let (matched, total) = overlay::draft_matches(&app.roster, &app.view, &palette.input);
@@ -557,7 +567,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     if app.show_help {
-        let area = centered(frame.area(), 30, 13);
+        let area = centered(frame.area(), 30, 14);
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(HELP).block(Block::bordered().title("help")),
@@ -611,6 +621,16 @@ fn footer_text(app: &App) -> &'static str {
         (ViewMode::List, _) => FOOTER_LIST,
         (ViewMode::Grid, false) => FOOTER_GRID,
         (ViewMode::Grid, true) => FOOTER_ZOOM,
+    }
+}
+
+/// The footer's key hints, plus the mute indicator when `[m]` is on.
+fn footer_line(app: &App) -> String {
+    let indicator = palette::mute_indicator(app.muted);
+    if indicator.is_empty() {
+        footer_text(app).to_string()
+    } else {
+        format!("{} {indicator}", footer_text(app))
     }
 }
 
@@ -943,7 +963,7 @@ mod tests {
 
     #[test]
     fn draws_the_empty_state_and_footer_before_the_first_roster() {
-        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(70, 12)).unwrap();
         let app = App {
             paths: vec!["/tmp/claude".to_string()],
             ..App::default()
