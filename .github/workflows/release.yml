@@ -39,10 +39,6 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
-      # Legacy Python tests for hermon.py; drop this step once the Rust port replaces it.
-      - name: Python tests
-        run: python3 -m unittest discover -s tests
-
       # The profile Homebrew builds with (fat LTO, one codegen unit) — verify it
       # compiles here rather than in a user's `brew install`.
       - name: Release build

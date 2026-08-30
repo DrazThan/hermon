@@ -63,8 +63,8 @@ git push origin v0.1.0
 ```
 
 Pushing the tag fires `.github/workflows/release.yml`, which runs the full
-suite (build, test, clippy, fmt, the legacy Python tests, plus a
-`cargo build --release` so the LTO profile is proven on Linux too), checks
+suite (build, test, clippy, fmt, plus a `cargo build --release` so the LTO
+profile is proven on Linux too), checks
 the tag matches `Cargo.toml`'s version, and then creates the GitHub release
 with generated notes. GitHub attaches the source tarball automatically — no
 binary artifacts are uploaded, since the tap builds from source.
@@ -155,7 +155,28 @@ Results here, Homebrew 6.0.20:
   because the tag doesn't exist yet. Re-run `--online` after step 2; it should
   come back clean once the digest from step 3 is in place.
 
-## 7. What's deliberately not here
+## 7. Predecessor: the Python implementation
+
+hermon began as `hermon.py`, a single-file Python script at the repo root —
+the same read-only model, but driving real tmux panes instead of a built-in
+TUI, and carrying its own `unittest` suite under `tests/`. It stayed in the
+tree as the parity oracle for the whole rewrite and was deleted in
+[#47](https://github.com/DrazThan/hermon/issues/47) once `hermon ls` and
+`hermon render` were signed off row-for-row against it on all three sources.
+
+It is one checkout away:
+
+```bash
+git show python-final:hermon.py
+git checkout python-final    # the whole pre-deletion tree, tests included
+```
+
+The `python-final` tag marks the last commit that carries it. Comments under
+`src/` and `tests/` still cite `hermon.py` and `tests/test_*.py` line numbers
+as provenance for the behavior and cases they port; those references resolve
+against that tag.
+
+## 8. What's deliberately not here
 
 No signed or notarized binaries, no bottles, no homebrew-core submission, no
 Linux packages. Every `brew install hermon` compiles from source against the
