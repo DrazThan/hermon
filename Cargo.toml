@@ -16,3 +16,12 @@ serde_json = "1.0.151"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# Tuned for the shipped binary: one codegen unit and fat LTO so the whole
+# crate graph is optimized together, symbols stripped since we don't ship
+# debug info. Costs build time (a Homebrew source build pays it once);
+# see packaging/RELEASE_NOTES.md for the measured size/startup numbers.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

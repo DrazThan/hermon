@@ -34,9 +34,22 @@ Each store path is overridable per subcommand: `--claude-dir`, `--hermes-db`,
 
 ## Install
 
-Not yet packaged — building from source with `cargo build --release` is the
-only path today. A Homebrew tap is tracked in
-[#46](https://github.com/DrazThan/hermon/issues/46).
+```bash
+brew tap drazthan/hermon
+brew install hermon
+```
+
+The tap builds from source against Homebrew's `rust`, so the first install
+spends about half a minute compiling; there are no bottles or prebuilt
+binaries yet.
+
+From a checkout instead:
+
+```bash
+cargo install --path .
+```
+
+Either way `hermon --version` should print `hermon 0.1.0`.
 
 ## Quickstart
 
