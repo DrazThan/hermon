@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      # A tag whose version doesn't match Cargo.toml would ship a binary whose
+      # `--version` disagrees with the formula's, so fail before releasing.
+      - name: Check tag matches crate version
+        run: |
+          crate=$(cargo metadata --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          tag=${GITHUB_REF_NAME#v}
+          test "$crate" = "$tag" || {
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $crate"
+            exit 1
+          }
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Format
+        run: cargo fmt --check
+
+      # Legacy Python tests for hermon.py; drop this step once the Rust port replaces it.
+      - name: Python tests
+        run: python3 -m unittest discover -s tests
+
+      # The profile Homebrew builds with (fat LTO, one codegen unit) — verify it
+      # compiles here rather than in a user's `brew install`.
+      - name: Release build
+        run: cargo build --release --locked
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No binary artifacts yet: the tap builds from the source tarball GitHub
+      # attaches to every release.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
