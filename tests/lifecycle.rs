@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use hermon::config::EngineConfig;
 use hermon::engine::{Cause, Clock, Deck, Engine, Event, Lifecycle, PANE_TICK, UiCmd};
+use hermon::notify::NotifyCfg;
 use hermon::render::{Seg, Sem, StyledLine};
 use hermon::roster::RosterRow;
 use hermon::source::{Liveness, Replay, Tailer};
@@ -40,6 +41,7 @@ fn config(linger: f64, max_panes: usize) -> EngineConfig {
         interval: TICK,
         linger,
         max_panes,
+        notify: NotifyCfg::default(),
         replay: Replay::DEFAULT,
     }
 }

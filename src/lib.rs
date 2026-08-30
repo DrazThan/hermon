@@ -41,6 +41,7 @@ pub fn run() -> anyhow::Result<()> {
         Command::Watch(args) => {
             // `watch` keeps the Python default 300s fresh window
             // (`hermon.py:1463`); only `ls` widens it to an hour.
+            let notify = args.notify_cfg();
             let replay = replay_from(&args);
             let config = EngineConfig {
                 claude_dir: args.claude_dir,
@@ -52,6 +53,7 @@ pub fn run() -> anyhow::Result<()> {
                 interval: Duration::from_secs_f64(args.interval),
                 linger: args.linger,
                 max_panes: args.max_panes,
+                notify,
                 replay,
             };
             ui::run_tui(config)
