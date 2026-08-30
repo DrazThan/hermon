@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::notify::NotifyCfg;
 use crate::source::Replay;
 
-/// Live tmux monitor deck for Hermes and Claude Code sessions.
+/// Live terminal monitor deck for Hermes, Claude Code, and OpenCode sessions.
 #[derive(Debug, Parser)]
 #[command(name = "hermon", version, about)]
 pub struct Cli {
@@ -16,9 +16,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Run the watcher daemon (owns the tmux session).
+    /// Run the live monitor deck (a ratatui TUI).
     Watch(SourceArgs),
-    /// Print the roster once to stdout (no tmux).
+    /// Print the roster once to stdout (no TUI).
     Ls(LsArgs),
     /// Stream one session's transcript to stdout until Ctrl-C.
     Render(RenderArgs),

@@ -1,4 +1,4 @@
-//! The watcher loop: polls sources, tracks sessions, drives tmux panes.
+//! The watcher loop: polls sources, tracks sessions, drives the TUI panes.
 //!
 //! Port of the Python daemon loop's polling half (`hermon.py:1294
 //! cmd_watch`) — the `while True: … time.sleep(args.interval)` body that

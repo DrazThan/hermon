@@ -1,4 +1,4 @@
-//! hermon-rs: live tmux monitor deck for Hermes and Claude Code sessions.
+//! hermon-rs: live terminal monitor deck for Hermes, Claude Code, and OpenCode sessions.
 //!
 //! Greenfield rewrite of `hermon.py`, developed in the same repository so
 //! issues and PRs stay connected to the Python implementation it replaces.

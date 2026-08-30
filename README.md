@@ -1,7 +1,13 @@
+<div align="center">
+
+<img src="assets/logo.png" alt="hermon logo" width="128" />
+
 # hermon
 
 **Live monitor deck for Hermes, Claude Code, and OpenCode agent sessions.**
 *Hermes + monitor — and the mountain.*
+
+</div>
 
 A terminal UI for devs working with [Hermes](https://github.com/NousResearch/hermes-agent):
 one window you drag onto a spare monitor, where every agent session running
@@ -14,7 +20,20 @@ it watches the on-disk stores those tools already write to, so nothing has to
 be instrumented, wrapped, or run through hermon to be seen. It never sends
 input to a session and never kills one.
 
-*(screenshot / asciinema link goes here — recorded after packaging, #46)*
+## Screenshots
+
+<div align="center">
+<table>
+<tr>
+<td><img src="assets/screenshot-list.png" alt="hermon list view" width="100%"/><br/><em>List — roster + preview pane</em></td>
+<td><img src="assets/screenshot-grid.png" alt="hermon grid view" width="100%"/><br/><em>Grid — roster over tiled, streaming panes</em></td>
+</tr>
+<tr>
+<td><img src="assets/screenshot-zoom.png" alt="hermon zoom view" width="100%"/><br/><em>Zoom — one session's transcript at full size</em></td>
+<td><img src="assets/screenshot-help.png" alt="hermon help overlay" width="100%"/><br/><em>Help — the keybinding overlay</em></td>
+</tr>
+</table>
+</div>
 
 ## How it captures sessions
 
@@ -89,6 +108,7 @@ this replaces; see
 | `f` | any | Open the filter palette |
 | `a` | any | Toggle attention-first grouping |
 | `p` | any | Pin / unpin the selected session (held panes survive `--max-panes` eviction) |
+| `m` | any | Mute / unmute desktop notifications (🔕) |
 | `c` | any | Clear sort + filter |
 | `?` | any | Toggle the help overlay |
 | `Tab` | grid | Next page of tiles |
@@ -214,18 +234,10 @@ Either way, finished sessions stay on the roster for `--fresh-window`, and a
 finished pane in grid mode closes after `--linger` seconds unless pinned —
 if the session resumes, its pane comes back.
 
-## Notifications
-
 Attention states surface live in the TUI today: the roster glyph, a pane's
 border color, and (in grid mode) a status line under an attention pane's
 transcript (`⏸ waiting on permission prompt · <elapsed>` /
 `⚠ tool pending <elapsed> — no output`).
-
-Desktop notifications (`osascript`, a mute key, cooldowns per session/kind)
-have their decision core built and unit-tested (`decide_alerts`,
-`AlertHistory`) but aren't wired to actual delivery or CLI flags yet — that's
-[#44](https://github.com/DrazThan/hermon/issues/44), tracked under
-[M6](docs/roadmap.md).
 
 ## CLI reference
 
