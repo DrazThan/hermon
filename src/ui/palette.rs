@@ -58,6 +58,9 @@ pub struct GlyphSet {
     pub perm_wait: &'static str,
     pub stuck: &'static str,
     pub muted: &'static str,
+    /// Marks a pinned session in the roster's pin column — 📌 is exactly the
+    /// emoji-width hazard this fallback table exists for.
+    pub pin: &'static str,
 }
 
 impl GlyphSet {
@@ -70,6 +73,7 @@ impl GlyphSet {
                 perm_wait: "||",
                 stuck: "!",
                 muted: "[muted]",
+                pin: "*",
             }
         } else {
             GlyphSet {
@@ -78,6 +82,7 @@ impl GlyphSet {
                 perm_wait: "⏸",
                 stuck: "⚠",
                 muted: "🔕",
+                pin: "📌",
             }
         }
     }
@@ -108,6 +113,11 @@ pub fn glyph_for_liveness(liveness: Liveness) -> (&'static str, Style) {
         Liveness::Attention(Attn::PermWait) => (glyphs.perm_wait, style(Sem::User)),
         Liveness::Attention(Attn::Stuck) => (glyphs.stuck, style(Sem::Error)),
     }
+}
+
+/// The pin column's glyph — 📌, or `*` under `HERMON_ASCII`.
+pub fn pin_glyph() -> &'static str {
+    glyphs().pin
 }
 
 /// Convert a StyledLine into a ratatui Line, mapping each segment's Sem to a Style.
@@ -219,6 +229,7 @@ mod tests {
         assert_eq!(glyphs.done, "✓");
         assert_eq!(glyphs.perm_wait, "⏸");
         assert_eq!(glyphs.stuck, "⚠");
+        assert_eq!(glyphs.pin, "📌");
     }
 
     #[test]
@@ -228,6 +239,16 @@ mod tests {
         assert_eq!(glyphs.done, ".");
         assert_eq!(glyphs.perm_wait, "||");
         assert_eq!(glyphs.stuck, "!");
+        assert_eq!(glyphs.pin, "*");
+    }
+
+    #[test]
+    fn pin_glyph_resolves_to_the_cached_mode() {
+        let pin = pin_glyph();
+        assert!(
+            [GlyphSet::for_mode(false).pin, GlyphSet::for_mode(true).pin].contains(&pin),
+            "{pin:?}"
+        );
     }
 
     #[test]

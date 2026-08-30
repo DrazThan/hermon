@@ -35,10 +35,10 @@ use crate::roster::RosterRow;
 use crate::ui::overlay::{Palette, PaletteFocus};
 use crate::view::{self, ViewState};
 
-const FOOTER_LIST: &str = "[q]uit [j/k]select [l]grid [s]ort [f]ilter [a]ttn [m]ute [?]help";
-const FOOTER_GRID: &str = "[q]uit [j/k]select [l]list [Tab]page [z]oom [x/o]close/open [s]ort [f]ilter [a]ttn [m]ute [?]help";
+const FOOTER_LIST: &str = "[q]uit [j/k]select [l]grid [p]in [s]ort [f]ilter [a]ttn [m]ute [?]help";
+const FOOTER_GRID: &str = "[q]uit [j/k]select [l]list [Tab]page [z]oom [x/o]close/open [p]in [s]ort [f]ilter [a]ttn [m]ute [?]help";
 const FOOTER_ZOOM: &str = "[q]uit [Esc]back [PgUp/PgDn]scroll [g/G]top/tail [m]ute [?]help";
-const HELP: &str = "q / Ctrl-C  quit\nj / \u{2193}       next\nk / \u{2191}       previous\nl           list / grid\nTab         next page\n\u{21b5} / z       zoom\nEsc         leave zoom\nPgUp/PgDn   scroll pane\ng / G       top / follow tail\nx / o       close / reopen\nm           mute notifications\n?           toggle help";
+const HELP: &str = "q / Ctrl-C  quit\nj / \u{2193}       next\nk / \u{2191}       previous\nl           list / grid\np           pin / unpin\nTab         next page\n\u{21b5} / z       zoom\nEsc         leave zoom\nPgUp/PgDn   scroll pane\ng / G       top / follow tail\nx / o       close / reopen\nm           mute notifications\n?           toggle help";
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const REDRAW_INTERVAL: Duration = Duration::from_millis(100);
 /// Preview box: four lines of session detail plus its border.
@@ -93,6 +93,9 @@ pub struct App {
     pub page: usize,
     /// The store paths the engine is watching, for the empty state.
     pub paths: Vec<String>,
+    /// The engine's `--max-panes` ceiling, so the header can note when the
+    /// pinned set alone has grown past what the engine will ever tail.
+    pub max_panes: usize,
     /// Transcript lines per open pane, oldest first. Only open panes have an
     /// entry: closing one drops its buffer, so reopening shows the engine's
     /// fresh replay instead of it twice.
@@ -130,6 +133,7 @@ impl App {
                 config.hermes_db.clone(),
                 config.opencode_db.clone(),
             ],
+            max_panes: config.max_panes,
             ..App::default()
         }
     }
@@ -169,6 +173,7 @@ impl App {
                 self.view.attention_first = !self.view.attention_first;
                 self.resync_selection();
             }
+            KeyCode::Char('p') => self.toggle_pin(),
             KeyCode::Char('c') => {
                 self.view.clear();
                 self.resync_selection();
@@ -216,6 +221,27 @@ impl App {
 
     fn selected_key(&self) -> Option<String> {
         self.selected_row().map(|row| row.key.clone())
+    }
+
+    /// `[p]`: pins or unpins the selected session, then tells the engine
+    /// which keys are currently pinned so its own eviction (`--max-panes`)
+    /// never picks one of them.
+    fn toggle_pin(&mut self) {
+        let Some(id) = self.selected_row().map(|row| row.id.clone()) else {
+            return;
+        };
+        if self.view.is_pinned(&id) {
+            self.view.unpin(&id);
+        } else {
+            self.view.pin(&id);
+        }
+        let pinned_keys: HashSet<String> = self
+            .roster
+            .iter()
+            .filter(|row| self.view.is_pinned(&row.id))
+            .map(|row| row.key.clone())
+            .collect();
+        self.cmds.push(UiCmd::Pinned(pinned_keys));
     }
 
     fn set_scroll(&mut self, next: impl Fn(usize) -> usize) {
@@ -329,14 +355,23 @@ impl App {
         view::apply(&self.roster, &self.view).rows
     }
 
-    /// Sessions eligible for a grid slot: the filtered, sorted fleet minus
-    /// the ones dismissed with `[x]` — or, since the M4 lifecycle ticket, ones
-    /// the engine itself evicted under `--max-panes` (see
-    /// [`Self::apply_lifecycle`]), which land in the same `closed` set.
+    /// Sessions eligible for a grid slot: the filtered, sorted fleet — which
+    /// already sorts pinned rows first — plus any pinned session the active
+    /// filter hides from the rows entirely (pinning holds the slot even
+    /// though the row itself stays hidden), minus whatever's dismissed with
+    /// `[x]` or, since the M4 lifecycle ticket, evicted by the engine under
+    /// `--max-panes` (see [`Self::apply_lifecycle`]), which land in the same
+    /// `closed` set.
     fn grid_keys(&self) -> Vec<String> {
-        self.visible_rows()
+        let visible = self.visible_rows();
+        let visible_ids: HashSet<&str> = visible.iter().map(|row| row.id.as_str()).collect();
+        let hidden_pins = self
+            .roster
             .iter()
-            .map(|row| row.key.clone())
+            .filter(|row| self.view.is_pinned(&row.id) && !visible_ids.contains(row.id.as_str()))
+            .map(|row| row.key.clone());
+        hidden_pins
+            .chain(visible.iter().map(|row| row.key.clone()))
             .filter(|key| !self.closed.contains(key))
             .collect()
     }
@@ -394,6 +429,7 @@ impl App {
             lines: self.panes.get(&row.key).unwrap_or(&NO_LINES),
             offset: self.scroll.get(&row.key).copied().unwrap_or(0),
             attn_elapsed: row.attn_elapsed,
+            pinned: self.view.is_pinned(&row.id),
         }
     }
 
@@ -576,11 +612,20 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 }
 
-/// Whether the header chip bar has anything to show: an active sort or a
-/// non-empty filter. `attention_first` alone (`[a]`) does not raise it —
-/// that toggle has no chip of its own, per the artboard.
+/// Whether the header chip bar has anything to show: an active sort, a
+/// non-empty filter, or more pins than the engine will ever tail.
+/// `attention_first` alone (`[a]`) does not raise it — that toggle has no
+/// chip of its own, per the artboard.
 fn header_active(app: &App) -> bool {
-    app.view.sort_key.is_some() || !app.view.filter.is_empty()
+    app.view.sort_key.is_some() || !app.view.filter.is_empty() || pin_overflow(app) > 0
+}
+
+/// How many pinned sessions exceed `--max-panes`: pinning holds a grid slot
+/// and immunity from eviction, but the engine still only ever tails
+/// `max_panes` sessions at once, so pins past that ceiling simply never get
+/// a live tail — the newest to have opened one keep it, the rest wait.
+fn pin_overflow(app: &App) -> usize {
+    app.view.pinned.len().saturating_sub(app.max_panes)
 }
 
 /// The chip bar (artboard 3a): `sort: cost ↓` plus one green chip per
@@ -590,6 +635,14 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     let out = view::apply(&app.roster, &app.view);
 
     let mut left: Vec<Span> = Vec::new();
+    let overflow = pin_overflow(app);
+    if overflow > 0 {
+        left.push(Span::styled(
+            format!("{} {overflow} over --max-panes", palette::pin_glyph(),),
+            palette::style(Sem::Error),
+        ));
+        left.push(Span::raw("  "));
+    }
     if let Some(key) = app.view.sort_key {
         left.push(Span::styled(
             format!("sort: {} {}", key.label(), app.view.sort_dir.arrow()),
@@ -963,6 +1016,8 @@ mod tests {
 
     #[test]
     fn draws_the_empty_state_and_footer_before_the_first_roster() {
+        // Wide enough for FOOTER_LIST, which the 60-column body no longer
+        // fits now that `[p]in` joined the list.
         let mut terminal = Terminal::new(TestBackend::new(70, 12)).unwrap();
         let app = App {
             paths: vec!["/tmp/claude".to_string()],
@@ -1082,7 +1137,8 @@ mod tests {
         }
         // The footer line is wider than the 80-column tiling grid above, so
         // it gets its own wider buffer rather than clipping mid-assertion.
-        assert!(screen(&app, 100, 24).contains(FOOTER_GRID));
+        // 110 cols: FOOTER_GRID grew again when `[m]ute` joined `[p]in`.
+        assert!(screen(&app, 110, 24).contains(FOOTER_GRID));
     }
 
     #[test]
@@ -1609,5 +1665,95 @@ mod tests {
         let rendered = screen(&app, 80, 24);
         assert!(rendered.contains("not a number"), "{rendered}");
         assert!(app.view.filter.is_empty());
+    }
+
+    // ------------------------------------------------------------- pinning
+
+    /// `[p]` pins, and pins again to unpin, and either way the engine hears
+    /// about it as the full pinned key set — never a per-session diff.
+    #[test]
+    fn p_toggles_pin_and_tells_the_engine_the_pinned_key_set() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(vec![row("a"), row("b")]));
+        app.take_commands(); // drop the initial OpenPane("a")
+
+        app.handle_key(key(KeyCode::Char('p')));
+        assert!(app.view.is_pinned("id-a"));
+        assert_eq!(
+            app.take_commands(),
+            vec![UiCmd::Pinned(HashSet::from(["a".to_string()]))]
+        );
+
+        app.handle_key(key(KeyCode::Char('p')));
+        assert!(!app.view.is_pinned("id-a"));
+        assert_eq!(app.take_commands(), vec![UiCmd::Pinned(HashSet::new())]);
+    }
+
+    /// A session hidden by the active filter still shows up on the roster
+    /// list (it doesn't — the filter still hides the row) but keeps its
+    /// grid slot once pinned: the pane grid is pins plus filtered-in rows.
+    #[test]
+    fn a_pinned_session_hidden_by_the_filter_still_holds_a_grid_slot() {
+        let mut app = grid(fleet()); // C:aaaaaa/H:bbbbbb claude*, O:cccccc gpt-6
+        app.selected_id = Some("id-O:cccccc".to_string());
+        app.handle_key(key(KeyCode::Char('p')));
+        app.view.set_filter("model=claude*").unwrap();
+
+        assert!(
+            !app.visible_rows().iter().any(|r| r.key == "O:cccccc"),
+            "the filter still hides the row itself"
+        );
+        let rendered = screen(&app, 80, 24);
+        assert!(rendered.contains("C:aaaaaa"), "{rendered}");
+        assert!(rendered.contains("H:bbbbbb"), "{rendered}");
+        assert!(
+            rendered.contains("O:cccccc"),
+            "the pinned session should keep its pane: {rendered}"
+        );
+    }
+
+    /// The header notes it once pins alone outgrow `--max-panes` — the
+    /// engine will never tail all of them.
+    #[test]
+    fn the_header_notes_when_pins_exceed_max_panes() {
+        let mut app = App {
+            max_panes: 1,
+            ..App::default()
+        };
+        app.apply_event(Event::Roster(vec![row("a"), row("b")]));
+
+        app.selected_id = Some("id-a".to_string());
+        app.handle_key(key(KeyCode::Char('p')));
+        assert!(
+            !screen(&app, 80, 20).contains("over --max-panes"),
+            "one pin at max_panes=1 is not yet an overflow"
+        );
+
+        app.selected_id = Some("id-b".to_string());
+        app.handle_key(key(KeyCode::Char('p')));
+        let rendered = screen(&app, 80, 20);
+        assert!(rendered.contains("1 over --max-panes"), "{rendered}");
+    }
+
+    /// A finished, pinned session keeps its grid slot and its border goes
+    /// amber instead of dim — the artboard's cue that it is deliberately
+    /// held, not merely lingering.
+    #[test]
+    fn a_pinned_done_session_keeps_its_slot_with_an_amber_border() {
+        let mut app = grid(vec![state_row("a", Liveness::Done), row("b")]);
+        app.max_panes = 5; // keep the header inactive so the tiles stay at a fixed row
+        app.selected_id = Some("id-a".to_string());
+        app.handle_key(key(KeyCode::Char('p')));
+        app.selected_id = Some("id-b".to_string()); // deselect "a" so its border isn't the cyan selected one
+
+        let rendered = screen(&app, 80, 24);
+        assert!(rendered.contains("a"), "{rendered}");
+        let buf = buffer(&app, 80, 24);
+        let amber = palette::style(Sem::User).fg.unwrap();
+        assert_eq!(
+            buf[(0, 2)].fg,
+            amber,
+            "pinned-done border should be amber, not dim:\n{rendered}"
+        );
     }
 }

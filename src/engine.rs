@@ -110,6 +110,11 @@ pub enum UiCmd {
     /// Sets the global mute flag `[m]` toggles — mirrors the UI's own copy,
     /// which flips instantly rather than waiting on a round trip.
     SetMuted(bool),
+    /// Replaces the whole pinned set, keyed by [`RosterRow::key`]. Eviction
+    /// (`--max-panes`, [`try_open`]) never picks a key in this set as its
+    /// victim — the UI ticket's pinning composes with M4 eviction this way,
+    /// without the engine ever needing to know why a key is pinned.
+    Pinned(HashSet<String>),
 }
 
 /// What the loop needs from the stores: the deck on each scan tick, and a
@@ -240,6 +245,9 @@ fn run(
     // Probed once, not per tick: it's a filesystem walk, and the answer
     // doesn't change while hermon is running.
     let notifier = notify::probe();
+    // Keys the UI has pinned, replaced wholesale on every `UiCmd::Pinned`.
+    // Eviction never picks a victim from this set (#42).
+    let mut pinned: HashSet<String> = HashSet::new();
 
     let mut next_scan = Instant::now();
     let mut next_pane_tick = Instant::now();
@@ -258,6 +266,7 @@ fn run(
                 &mut errors,
                 &mut hist,
                 &notifier,
+                &pinned,
             )
             .is_err()
             {
@@ -279,7 +288,15 @@ fn run(
             Ok(UiCmd::OpenPane(key)) => {
                 wanted.insert(key.clone());
                 if !panes.contains_key(&key) && !killed_and_done(&tracked, &key) {
-                    match try_open(deck, &mut panes, &mut tracked, &ids, &key, config.max_panes) {
+                    match try_open(
+                        deck,
+                        &mut panes,
+                        &mut tracked,
+                        &ids,
+                        &key,
+                        config.max_panes,
+                        &pinned,
+                    ) {
                         OpenOutcome::Skipped => {}
                         OpenOutcome::Opened => next_pane_tick = Instant::now(),
                         OpenOutcome::Evicted(victim) => {
@@ -295,6 +312,7 @@ fn run(
                 wanted.remove(&key);
                 panes.remove(&key);
             }
+            Ok(UiCmd::Pinned(keys)) => pinned = keys,
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
@@ -330,6 +348,7 @@ fn scan(
     errors: &mut HashMap<String, String>,
     hist: &mut AlertHistory,
     notifier: &Notifier,
+    pinned: &HashSet<String>,
 ) -> Result<(), ()> {
     let now = clock();
     let mut rows = deck.roster(now, config.fresh_window, config.idle_timeout);
@@ -370,7 +389,7 @@ fn scan(
         .collect();
     for key in pending {
         if let OpenOutcome::Evicted(victim) =
-            try_open(deck, panes, tracked, ids, &key, config.max_panes)
+            try_open(deck, panes, tracked, ids, &key, config.max_panes, pinned)
         {
             events.push(evicted_event(victim));
         }
@@ -720,13 +739,13 @@ enum OpenOutcome {
     Skipped,
 }
 
-/// Opens `key`'s tailer, first evicting the oldest-finished pane if
-/// `max_panes` is already full. Eviction only ever takes a *finished*
-/// pane's slot — a fleet that is entirely live never loses one, and `key`
-/// simply waits for a slot on a later tick, without the deck ever being
-/// asked to open it. The chosen victim isn't actually removed until `key`'s
-/// own tailer opens successfully, so a source that can't tail `key` costs
-/// nobody their slot.
+/// Opens `key`'s tailer, first evicting the oldest-finished, unpinned pane
+/// if `max_panes` is already full. Eviction only ever takes a *finished,
+/// unpinned* pane's slot — a fleet that is entirely live or pinned never
+/// loses one, and `key` simply waits for a slot on a later tick, without the
+/// deck ever being asked to open it. The chosen victim isn't actually
+/// removed until `key`'s own tailer opens successfully, so a source that
+/// can't tail `key` costs nobody their slot.
 fn try_open(
     deck: &mut dyn Deck,
     panes: &mut HashMap<String, Box<dyn Tailer>>,
@@ -734,6 +753,7 @@ fn try_open(
     ids: &HashMap<String, String>,
     key: &str,
     max_panes: usize,
+    pinned: &HashSet<String>,
 ) -> OpenOutcome {
     let Some(session_id) = ids.get(key) else {
         return OpenOutcome::Skipped;
@@ -744,9 +764,10 @@ fn try_open(
         victim = panes
             .keys()
             .filter(|k| {
-                tracked
-                    .get(k.as_str())
-                    .is_some_and(|t| t.liveness == Liveness::Done)
+                !pinned.contains(k.as_str())
+                    && tracked
+                        .get(k.as_str())
+                        .is_some_and(|t| t.liveness == Liveness::Done)
             })
             .min_by(|a, b| {
                 let at = tracked[a.as_str()].finished_at.unwrap_or(0.0);
@@ -1302,6 +1323,14 @@ mod tests {
             .collect()
     }
 
+    fn no_pins() -> HashSet<String> {
+        HashSet::new()
+    }
+
+    fn pins(keys: &[&str]) -> HashSet<String> {
+        keys.iter().map(|k| k.to_string()).collect()
+    }
+
     #[test]
     fn try_open_opens_directly_under_the_cap() {
         let mut deck = StubDeck {
@@ -1310,7 +1339,15 @@ mod tests {
         let mut panes = HashMap::new();
         let mut tracked = HashMap::new();
         let ids = ids(&["a"]);
-        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "a", 2);
+        let outcome = try_open(
+            &mut deck,
+            &mut panes,
+            &mut tracked,
+            &ids,
+            "a",
+            2,
+            &no_pins(),
+        );
         assert!(matches!(outcome, OpenOutcome::Opened));
         assert!(panes.contains_key("a"));
     }
@@ -1326,7 +1363,15 @@ mod tests {
             ("new".to_string(), done(Some(2.0), false)),
         ]);
         let ids = ids(&["fresh"]);
-        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "fresh", 2);
+        let outcome = try_open(
+            &mut deck,
+            &mut panes,
+            &mut tracked,
+            &ids,
+            "fresh",
+            2,
+            &no_pins(),
+        );
         assert!(matches!(outcome, OpenOutcome::Evicted(ref v) if v == "old"));
         assert!(
             !panes.contains_key("old"),
@@ -1337,6 +1382,64 @@ mod tests {
         assert!(tracked["old"].killed);
     }
 
+    /// #42: a pinned finished pane is never picked as the eviction victim,
+    /// even when it is the oldest finish on the deck — the newer, unpinned
+    /// finish gets evicted in its place.
+    #[test]
+    fn try_open_never_evicts_a_pinned_key_even_when_it_is_oldest() {
+        let mut deck = StubDeck {
+            refuse: HashSet::new(),
+        };
+        let mut panes = panes_with(&["old-pinned", "new"]);
+        let mut tracked = HashMap::from([
+            ("old-pinned".to_string(), done(Some(1.0), false)),
+            ("new".to_string(), done(Some(2.0), false)),
+        ]);
+        let ids = ids(&["fresh"]);
+        let outcome = try_open(
+            &mut deck,
+            &mut panes,
+            &mut tracked,
+            &ids,
+            "fresh",
+            2,
+            &pins(&["old-pinned"]),
+        );
+        assert!(matches!(outcome, OpenOutcome::Evicted(ref v) if v == "new"));
+        assert!(panes.contains_key("old-pinned"), "the pin held its slot");
+        assert!(!panes.contains_key("new"));
+        assert!(!tracked["old-pinned"].killed);
+    }
+
+    /// #42: when every finished slot is pinned, eviction has nowhere to
+    /// take a slot from, so the new key simply waits — same as an all-live
+    /// fleet.
+    #[test]
+    fn try_open_skips_when_every_finished_slot_is_pinned() {
+        let mut deck = StubDeck {
+            refuse: HashSet::new(),
+        };
+        let mut panes = panes_with(&["a", "b"]);
+        let mut tracked = HashMap::from([
+            ("a".to_string(), done(Some(1.0), false)),
+            ("b".to_string(), done(Some(2.0), false)),
+        ]);
+        let ids = ids(&["fresh"]);
+        let outcome = try_open(
+            &mut deck,
+            &mut panes,
+            &mut tracked,
+            &ids,
+            "fresh",
+            2,
+            &pins(&["a", "b"]),
+        );
+        assert!(matches!(outcome, OpenOutcome::Skipped));
+        assert!(panes.contains_key("a"));
+        assert!(panes.contains_key("b"));
+        assert!(!panes.contains_key("fresh"));
+    }
+
     #[test]
     fn try_open_skips_when_every_occupied_slot_is_live() {
         let mut deck = StubDeck {
@@ -1345,7 +1448,15 @@ mod tests {
         let mut panes = panes_with(&["a"]);
         let mut tracked = HashMap::from([("a".to_string(), live())]);
         let ids = ids(&["b"]);
-        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "b", 1);
+        let outcome = try_open(
+            &mut deck,
+            &mut panes,
+            &mut tracked,
+            &ids,
+            "b",
+            1,
+            &no_pins(),
+        );
         assert!(matches!(outcome, OpenOutcome::Skipped));
         assert!(!panes.contains_key("b"));
         assert!(panes.contains_key("a"), "an all-live fleet loses no slot");
@@ -1365,6 +1476,7 @@ mod tests {
             &HashMap::new(),
             "ghost",
             2,
+            &no_pins(),
         );
         assert!(matches!(outcome, OpenOutcome::Skipped));
     }
@@ -1377,7 +1489,15 @@ mod tests {
         let mut panes = panes_with(&["old"]);
         let mut tracked = HashMap::from([("old".to_string(), done(Some(1.0), false))]);
         let ids = ids(&["fresh"]);
-        let outcome = try_open(&mut deck, &mut panes, &mut tracked, &ids, "fresh", 1);
+        let outcome = try_open(
+            &mut deck,
+            &mut panes,
+            &mut tracked,
+            &ids,
+            "fresh",
+            1,
+            &no_pins(),
+        );
         assert!(matches!(outcome, OpenOutcome::Skipped));
         assert!(
             panes.contains_key("old"),
