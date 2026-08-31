@@ -178,6 +178,21 @@ pub struct SourceArgs {
     /// already complete.
     #[arg(long, default_value = "")]
     pub remote_flags: String,
+
+    /// Follow every container labeled `dev.hermon.agent` automatically
+    /// (#92): polled alongside the roster scan, no separate timer. A
+    /// container's own name is the roster prefix unless it also carries a
+    /// `dev.hermon.agent.name` label; either way the name is validated the
+    /// same way a `--remote docker:` spec's container name is. An explicit
+    /// `--remote` with the same name always wins. **This extends
+    /// monitoring trust to every labeled image you run** — an image's own
+    /// `LABEL dev.hermon.agent` gets it auto-followed with no action from
+    /// you, so treat it like running the image at all: fine for your own
+    /// containers, not for arbitrary third-party ones. Use explicit
+    /// `--remote docker:<name>` instead if that's not a trade-off you
+    /// want to make.
+    #[arg(long)]
+    pub docker_auto: bool,
 }
 
 impl SourceArgs {

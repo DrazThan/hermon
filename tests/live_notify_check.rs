@@ -39,6 +39,7 @@ fn config() -> EngineConfig {
         replay: Replay::DEFAULT,
         remotes: Vec::new(),
         remote_flags: Vec::new(),
+        docker_auto: false,
     }
 }
 

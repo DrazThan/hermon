@@ -114,6 +114,7 @@ pub fn run() -> anyhow::Result<()> {
                 replay,
                 remotes,
                 remote_flags,
+                docker_auto: args.docker_auto,
             };
             ui::run_tui(config)
         }
@@ -139,6 +140,7 @@ pub fn run() -> anyhow::Result<()> {
                 replay,
                 remotes,
                 remote_flags,
+                docker_auto: args.docker_auto,
             };
             gui::run_gui(config)
         }
@@ -188,6 +190,7 @@ pub fn run() -> anyhow::Result<()> {
                 replay,
                 remotes,
                 remote_flags,
+                docker_auto: args.source.docker_auto,
             };
             menubar::run(config)
         }

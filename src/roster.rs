@@ -87,6 +87,21 @@ impl Sources {
         self
     }
 
+    /// [`with_remote`](Self::with_remote) for a deck already running —
+    /// `--docker-auto` (#92) adding a remote mid-run, on a scan tick,
+    /// rather than at startup.
+    pub fn add_remote(&mut self, remote: RemoteSource) {
+        self.remotes.push(remote);
+    }
+
+    /// Drops the named remote, which is the whole teardown: dropping a
+    /// [`RemoteSource`] stops its supervisor thread cleanly (see its
+    /// `Drop` impl) — the single removal path `--docker-auto` reuses
+    /// rather than inventing a second one.
+    pub fn remove_remote(&mut self, name: &str) {
+        self.remotes.retain(|r| r.name() != name);
+    }
+
     /// Opens a tailer for one roster row, picking the source from the key's
     /// prefix (`C:`/`H:`/`O:`, or `job1/` for a remote — whose own key sits
     /// behind the slash). Both halves of the row are needed: the key says
