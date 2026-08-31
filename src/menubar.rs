@@ -700,6 +700,7 @@ mod tests {
             notify: crate::notify::NotifyCfg::default(),
             remotes: Vec::new(),
             remote_flags: Vec::new(),
+            docker_auto: false,
         };
         let err = run(config).unwrap_err();
         assert!(err.to_string().contains("macOS only"));
