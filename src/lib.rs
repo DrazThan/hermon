@@ -8,6 +8,8 @@ pub mod cli;
 pub mod config;
 pub mod engine;
 pub mod gui;
+#[cfg(target_os = "macos")]
+pub mod login_item;
 pub mod menubar;
 pub mod notify;
 pub mod render;
@@ -106,23 +108,44 @@ pub fn run() -> anyhow::Result<()> {
         }
         Command::Render(args) => render(&args),
         Command::Menubar(args) => {
+            if args.install_login_item {
+                #[cfg(target_os = "macos")]
+                {
+                    return login_item::install();
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    anyhow::bail!("--install-login-item: macOS only");
+                }
+            }
+            if args.uninstall_login_item {
+                #[cfg(target_os = "macos")]
+                {
+                    return login_item::uninstall();
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    anyhow::bail!("--uninstall-login-item: macOS only");
+                }
+            }
+
             // Same fresh window as `watch` (`hermon.py:1463`); menubar is
             // the same live-fleet view, just in the status bar. Nothing
             // outranks it, so this only ever honours an explicit flag — but
             // it goes through the same seam so #77's `gui` slots in as one
             // more arm.
-            let notify = arbitrated_notify_cfg(&args, UiKind::Menubar);
-            let replay = replay_from(&args);
+            let notify = arbitrated_notify_cfg(&args.source, UiKind::Menubar);
+            let replay = replay_from(&args.source);
             let config = EngineConfig {
-                claude_dir: args.claude_dir,
-                hermes_db: args.hermes_db,
-                opencode_db: args.opencode_db,
-                hermes_log: args.hermes_log,
-                idle_timeout: args.idle_timeout,
+                claude_dir: args.source.claude_dir,
+                hermes_db: args.source.hermes_db,
+                opencode_db: args.source.opencode_db,
+                hermes_log: args.source.hermes_log,
+                idle_timeout: args.source.idle_timeout,
                 fresh_window: 300.0,
-                interval: Duration::from_secs_f64(args.interval),
-                linger: args.linger,
-                max_panes: args.max_panes,
+                interval: Duration::from_secs_f64(args.source.interval),
+                linger: args.source.linger,
+                max_panes: args.source.max_panes,
                 notify,
                 replay,
             };

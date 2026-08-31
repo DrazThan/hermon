@@ -89,6 +89,29 @@ tmux involved — that was the mechanism of the original Python implementation
 this replaces; see
 [Predecessor](packaging/RELEASE_NOTES.md#7-predecessor-the-python-implementation).
 
+## Menu bar (macOS)
+
+`hermon menubar` puts a status item in the macOS menu bar, showing live fleet
+counts and attention state (⏸ waiting on permission, ⚠ stuck tools) with a
+live dropdown. Useful for monitoring without dedicating a whole window.
+
+**Notification behavior:** The menu bar is the default notifier. When `hermon
+watch` is running, it automatically defers to it (so you get one banner stream,
+not two); pass `--notify` to either to override. The `[m]` key mutes both.
+
+**Launch at login:**
+
+```bash
+# Install: register with launchd so the menu bar starts when you log in
+hermon menubar --install-login-item
+
+# Uninstall: stop launching at login
+hermon menubar --uninstall-login-item
+```
+
+With launch-at-login installed, the menu bar stays running across reboots and
+automatically restarts if it crashes. Logs go to `~/.local/share/hermon/`.
+
 ## Views and keybindings
 
 `hermon watch` has two view modes, `l` toggles between them:

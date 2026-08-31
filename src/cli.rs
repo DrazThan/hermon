@@ -26,7 +26,23 @@ pub enum Command {
     /// Stream one session's transcript to stdout until Ctrl-C.
     Render(RenderArgs),
     /// Live fleet counts in the macOS menu bar (macOS only).
-    Menubar(SourceArgs),
+    Menubar(MenubarArgs),
+}
+
+/// Menubar-specific options, including source flags and login-item management.
+#[derive(Debug, Args)]
+pub struct MenubarArgs {
+    #[command(flatten)]
+    pub source: SourceArgs,
+
+    /// Write a LaunchAgent plist to ~/.config/hermon/LaunchAgents/dev.hermon.menubar.plist
+    /// and register it with launchctl so `hermon menubar` starts at login.
+    #[arg(long)]
+    pub install_login_item: bool,
+
+    /// Unregister and delete the LaunchAgent plist, removing launch-at-login.
+    #[arg(long)]
+    pub uninstall_login_item: bool,
 }
 
 /// `hermon render C:0f865f`: one session's pane body on stdout, the parity
