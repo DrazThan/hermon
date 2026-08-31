@@ -12,6 +12,7 @@ pub mod gui;
 pub mod login_item;
 pub mod menubar;
 pub mod notify;
+pub mod remote;
 pub mod render;
 pub mod roster;
 pub mod source;
