@@ -83,7 +83,7 @@ impl OpenCodeSource {
                 title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                 in_tok: tok(row.get(4)?) + tok(row.get(6)?) + tok(row.get(7)?),
                 out_tok: tok(row.get(5)?),
-                cost: row.get::<_, Option<f64>>(3)?.unwrap_or(0.0),
+                cost: row.get::<_, Option<f64>>(3)?,
                 last_ts: updated.or(created).unwrap_or(0.0) / 1000.0,
                 turn_done: role == Some("assistant") && finish == Some("stop"),
                 tool_pending: role == Some("assistant") && finish == Some("tool-calls"),

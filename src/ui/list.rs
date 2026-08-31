@@ -11,7 +11,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed};
-use crate::roster::{RosterRow, commas, totals_line};
+use crate::roster::{RosterRow, commas, fmt_cost, totals_line};
 use crate::source::{Attn, Liveness};
 use crate::ui::palette::{self, to_lines};
 use crate::ui::roster::row_sems;
@@ -92,10 +92,10 @@ fn meta_lines(row: &RosterRow) -> Vec<StyledLine> {
         StyledLine(vec![Seg::new(
             Sem::Stat,
             format!(
-                "Σ {} in / {} out / ${:.4} [{}]",
+                "Σ {} in / {} out / {} [{}]",
                 commas(row.in_tok),
                 commas(row.out_tok),
-                row.cost,
+                fmt_cost(row.cost),
                 row.model
             ),
         )]),
@@ -134,15 +134,15 @@ mod tests {
     /// engine would deliver them.
     fn fixture() -> Vec<RosterRow> {
         vec![
-            row("C:aaaaaa", Liveness::Live, 1.5),
-            row("H:bbbbbb", Liveness::Attention(Attn::PermWait), 0.25),
-            row("O:cccccc", Liveness::Attention(Attn::Stuck), 0.0),
-            row("C:dddddd", Liveness::Done, 12.0),
-            row("H:eeeeee", Liveness::Live, 0.125),
+            row("C:aaaaaa", Liveness::Live, Some(1.5)),
+            row("H:bbbbbb", Liveness::Attention(Attn::PermWait), Some(0.25)),
+            row("O:cccccc", Liveness::Attention(Attn::Stuck), Some(0.0)),
+            row("C:dddddd", Liveness::Done, Some(12.0)),
+            row("H:eeeeee", Liveness::Live, Some(0.125)),
         ]
     }
 
-    fn row(key: &str, state: Liveness, cost: f64) -> RosterRow {
+    fn row(key: &str, state: Liveness, cost: Option<f64>) -> RosterRow {
         RosterRow {
             id: format!("id-{key}"),
             key: key.to_string(),
@@ -209,8 +209,8 @@ mod tests {
         assert!(rows[0].contains("C:aaaaaa"), "{:?}", rows[0]);
         assert!(rows[0].contains("claude-sonnet-5 · 3m07s"), "{:?}", rows[0]);
         assert!(rows[0].contains("working on C:aaaaaa"), "{:?}", rows[0]);
-        assert!(rows[0].ends_with("$1.5000"), "{:?}", rows[0]);
-        assert!(rows[3].ends_with("$12.0000"), "{:?}", rows[3]);
+        assert!(rows[0].contains("$1.5000"), "{:?}", rows[0]);
+        assert!(rows[3].contains("$12.0000"), "{:?}", rows[3]);
     }
 
     /// A pinned row carries the pin glyph (📌, or `*` under `HERMON_ASCII` —
@@ -382,7 +382,7 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("0 live · 0 done · Σ $0.00 · 0 in"),
+            rendered.contains("0 live · 0 done · Σ — · 0 in"),
             "{rendered}"
         );
         assert!(rendered.contains("preview — —"), "{rendered}");
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn the_cursor_scrolls_into_view_on_a_short_pane() {
         let rows: Vec<RosterRow> = (0..12)
-            .map(|i| row(&format!("C:row{i:03}"), Liveness::Live, 0.0))
+            .map(|i| row(&format!("C:row{i:03}"), Liveness::Live, Some(0.0)))
             .collect();
         let mut state = app(rows);
         state.selected_id = Some("id-C:row011".to_string());

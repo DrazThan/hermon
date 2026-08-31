@@ -193,7 +193,7 @@ impl Source for HermesSource {
                     + row.get::<_, Option<i64>>(7)?.unwrap_or(0)
                     + row.get::<_, Option<i64>>(8)?.unwrap_or(0)) as u64,
                 out_tok: row.get::<_, Option<i64>>(6)?.unwrap_or(0) as u64,
-                cost: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
+                cost: row.get::<_, Option<f64>>(9)?,
                 last_ts: row.get(10)?,
                 turn_done,
                 tool_pending,

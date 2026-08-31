@@ -39,10 +39,9 @@ pub struct RosterRow {
     pub last_line: String,
     pub in_tok: u64,
     pub out_tok: u64,
-    /// Reported spend. Python distinguishes "no cost data" (`-`) from a
-    /// genuine `$0.0000`; [`SessionMeta::cost`] has already collapsed the
-    /// two to `0.0`, so the roster prints `0.0000` where Python prints `-`.
-    pub cost: f64,
+    /// Reported spend. `None` means no cost data available; `Some(v)` is the
+    /// actual spend, which may be zero.
+    pub cost: Option<f64>,
     pub elapsed: Option<f64>,
     pub last_ts: f64,
     pub title: String,
@@ -302,7 +301,7 @@ fn row_line(r: &RosterRow) -> StyledLine {
                 clip(&tool_annotation(r), W_TOOL - 1),
                 commas(r.in_tok),
                 commas(r.out_tok),
-                format!("{:.4}", r.cost),
+                fmt_cost(r.cost),
                 fmt_elapsed(r.elapsed),
             ),
         ),
@@ -314,6 +313,8 @@ fn row_line(r: &RosterRow) -> StyledLine {
 /// Attention sessions get their own counts instead of folding into live, so
 /// the totals line surfaces them the same way the roster rows do; the ⏸/⚠
 /// counts are omitted when zero to keep the common case unchanged.
+/// Cost display shows `—` if no costs are known, or `$X.XX` if all costs are
+/// known; if some sessions lack cost data, prefix with `≥` to mark it approximate.
 pub(crate) fn totals_line(rows: &[RosterRow]) -> StyledLine {
     let perm_wait = rows
         .iter()
@@ -325,8 +326,21 @@ pub(crate) fn totals_line(rows: &[RosterRow]) -> StyledLine {
         .count();
     let live = rows.iter().filter(|r| r.state == Liveness::Live).count();
     let done = rows.iter().filter(|r| r.state == Liveness::Done).count();
-    // fold, not sum(): f64's Sum identity is -0.0, which prints as "$-0.00".
-    let cost = rows.iter().fold(0.0, |acc, r| acc + r.cost);
+
+    let cost_str = if rows.is_empty() {
+        "—".to_string()
+    } else {
+        let known_costs: Vec<f64> = rows.iter().filter_map(|r| r.cost).collect();
+        let has_unknown = known_costs.len() < rows.len();
+        if known_costs.is_empty() {
+            "—".to_string()
+        } else {
+            let total: f64 = known_costs.iter().sum();
+            let prefix = if has_unknown { "≥ " } else { "" };
+            format!("{prefix}${total:.2}")
+        }
+    };
+
     let in_tok: u64 = rows.iter().map(|r| r.in_tok).sum();
 
     let mut parts = Vec::new();
@@ -342,7 +356,7 @@ pub(crate) fn totals_line(rows: &[RosterRow]) -> StyledLine {
     StyledLine(vec![Seg::new(
         Sem::Stat,
         format!(
-            "{} · Σ ${cost:.2} · {} in",
+            "{} · Σ {cost_str} · {} in",
             parts.join(" · "),
             commas(in_tok)
         ),
@@ -396,6 +410,14 @@ pub(crate) fn commas(n: u64) -> String {
     out
 }
 
+/// Format cost for display: `—` (em-dash) for no data, `$X.XXXX` for known values.
+pub(crate) fn fmt_cost(cost: Option<f64>) -> String {
+    match cost {
+        None => "—".to_string(),
+        Some(c) => format!("${:.4}", c),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -416,7 +438,7 @@ mod tests {
             last_line: "▶ Bash ls -la".to_string(),
             in_tok: 1_234_567,
             out_tok: 890,
-            cost: 1.5,
+            cost: Some(1.5),
             elapsed: Some(187.0),
             last_ts: NOW,
             title: "a title".to_string(),
@@ -511,7 +533,7 @@ mod tests {
         assert_eq!(text(&cols, 36, W_TOOL), "Bash");
         assert_eq!(text(&cols, 52, W_IN), "1,234,567");
         assert_eq!(text(&cols, 64, W_OUT), "890");
-        assert_eq!(text(&cols, 73, W_COST), "1.5000");
+        assert_eq!(text(&cols, 73, W_COST), "$1.5000");
         assert_eq!(text(&cols, 82, W_ELAPSED), "3m07s");
         assert!(line.ends_with("  a title"), "{line}");
     }
@@ -602,7 +624,7 @@ mod tests {
             .collect();
         assert!(lines[0].starts_with("hermon · 0 session(s) · "));
         assert!(lines.iter().any(|l| l.contains("(no sessions in window")));
-        assert_eq!(lines.last().unwrap(), "0 live · 0 done · Σ $0.00 · 0 in");
+        assert_eq!(lines.last().unwrap(), "0 live · 0 done · Σ — · 0 in");
     }
 
     #[test]

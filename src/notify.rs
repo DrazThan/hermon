@@ -54,7 +54,7 @@ pub struct LifecycleTransition {
     /// When the current `to` state was entered — used for the "pending Nm"
     /// duration in a Stuck/PermWait alert. Ignored otherwise.
     pub state_since: f64,
-    pub cost: f64,
+    pub cost: Option<f64>,
     pub last_tool: String,
     /// `Some(line)` when a `Sem::Error` line was observed for this session
     /// since the last tick, independent of `from`/`to`.
@@ -230,7 +230,11 @@ pub fn decide_alerts(
                     key: t.key.clone(),
                     label: t.label.clone(),
                     kind: AlertKind::TurnDone,
-                    detail: format!("${:.2} · {}", t.cost, fmt_elapsed(Some(duration))),
+                    detail: format!(
+                        "{} · {}",
+                        t.cost.map_or("—".to_string(), |c| format!("${c:.2}")),
+                        fmt_elapsed(Some(duration))
+                    ),
                 });
             }
         }
@@ -611,7 +615,7 @@ mod tests {
             done_cause: None,
             started_at: 0.0,
             state_since: 0.0,
-            cost: 0.43,
+            cost: Some(0.43),
             last_tool: "bash".to_string(),
             error_line: None,
         }

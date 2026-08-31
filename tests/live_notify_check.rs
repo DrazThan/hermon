@@ -86,7 +86,7 @@ impl Deck for FakeDeck {
                 last_line: String::new(),
                 in_tok: 0,
                 out_tok: 0,
-                cost: 0.11,
+                cost: Some(0.11),
                 elapsed: Some(20.0),
                 last_ts: now,
                 title: String::new(),
