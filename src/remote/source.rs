@@ -35,6 +35,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::remote::proto::{
     AgentMsg, Decoded, HostCmd, PROTO_VERSION, decode_agent_msg, encode_host_cmd,
 };
+use crate::remote::spec::AGENT_BIN;
 use crate::render::{Seg, Sem, StyledLine, sanitize};
 use crate::source::{LastEvent, Replay, SessionMeta, Source, Tailer};
 
@@ -60,6 +61,11 @@ const BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// A child that dies this fast never really connected — a bad image, a
 /// missing binary, a container that exits on start.
 const INSTANT_EXIT: Duration = Duration::from_secs(1);
+
+/// How much of a child's stderr the host keeps per connection attempt, just
+/// to classify the "binary missing" case — a short diagnostic, not a log
+/// firehose a hostile or noisy agent could grow without bound.
+const MAX_STDERR_BYTES: usize = 4096;
 
 /// Instant exits in a row before respawns are pinned at [`BACKOFF_MAX`] for
 /// good: a remote that can't start must not become a respawn storm.
@@ -129,6 +135,15 @@ struct Shared {
     skew: Option<f64>,
     /// The transport itself could not be started (bad argv, missing docker).
     spawn_error: Option<String>,
+    /// The most recent connection attempt's child exited almost instantly
+    /// with a "not found"-class message on its stderr: the agent binary
+    /// itself is missing from the image, not a transient failure. Cleared
+    /// by the next `Hello`, same as `spawn_error`.
+    missing_binary: bool,
+    /// How many connection attempts in a row have hit the missing-binary
+    /// case, so the notice can say it happened more than once without
+    /// reprinting the child's raw stderr on every respawn.
+    missing_binary_hits: u64,
 }
 
 /// A remote agent as the fourth [`Source`]. Constructing one starts the
@@ -398,6 +413,17 @@ fn notices(name: &str, shared: &Shared) -> Vec<String> {
     if let Some(err) = &shared.spawn_error {
         out.push(format!("⌁ {name} — {err}"));
     }
+    if shared.missing_binary {
+        let times = if shared.missing_binary_hits > 1 {
+            format!(" ({}x)", shared.missing_binary_hits)
+        } else {
+            String::new()
+        };
+        out.push(format!(
+            "⌁ {name} — '{AGENT_BIN}' not found in container: copy the binary in \
+             or add to the image{times}"
+        ));
+    }
     if shared.truncated {
         out.push(format!(
             "⚠ {name} — snapshot truncated at {MAX_SNAP_SESSIONS} sessions"
@@ -459,6 +485,8 @@ fn apply_frame(shared: &mut Shared, msg: AgentMsg, now: f64) -> Applied {
             shared.truncated = false;
             shared.skew = None;
             shared.spawn_error = None;
+            shared.missing_binary = false;
+            shared.missing_binary_hits = 0;
             Applied::Reopen(
                 shared
                     .tails
@@ -569,12 +597,22 @@ fn supervise(
         match transport
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
         {
             Ok(child) => {
                 lock(shared).spawn_error = None;
-                run_connection(child, shared, cmd_rx, cmds, stop);
+                let stderr = run_connection(child, shared, cmd_rx, cmds, stop);
+                // Only a child that never really connected gets its stderr
+                // read as a diagnosis — a remote that ran a while and then
+                // dropped is a disconnect, not a missing binary, even if it
+                // happened to log something matching the pattern on its way
+                // out.
+                if started.elapsed() < INSTANT_EXIT && looks_like_missing_binary(&stderr) {
+                    let mut shared = lock(shared);
+                    shared.missing_binary = true;
+                    shared.missing_binary_hits += 1;
+                }
             }
             Err(e) => {
                 lock(shared).spawn_error = Some(format!("cannot start transport: {e}"));
@@ -596,15 +634,17 @@ fn supervise(
     }
 }
 
-/// Drives one child: a reader thread on its stdout, host commands onto its
-/// stdin, until either end goes away.
+/// Drives one child: a reader thread on its stdout, another draining its
+/// stderr for the "binary missing" diagnosis, host commands onto its stdin,
+/// until either end goes away. Returns whatever the child wrote to stderr
+/// (capped, may be empty) so the caller can classify why it died.
 fn run_connection(
     mut child: Child,
     shared: &Arc<Mutex<Shared>>,
     cmd_rx: &Receiver<HostCmd>,
     cmds: &Sender<HostCmd>,
     stop: &Arc<AtomicBool>,
-) {
+) -> String {
     let reading = Arc::new(AtomicBool::new(true));
     let reader = child.stdout.take().map(|stdout| {
         let shared = Arc::clone(shared);
@@ -614,6 +654,12 @@ fn run_connection(
             read_frames(BufReader::new(stdout), &shared, &cmds);
             reading.store(false, Ordering::Relaxed);
         })
+    });
+
+    let stderr_buf = Arc::new(Mutex::new(String::new()));
+    let stderr_reader = child.stderr.take().map(|stderr| {
+        let buf = Arc::clone(&stderr_buf);
+        thread::spawn(move || read_stderr(BufReader::new(stderr), &buf))
     });
 
     let mut stdin = child.stdin.take();
@@ -642,6 +688,13 @@ fn run_connection(
     if let Some(reader) = reader {
         let _ = reader.join();
     }
+    if let Some(reader) = stderr_reader {
+        let _ = reader.join();
+    }
+    stderr_buf
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 /// The reader thread: frames in, shared state out. Never fails — a bad
@@ -673,6 +726,37 @@ fn read_frames<R: BufRead>(mut reader: R, shared: &Arc<Mutex<Shared>>, cmds: &Se
             }
         }
     }
+}
+
+/// Drains a child's stderr into `buf`, capped at [`MAX_STDERR_BYTES`] — the
+/// stream is read to EOF either way (so the child never blocks on a full
+/// pipe), but bytes past the cap are dropped rather than grown into.
+fn read_stderr<R: BufRead>(mut reader: R, buf: &Mutex<String>) {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {
+                let mut guard = buf.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                if guard.len() < MAX_STDERR_BYTES {
+                    guard.push_str(&line);
+                }
+            }
+        }
+    }
+}
+
+/// Whether a child's stderr reads as the shell's or `exec(2)`'s own "no such
+/// program" — the actionable case from #91, distinct from the agent binary
+/// starting and then failing for some other reason. Deliberately broad
+/// (three known phrasings across `sh`, `docker exec`, and a bad `PATH`)
+/// rather than trying to parse a specific shell's wording.
+fn looks_like_missing_binary(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    ["not found", "no such file or directory"]
+        .iter()
+        .any(|pat| lower.contains(pat))
 }
 
 /// Waits out the backoff in slices, so dropping the [`RemoteSource`] does
@@ -1136,5 +1220,63 @@ mod tests {
             "{:?}",
             notices("job1", &shared)
         );
+    }
+
+    // ---------------------------------------------------- missing binary
+
+    #[test]
+    fn stderr_phrasings_for_a_missing_binary_are_recognized() {
+        for stderr in [
+            "hermon: not found\n",
+            "sh: 1: hermon: not found\n",
+            "OCI runtime exec failed: exec failed: unable to start container process: \
+             exec: \"hermon\": executable file not found in $PATH: unknown\n",
+            "bash: hermon: No such file or directory\n",
+        ] {
+            assert!(looks_like_missing_binary(stderr), "{stderr:?}");
+        }
+    }
+
+    #[test]
+    fn ordinary_stderr_is_not_mistaken_for_a_missing_binary() {
+        for stderr in [
+            "",
+            "panicked at src/main.rs:1: boom\n",
+            "connection reset\n",
+        ] {
+            assert!(!looks_like_missing_binary(stderr), "{stderr:?}");
+        }
+    }
+
+    #[test]
+    fn a_missing_binary_notice_names_the_fix_and_counts_repeats() {
+        let mut shared = connected();
+        shared.missing_binary = true;
+        shared.missing_binary_hits = 1;
+        let notes = notices("job1", &shared);
+        assert!(
+            notes.iter().any(|n| n
+                == "⌁ job1 — 'hermon' not found in container: copy the binary in \
+                     or add to the image"),
+            "{notes:?}"
+        );
+
+        shared.missing_binary_hits = 3;
+        let notes = notices("job1", &shared);
+        assert!(
+            notes.iter().any(|n| n.ends_with("the image (3x)")),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn a_fresh_hello_clears_a_previous_missing_binary_notice() {
+        let mut shared = connected();
+        shared.missing_binary = true;
+        shared.missing_binary_hits = 2;
+        apply_frame(&mut shared, hello(PROTO_VERSION), 0.0);
+        assert!(!shared.missing_binary);
+        assert_eq!(shared.missing_binary_hits, 0);
+        assert_eq!(notices("job1", &shared), Vec::<String>::new());
     }
 }

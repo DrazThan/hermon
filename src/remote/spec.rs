@@ -31,7 +31,10 @@ use std::process::Command;
 
 /// `hermon agent`'s argv0 at the far end of a `docker:`/`ssh:` transport —
 /// found on the remote's `PATH`, never a path the host resolves itself.
-const AGENT_BIN: &str = "hermon";
+///
+/// `pub(crate)` so [`crate::remote::source`] can name it in the "binary
+/// missing" notice without duplicating the literal.
+pub(crate) const AGENT_BIN: &str = "hermon";
 
 /// One `--remote` flag, parsed and validated but not yet spawned.
 #[derive(Debug, Clone, PartialEq, Eq)]
