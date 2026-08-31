@@ -9,6 +9,7 @@
 //! logic; the event-loop wiring that drives it lives in [`mac`] so #71's
 //! dropdown menu and #72's arbitration have a narrow seam to extend.
 
+use crate::render::{Rgb, Sem};
 use crate::roster::{RosterRow, fmt_cost};
 use crate::source::{Attn, Liveness};
 use crate::ui::palette;
@@ -38,6 +39,10 @@ pub enum MenuRow {
     More { count: usize },
     /// Separator before actions
     Separator,
+    /// "Mute notifications", a checkmark item bound to the same mute the
+    /// TUI's `[m]` flips ([`crate::notify::AlertHistory::set_muted`]). The
+    /// mute is per-process: muting here does not mute a running `watch`.
+    MuteToggle { muted: bool },
     /// "Open hermon watch"
     OpenWatch,
     /// "Quit"
@@ -79,6 +84,17 @@ pub fn format_title(rows: &[RosterRow]) -> String {
     title
 }
 
+/// The status item's full title: [`format_title`] plus the mute glyph
+/// (`🔕`, or `[muted]` under `HERMON_ASCII`) while banners are silenced, so
+/// the menu bar says so without the dropdown having to be opened.
+pub fn status_title(rows: &[RosterRow], muted: bool) -> String {
+    let title = format_title(rows);
+    match palette::mute_indicator(muted) {
+        "" => title,
+        glyph => format!("{title} {glyph}"),
+    }
+}
+
 fn attention_count(rows: &[RosterRow], attn: Attn) -> usize {
     rows.iter()
         .filter(|r| r.state == Liveness::Attention(attn))
@@ -115,7 +131,7 @@ fn fmt_elapsed(seconds: Option<f64>) -> String {
 /// Build menu rows from the roster: attention-first sorted, capped at ~20,
 /// with fleet summary at top and Open/Quit actions at bottom. This is a pure
 /// function for testability — the caller wires it into the menu API.
-pub fn build_menu(rows: &[RosterRow]) -> Vec<MenuRow> {
+pub fn build_menu(rows: &[RosterRow], muted: bool) -> Vec<MenuRow> {
     let mut result = Vec::new();
 
     // Count states for the summary.
@@ -147,10 +163,109 @@ pub fn build_menu(rows: &[RosterRow]) -> Vec<MenuRow> {
 
     // Action items.
     result.push(MenuRow::Separator);
+    result.push(MenuRow::MuteToggle { muted });
     result.push(MenuRow::OpenWatch);
     result.push(MenuRow::Quit);
 
     result
+}
+
+/// The text one [`MenuRow`] shows in the dropdown. Pure and portable, so the
+/// macOS wiring only ever maps strings onto menu items — and so the labels
+/// are testable on any platform.
+pub fn menu_label(row: &MenuRow) -> String {
+    match row {
+        MenuRow::Summary { live, done, cost } => {
+            format!("{live} live · {done} done · Σ {cost}")
+        }
+        MenuRow::Session {
+            key,
+            model,
+            tool,
+            elapsed,
+            cost,
+            glyph,
+        } => {
+            let mut parts = vec![format!("{glyph} {key}")];
+            parts.extend(
+                [model, tool, elapsed, cost]
+                    .into_iter()
+                    .filter(|f| !f.is_empty())
+                    .cloned(),
+            );
+            parts.join(" · ")
+        }
+        MenuRow::More { count } => format!("… {count} more sessions"),
+        MenuRow::Separator => String::new(),
+        MenuRow::MuteToggle { .. } => "Mute notifications".to_string(),
+        MenuRow::OpenWatch => "Open hermon watch".to_string(),
+        MenuRow::Quit => "Quit".to_string(),
+    }
+}
+
+// ------------------------------------------------------------- status icon
+
+/// Pixel size of the status-bar dot. The tray backend scales whatever it is
+/// given down to 18pt, so this is drawn at 2× for retina.
+pub const ICON_PX: u32 = 36;
+
+/// Alpha the dot is drawn at while muted — still legible, visibly dimmed.
+const MUTED_ALPHA: u8 = 90;
+
+/// What the dot is currently saying. Tracked by the tray loop so the icon is
+/// only re-encoded when it would actually change, not on every roster tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IconState {
+    /// The most actionable attention state on the deck, if any.
+    pub attn: Option<Attn>,
+    pub muted: bool,
+}
+
+/// The icon's state from the same [`Liveness`] counts [`format_title`]
+/// reads. [`Attn::PermWait`] outranks [`Attn::Stuck`]: a session waiting on a
+/// permission prompt is blocked on the user specifically, where a wedged tool
+/// may still come back on its own.
+pub fn icon_state(rows: &[RosterRow], muted: bool) -> IconState {
+    let attn = if attention_count(rows, Attn::PermWait) > 0 {
+        Some(Attn::PermWait)
+    } else if attention_count(rows, Attn::Stuck) > 0 {
+        Some(Attn::Stuck)
+    } else {
+        None
+    };
+    IconState { attn, muted }
+}
+
+/// The dot as raw RGBA, so the menu bar needs no icon asset on disk: green
+/// while the fleet is fine, amber/red the moment something wants a human,
+/// dimmed while muted. Redundant with the counts in the title, which is the
+/// point — color is what peripheral vision catches.
+pub fn icon_rgba(state: IconState) -> Vec<u8> {
+    let color = match state.attn {
+        Some(Attn::PermWait) => Sem::User.color(),
+        Some(Attn::Stuck) => Sem::Error.color(),
+        None => Sem::Ok.color(),
+    };
+    let alpha = if state.muted { MUTED_ALPHA } else { 255 };
+    dot(color, alpha)
+}
+
+/// A filled circle with a one-pixel feathered edge — without the feather it
+/// reads as a square once the menu bar scales it down.
+fn dot(color: Rgb, alpha: u8) -> Vec<u8> {
+    let center = f64::from(ICON_PX - 1) / 2.0;
+    let radius = f64::from(ICON_PX) / 2.0 - 1.0;
+    let mut px = Vec::with_capacity((ICON_PX * ICON_PX * 4) as usize);
+    for y in 0..ICON_PX {
+        for x in 0..ICON_PX {
+            let dx = f64::from(x) - center;
+            let dy = f64::from(y) - center;
+            let coverage = (radius - dx.hypot(dy)).clamp(0.0, 1.0);
+            let a = (f64::from(alpha) * coverage).round() as u8;
+            px.extend_from_slice(&[color.r, color.g, color.b, a]);
+        }
+    }
+    px
 }
 
 /// Convert a RosterRow to a MenuRow session item.
@@ -279,8 +394,8 @@ mod tests {
 
     #[test]
     fn build_menu_empty_roster() {
-        let menu = build_menu(&[]);
-        assert_eq!(menu.len(), 4); // summary, separator, open watch, quit
+        let menu = build_menu(&[], false);
+        assert_eq!(menu.len(), 5); // summary, separator, mute, open watch, quit
         assert!(matches!(
             menu[0],
             MenuRow::Summary {
@@ -290,15 +405,16 @@ mod tests {
             }
         ));
         assert!(matches!(menu[1], MenuRow::Separator));
-        assert!(matches!(menu[2], MenuRow::OpenWatch));
-        assert!(matches!(menu[3], MenuRow::Quit));
+        assert!(matches!(menu[2], MenuRow::MuteToggle { muted: false }));
+        assert!(matches!(menu[3], MenuRow::OpenWatch));
+        assert!(matches!(menu[4], MenuRow::Quit));
     }
 
     #[test]
     fn build_menu_single_row() {
         let rows = vec![row("C:abc", Liveness::Live, Some(1.5), Some(120.0))];
-        let menu = build_menu(&rows);
-        assert_eq!(menu.len(), 5); // summary, session, separator, open watch, quit
+        let menu = build_menu(&rows, false);
+        assert_eq!(menu.len(), 6); // summary, session, separator, mute, open watch, quit
         assert!(matches!(
             menu[0],
             MenuRow::Summary {
@@ -328,7 +444,7 @@ mod tests {
                 Some(300.0),
             ),
         ];
-        let menu = build_menu(&rows);
+        let menu = build_menu(&rows, false);
         // Summary + stuck + perm + live + done + separator + open + quit
         let session_rows: Vec<_> = menu
             .iter()
@@ -348,7 +464,7 @@ mod tests {
             row("b", Liveness::Live, Some(2.5), None),
             row("c", Liveness::Done, Some(0.1), None),
         ];
-        let menu = build_menu(&rows);
+        let menu = build_menu(&rows, false);
         if let MenuRow::Summary { cost, .. } = &menu[0] {
             // Total is 4.1, formatted as $4.10
             assert_eq!(cost, "$4.10");
@@ -363,7 +479,7 @@ mod tests {
             row("a", Liveness::Live, None, None),
             row("b", Liveness::Live, Some(1.0), None),
         ];
-        let menu = build_menu(&rows);
+        let menu = build_menu(&rows, false);
         if let MenuRow::Summary { cost, .. } = &menu[0] {
             // Only known costs count: 1.0
             assert_eq!(cost, "$1.00");
@@ -377,7 +493,7 @@ mod tests {
         let rows: Vec<_> = (0..30)
             .map(|i| row(&format!("r{i}"), Liveness::Live, Some(0.1), Some(60.0)))
             .collect();
-        let menu = build_menu(&rows);
+        let menu = build_menu(&rows, false);
         let session_count = menu
             .iter()
             .filter(|m| matches!(m, MenuRow::Session { .. }))
@@ -394,18 +510,160 @@ mod tests {
         let rows: Vec<_> = (0..15)
             .map(|i| row(&format!("r{i}"), Liveness::Live, Some(0.1), Some(60.0)))
             .collect();
-        let menu = build_menu(&rows);
+        let menu = build_menu(&rows, false);
         assert!(!menu.iter().any(|m| matches!(m, MenuRow::More { .. })));
     }
 
     #[test]
     fn build_menu_actions_at_end() {
         let rows = vec![row("a", Liveness::Live, None, None)];
-        let menu = build_menu(&rows);
-        let last_three = &menu[menu.len() - 3..];
-        assert!(matches!(last_three[0], MenuRow::Separator));
-        assert!(matches!(last_three[1], MenuRow::OpenWatch));
-        assert!(matches!(last_three[2], MenuRow::Quit));
+        let menu = build_menu(&rows, false);
+        let tail = &menu[menu.len() - 4..];
+        assert!(matches!(tail[0], MenuRow::Separator));
+        assert!(matches!(tail[1], MenuRow::MuteToggle { .. }));
+        assert!(matches!(tail[2], MenuRow::OpenWatch));
+        assert!(matches!(tail[3], MenuRow::Quit));
+    }
+
+    #[test]
+    fn build_menu_mute_toggle_carries_the_current_state() {
+        let menu = build_menu(&[], true);
+        assert!(
+            menu.iter()
+                .any(|m| matches!(m, MenuRow::MuteToggle { muted: true }))
+        );
+    }
+
+    // ------------------------------------------------------------ mute + icon
+
+    #[test]
+    fn status_title_appends_the_mute_glyph_only_when_muted() {
+        let rows = vec![row("a", Liveness::Live, None, None)];
+        assert_eq!(status_title(&rows, false), format_title(&rows));
+        let muted = status_title(&rows, true);
+        assert!(muted.starts_with(&format_title(&rows)));
+        assert!(muted.ends_with(palette::mute_indicator(true)));
+    }
+
+    #[test]
+    fn icon_state_is_calm_without_attention() {
+        let rows = vec![
+            row("a", Liveness::Live, None, None),
+            row("b", Liveness::Done, None, None),
+        ];
+        assert_eq!(
+            icon_state(&rows, false),
+            IconState {
+                attn: None,
+                muted: false
+            }
+        );
+    }
+
+    #[test]
+    fn icon_state_flips_on_any_attention_row() {
+        let stuck = vec![row("a", Liveness::Attention(Attn::Stuck), None, None)];
+        assert_eq!(icon_state(&stuck, false).attn, Some(Attn::Stuck));
+
+        // A permission prompt blocks on the user specifically, so it wins
+        // over a merely wedged tool.
+        let both = vec![
+            row("a", Liveness::Attention(Attn::Stuck), None, None),
+            row("b", Liveness::Attention(Attn::PermWait), None, None),
+        ];
+        assert_eq!(icon_state(&both, false).attn, Some(Attn::PermWait));
+    }
+
+    #[test]
+    fn icon_state_carries_mute() {
+        assert!(icon_state(&[], true).muted);
+        assert!(!icon_state(&[], false).muted);
+    }
+
+    /// The center pixel is the dot's fill; the corner is outside the circle.
+    fn pixel(px: &[u8], x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * ICON_PX + x) * 4) as usize;
+        [px[i], px[i + 1], px[i + 2], px[i + 3]]
+    }
+
+    #[test]
+    fn icon_is_a_full_rgba_buffer_with_a_transparent_corner() {
+        let px = icon_rgba(icon_state(&[], false));
+        assert_eq!(px.len(), (ICON_PX * ICON_PX * 4) as usize);
+        assert_eq!(pixel(&px, 0, 0)[3], 0, "corner is outside the dot");
+        assert_eq!(pixel(&px, ICON_PX / 2, ICON_PX / 2)[3], 255);
+    }
+
+    #[test]
+    fn icon_color_tracks_the_attention_state() {
+        let calm = icon_rgba(IconState {
+            attn: None,
+            muted: false,
+        });
+        let stuck = icon_rgba(IconState {
+            attn: Some(Attn::Stuck),
+            muted: false,
+        });
+        let perm = icon_rgba(IconState {
+            attn: Some(Attn::PermWait),
+            muted: false,
+        });
+        let mid = ICON_PX / 2;
+        assert_ne!(pixel(&calm, mid, mid), pixel(&stuck, mid, mid));
+        assert_ne!(pixel(&stuck, mid, mid), pixel(&perm, mid, mid));
+    }
+
+    #[test]
+    fn muting_dims_the_icon_without_changing_its_color() {
+        let state = IconState {
+            attn: Some(Attn::Stuck),
+            muted: false,
+        };
+        let lit = icon_rgba(state);
+        let dim = icon_rgba(IconState {
+            muted: true,
+            ..state
+        });
+        let mid = ICON_PX / 2;
+        assert_eq!(pixel(&lit, mid, mid)[..3], pixel(&dim, mid, mid)[..3]);
+        assert!(pixel(&dim, mid, mid)[3] < pixel(&lit, mid, mid)[3]);
+    }
+
+    // --------------------------------------------------------- menu labels
+
+    #[test]
+    fn menu_labels_read_as_one_line_each() {
+        let rows = vec![row("C:abc", Liveness::Live, Some(1.5), Some(120.0))];
+        let menu = build_menu(&rows, true);
+        let labels: Vec<String> = menu.iter().map(menu_label).collect();
+        assert_eq!(labels[0], "1 live · 0 done · Σ $1.50");
+        assert_eq!(
+            labels[1],
+            format!(
+                "{} C:abc · sonnet · Bash · 2m · $1.5000",
+                glyph(Liveness::Live)
+            )
+        );
+        assert_eq!(labels[labels.len() - 3], "Mute notifications");
+        assert_eq!(labels[labels.len() - 2], "Open hermon watch");
+        assert_eq!(labels[labels.len() - 1], "Quit");
+    }
+
+    #[test]
+    fn a_session_label_skips_fields_it_has_no_data_for() {
+        let mut r = row("H:zz", Liveness::Done, None, None);
+        r.model = String::new();
+        r.last_tool = String::new();
+        let label = menu_label(&build_menu(std::slice::from_ref(&r), false)[1]);
+        assert_eq!(label, format!("{} H:zz · —", glyph(Liveness::Done)));
+    }
+
+    #[test]
+    fn overflow_label_counts_the_hidden_sessions() {
+        assert_eq!(
+            menu_label(&MenuRow::More { count: 10 }),
+            "… 10 more sessions"
+        );
     }
 
     #[test]

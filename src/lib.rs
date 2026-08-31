@@ -3,6 +3,7 @@
 //! Greenfield rewrite of `hermon.py`, developed in the same repository so
 //! issues and PRs stay connected to the Python implementation it replaces.
 
+pub mod arbitration;
 pub mod cli;
 pub mod config;
 pub mod engine;
@@ -23,11 +24,30 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::anyhow;
 use clap::Parser;
 
+use arbitration::UiKind;
 use cli::{Cli, Command, LsArgs};
 use config::EngineConfig;
 use engine::PANE_TICK;
+use notify::NotifyCfg;
 use roster::{Sources, TICKER_LIMIT, api_call_ticker, build_roster, resolve_key, roster_lines};
 use source::Replay;
+
+/// The notify config this process actually runs with: what the flags asked
+/// for, minus the notifier role if a higher-precedence hermon UI already
+/// holds it (#72). Losing the role is worth a word on stderr — silence would
+/// just read as broken notifications.
+fn arbitrated_notify_cfg(args: &cli::SourceArgs, kind: UiKind) -> NotifyCfg {
+    let cfg = args.notify_cfg();
+    let dir = arbitration::runtime_dir();
+    let decision = arbitration::decide(dir.as_deref(), kind, args.notify_flag());
+    if decision.notify {
+        return cfg;
+    }
+    if let Some(owner) = decision.yielded_to {
+        eprintln!("hermon: {owner} instance is notifying; pass --notify to override");
+    }
+    cfg.silenced()
+}
 
 fn replay_from(src: &cli::SourceArgs) -> Replay {
     Replay {
@@ -43,7 +63,7 @@ pub fn run() -> anyhow::Result<()> {
         Command::Watch(args) => {
             // `watch` keeps the Python default 300s fresh window
             // (`hermon.py:1463`); only `ls` widens it to an hour.
-            let notify = args.notify_cfg();
+            let notify = arbitrated_notify_cfg(&args, UiKind::Watch);
             let replay = replay_from(&args);
             let config = EngineConfig {
                 claude_dir: args.claude_dir,
@@ -87,8 +107,11 @@ pub fn run() -> anyhow::Result<()> {
         Command::Render(args) => render(&args),
         Command::Menubar(args) => {
             // Same fresh window as `watch` (`hermon.py:1463`); menubar is
-            // the same live-fleet view, just in the status bar.
-            let notify = args.notify_cfg();
+            // the same live-fleet view, just in the status bar. Nothing
+            // outranks it, so this only ever honours an explicit flag — but
+            // it goes through the same seam so #77's `gui` slots in as one
+            // more arm.
+            let notify = arbitrated_notify_cfg(&args, UiKind::Menubar);
             let replay = replay_from(&args);
             let config = EngineConfig {
                 claude_dir: args.claude_dir,

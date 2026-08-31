@@ -3,6 +3,7 @@
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::arbitration::NotifyFlag;
 use crate::notify::NotifyCfg;
 use crate::source::Replay;
 
@@ -99,6 +100,10 @@ pub struct SourceArgs {
     #[arg(long)]
     pub no_notify: bool,
 
+    /// Notify from this process even if a running menubar already is.
+    #[arg(long, conflicts_with = "no_notify")]
+    pub notify: bool,
+
     /// Per-(session, kind) cooldown before a turn-done/error alert can fire
     /// again for the same session.
     #[arg(long, default_value_t = NotifyCfg::default().cooldown_secs)]
@@ -145,6 +150,16 @@ impl SourceArgs {
             perm_wait: enabled && !self.no_notify_perm_wait,
             cooldown_secs: self.notify_cooldown,
             ..NotifyCfg::default()
+        }
+    }
+
+    /// Whether the user said anything about notifications at all —
+    /// [`crate::arbitration`] only decides the `Default` case.
+    pub fn notify_flag(&self) -> NotifyFlag {
+        match (self.notify, self.no_notify) {
+            (true, _) => NotifyFlag::ForceOn,
+            (_, true) => NotifyFlag::ForceOff,
+            _ => NotifyFlag::Default,
         }
     }
 }
