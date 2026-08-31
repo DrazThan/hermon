@@ -369,7 +369,7 @@ pub(crate) fn totals_line(rows: &[RosterRow]) -> StyledLine {
 /// tool-pending ceiling has made it look stuck). Silent outside attention,
 /// and when `attn_elapsed` hasn't been populated (`hermon ls`'s one-shot
 /// roster has no tick history to compute it from).
-fn tool_annotation(r: &RosterRow) -> String {
+pub(crate) fn tool_annotation(r: &RosterRow) -> String {
     match r.state {
         Liveness::Attention(Attn::PermWait) => format!("{} · perm?", r.last_tool),
         Liveness::Attention(Attn::Stuck) => match r.attn_elapsed {

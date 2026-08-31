@@ -144,7 +144,7 @@ pub fn row_sems(state: Liveness) -> RowSems {
 }
 
 /// What the roster says when a filter is active but matches nothing.
-fn no_matches_state() -> Vec<StyledLine> {
+pub(crate) fn no_matches_state() -> Vec<StyledLine> {
     vec![StyledLine(vec![Seg::new(
         Sem::Dim,
         "no sessions match the active filter",
@@ -152,7 +152,7 @@ fn no_matches_state() -> Vec<StyledLine> {
 }
 
 /// What a fresh, sessionless deck says: nothing found, and where it looked.
-fn empty_state(paths: &[String]) -> Vec<StyledLine> {
+pub(crate) fn empty_state(paths: &[String]) -> Vec<StyledLine> {
     let mut lines = vec![
         StyledLine(vec![Seg::new(Sem::Dim, "no agent sessions found")]),
         StyledLine::default(),
