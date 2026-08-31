@@ -88,8 +88,10 @@ impl GlyphSet {
     }
 }
 
-/// Get the cached glyph set, selecting ASCII or Unicode based on the HERMON_ASCII env var.
-fn glyphs() -> GlyphSet {
+/// Get the cached glyph set, selecting ASCII or Unicode based on the
+/// HERMON_ASCII env var. Public because the egui window paints the same
+/// glyphs ([`crate::gui::palette`]) from its own color mapping.
+pub fn glyphs() -> GlyphSet {
     use std::sync::OnceLock;
     static GLYPHS: OnceLock<GlyphSet> = OnceLock::new();
     *GLYPHS.get_or_init(|| {

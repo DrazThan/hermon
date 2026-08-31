@@ -6,6 +6,7 @@
 pub mod cli;
 pub mod config;
 pub mod engine;
+pub mod gui;
 pub mod menubar;
 pub mod notify;
 pub mod render;
@@ -58,6 +59,26 @@ pub fn run() -> anyhow::Result<()> {
                 replay,
             };
             ui::run_tui(config)
+        }
+        // The window is a second engine consumer, not a second engine
+        // configuration: same flags and same 300s fresh window as `watch`.
+        Command::Gui(args) => {
+            let notify = args.notify_cfg();
+            let replay = replay_from(&args);
+            let config = EngineConfig {
+                claude_dir: args.claude_dir,
+                hermes_db: args.hermes_db,
+                opencode_db: args.opencode_db,
+                hermes_log: args.hermes_log,
+                idle_timeout: args.idle_timeout,
+                fresh_window: 300.0,
+                interval: Duration::from_secs_f64(args.interval),
+                linger: args.linger,
+                max_panes: args.max_panes,
+                notify,
+                replay,
+            };
+            gui::run_gui(config)
         }
         Command::Ls(args) => {
             ls(&args);

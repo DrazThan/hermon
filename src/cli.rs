@@ -18,6 +18,8 @@ pub struct Cli {
 pub enum Command {
     /// Run the live monitor deck (a ratatui TUI).
     Watch(SourceArgs),
+    /// Run the live monitor deck in a native desktop window.
+    Gui(SourceArgs),
     /// Print the roster once to stdout (no TUI).
     Ls(LsArgs),
     /// Stream one session's transcript to stdout until Ctrl-C.
