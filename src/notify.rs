@@ -16,7 +16,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::render::fmt_elapsed;
+use crate::render::{fmt_elapsed, sanitize};
 use crate::source::{Attn, Liveness};
 
 /// Why a session went from not-done to done. Only [`DoneCause::TurnDone`]
@@ -250,7 +250,7 @@ pub fn decide_alerts(
             {
                 alerts.push(Alert {
                     key: t.key.clone(),
-                    label: t.label.clone(),
+                    label: sanitize(&t.label),
                     kind: AlertKind::TurnDone,
                     detail: format!(
                         "{} · {}",
@@ -267,9 +267,9 @@ pub fn decide_alerts(
         {
             alerts.push(Alert {
                 key: t.key.clone(),
-                label: t.label.clone(),
+                label: sanitize(&t.label),
                 kind: AlertKind::Error,
-                detail: line.clone(),
+                detail: sanitize(line),
             });
         }
 
@@ -283,11 +283,11 @@ pub fn decide_alerts(
             {
                 alerts.push(Alert {
                     key: t.key.clone(),
-                    label: t.label.clone(),
+                    label: sanitize(&t.label),
                     kind,
                     detail: format!(
                         "tool `{}` pending {}",
-                        t.last_tool,
+                        sanitize(&t.last_tool),
                         fmt_elapsed(Some(now - t.state_since))
                     ),
                 });
@@ -372,15 +372,14 @@ pub(crate) fn applescript_escape(s: &str) -> String {
 }
 
 /// The `osascript -e` argument for one banner. A session title is untrusted
-/// text — it can contain `"`, `\`, or a fragment like `"; do shell script
-/// "…` aimed at escaping the string literal — so every field is escaped the
-/// same way regardless of source.
+/// text — it can contain `"`, `\`, or terminal control sequences, so every
+/// field is sanitized and escaped for both control sequences and AppleScript syntax.
 fn build_osascript(title: &str, subtitle: &str, body: &str) -> String {
     format!(
         "display notification \"{}\" with title \"{}\" subtitle \"{}\"",
-        applescript_escape(body),
-        applescript_escape(title),
-        applescript_escape(subtitle)
+        applescript_escape(&sanitize(body)),
+        applescript_escape(&sanitize(title)),
+        applescript_escape(&sanitize(subtitle))
     )
 }
 
@@ -391,16 +390,19 @@ fn build_osascript(title: &str, subtitle: &str, body: &str) -> String {
 /// tick. A failed spawn is swallowed the same way — a missing or broken
 /// notifier degrades to no banner, not a crash.
 pub fn deliver(notifier: &Notifier, title: &str, subtitle: &str, body: &str) {
+    let title = sanitize(title);
+    let subtitle = sanitize(subtitle);
+    let body = sanitize(body);
     let mut cmd = match notifier {
         Notifier::TerminalNotifier(bin) => {
             let mut cmd = Command::new(bin);
             cmd.args([
                 "-title",
-                title,
+                &title,
                 "-subtitle",
-                subtitle,
+                &subtitle,
                 "-message",
-                body,
+                &body,
                 "-sound",
                 "default",
             ]);
@@ -408,7 +410,7 @@ pub fn deliver(notifier: &Notifier, title: &str, subtitle: &str, body: &str) {
         }
         Notifier::Osascript(bin) => {
             let mut cmd = Command::new(bin);
-            cmd.args(["-e", &build_osascript(title, subtitle, body)]);
+            cmd.args(["-e", &build_osascript(&title, &subtitle, &body)]);
             cmd
         }
         Notifier::NotifySend(bin) => {
@@ -418,7 +420,7 @@ pub fn deliver(notifier: &Notifier, title: &str, subtitle: &str, body: &str) {
             } else {
                 format!("{subtitle}\n{body}")
             };
-            cmd.args([title, &full_body]);
+            cmd.args([&title, &full_body]);
             cmd
         }
         Notifier::Silent => return,
@@ -621,6 +623,51 @@ mod delivery_tests {
             script,
             "display notification \"bo\\\"dy\" with title \"ti\\\"tle\" subtitle \"sub\\\\title\""
         );
+    }
+
+    #[test]
+    fn build_osascript_sanitizes_control_sequences_in_title() {
+        let script = build_osascript("title\x1b]0;hack\x07ed", "sub", "body");
+        // Should not contain raw ESC or BEL bytes, only escaped replacement chars
+        assert!(!script.contains('\x1b'));
+        assert!(!script.contains('\x07'));
+    }
+
+    #[test]
+    fn deliver_terminal_notifier_receives_sanitized_fields() {
+        let out = tempfile::tempdir().unwrap();
+        let out_file = out.path().join("argv.txt");
+        let dir = shim_dir("terminal-notifier", &out_file);
+        let notifier = Notifier::TerminalNotifier(dir.path().join("terminal-notifier"));
+
+        deliver(
+            &notifier,
+            "title\x1b]0;hack\x07",
+            "sub\x00tle",
+            "body\x1bcode",
+        );
+
+        let got = read_eventually(&out_file);
+        // Should not contain raw control bytes in the arguments
+        assert!(!got.contains('\x1b'));
+        assert!(!got.contains('\x00'));
+    }
+
+    #[test]
+    fn deliver_osascript_receives_sanitized_and_escaped_fields() {
+        let out = tempfile::tempdir().unwrap();
+        let out_file = out.path().join("argv.txt");
+        let dir = shim_dir("osascript", &out_file);
+        let notifier = Notifier::Osascript(dir.path().join("osascript"));
+
+        deliver(&notifier, "hostile\x1b]0;title\x07", "subtitle", "body");
+
+        let got = read_eventually(&out_file);
+        // The script should be well-formed and contain sanitized content
+        assert!(got.contains("display notification"));
+        // No raw escape or control bytes should reach the shell
+        assert!(!got.contains('\x1b'));
+        assert!(!got.contains('\x00'));
     }
 }
 
@@ -939,5 +986,66 @@ mod tests {
 
         let alerts = decide_alerts(&[tr_err, tr_stuck, tr_perm], 0.0, &cfg, &mut hist);
         assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn hostile_error_line_is_sanitized() {
+        let mut hist = AlertHistory::new();
+        boot(&mut hist);
+        let mut tr = t("k1", Liveness::Live, Liveness::Live);
+        tr.error_line = Some("error\x1b]0;pwned\x07text".to_string());
+        let alerts = decide_alerts(&[tr], 0.0, &NotifyCfg::default(), &mut hist);
+        assert_eq!(alerts.len(), 1);
+        let detail = &alerts[0].detail;
+        // Check no control bytes in alert detail
+        for b in detail.as_bytes() {
+            assert!(
+                *b >= 0x20 || *b == 0x0A,
+                "alert detail contains control byte 0x{:02x}",
+                b
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_label_is_sanitized() {
+        let mut hist = AlertHistory::new();
+        boot(&mut hist);
+        let mut tr = t("k1", Liveness::Live, Liveness::Done);
+        tr.done_cause = Some(DoneCause::TurnDone);
+        tr.started_at = -20.0;
+        tr.label = "Session\x1b]0;hack\x07ed".to_string();
+        let alerts = decide_alerts(&[tr], 0.0, &NotifyCfg::default(), &mut hist);
+        assert_eq!(alerts.len(), 1);
+        let label = &alerts[0].label;
+        // Check no control bytes in alert label
+        for b in label.as_bytes() {
+            assert!(
+                *b >= 0x20 || *b == 0x0A,
+                "alert label contains control byte 0x{:02x}",
+                b
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_tool_name_in_alert_detail_is_sanitized() {
+        let mut hist = AlertHistory::new();
+        boot(&mut hist);
+        let tr = t("k1", Liveness::Live, Liveness::Attention(Attn::Stuck));
+        let mut tr = tr;
+        tr.state_since = 0.0;
+        tr.last_tool = "bash\x1b]0;pwned\x07".to_string();
+        let alerts = decide_alerts(&[tr], 900.0, &NotifyCfg::default(), &mut hist);
+        assert_eq!(alerts.len(), 1);
+        let detail = &alerts[0].detail;
+        // Check no control bytes in alert detail
+        for b in detail.as_bytes() {
+            assert!(
+                *b >= 0x20 || *b == 0x0A,
+                "alert detail with hostile tool name contains control byte 0x{:02x}",
+                b
+            );
+        }
     }
 }
