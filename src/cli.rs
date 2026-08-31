@@ -22,6 +22,8 @@ pub enum Command {
     Ls(LsArgs),
     /// Stream one session's transcript to stdout until Ctrl-C.
     Render(RenderArgs),
+    /// Live fleet counts in the macOS menu bar (macOS only).
+    Menubar(SourceArgs),
 }
 
 /// `hermon render C:0f865f`: one session's pane body on stdout, the parity
