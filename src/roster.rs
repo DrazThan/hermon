@@ -16,6 +16,7 @@ use anyhow::anyhow;
 use chrono::{DateTime, Local};
 use regex::Regex;
 
+use crate::remote::source::RemoteSource;
 use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed, sanitize, short_id};
 use crate::source::claude::ClaudeSource;
 use crate::source::hermes::HermesSource;
@@ -55,12 +56,18 @@ pub struct RosterRow {
     pub attn_elapsed: Option<f64>,
 }
 
-/// The three on-disk stores hermon reads, held together so the roster can
-/// union them in one pass (`hermon.py:1462 build_sources`).
+/// The three on-disk stores hermon reads plus any remote agents, held
+/// together so the roster can union them in one pass (`hermon.py:1462
+/// build_sources`).
 pub struct Sources {
     pub claude: ClaudeSource,
     pub hermes: HermesSource,
     pub opencode: OpenCodeSource,
+    /// Remote agents (#90), each contributing its sessions under a `name/`
+    /// key prefix. Empty until a caller adds one with
+    /// [`with_remote`](Sources::with_remote) — #91 is what builds the
+    /// transport argv.
+    pub remotes: Vec<RemoteSource>,
 }
 
 impl Sources {
@@ -69,12 +76,21 @@ impl Sources {
             claude: ClaudeSource::new(claude_dir),
             hermes: HermesSource::new(hermes_db),
             opencode: OpenCodeSource::new(opencode_db),
+            remotes: Vec::new(),
         }
     }
 
+    /// Adds a remote to the deck. The transport is already running by the
+    /// time the [`RemoteSource`] exists, so this is pure registration.
+    pub fn with_remote(mut self, remote: RemoteSource) -> Self {
+        self.remotes.push(remote);
+        self
+    }
+
     /// Opens a tailer for one roster row, picking the source from the key's
-    /// prefix (`C:`/`H:`/`O:`). Both halves of the row are needed: the key
-    /// says which store to ask, and only [`RosterRow::id`] carries the full
+    /// prefix (`C:`/`H:`/`O:`, or `job1/` for a remote — whose own key sits
+    /// behind the slash). Both halves of the row are needed: the key says
+    /// which store to ask, and only [`RosterRow::id`] carries the full
     /// session id — the key's is shortened for display.
     ///
     /// `None` when the prefix is unknown or that source has no tailer for
@@ -85,6 +101,13 @@ impl Sources {
         session_id: &str,
         replay: Replay,
     ) -> Option<Box<dyn Tailer>> {
+        if let Some((remote, _)) = key.split_once('/') {
+            return self
+                .remotes
+                .iter()
+                .find(|r| r.name() == remote)?
+                .open_tailer(session_id, replay);
+        }
         match key.split_once(':')?.0 {
             "C" => self.claude.open_tailer(session_id, replay),
             "H" => self.hermes.open_tailer(session_id, replay),
@@ -143,9 +166,65 @@ pub fn build_roster(
         let tool = sources.opencode.last_tool(&s.id);
         rows.extend(roster_row("O", &s, tool, now, fresh_window, idle_timeout));
     }
+    for remote in &sources.remotes {
+        for note in remote.notices() {
+            rows.push(remote_note_row(remote.name(), &note, now));
+        }
+        for s in remote.sessions() {
+            let tool = s.last_tool.clone();
+            let prefix = remote_prefix(remote.name(), &s.id);
+            rows.extend(roster_row(
+                &prefix,
+                &s,
+                tool,
+                now,
+                fresh_window,
+                idle_timeout,
+            ));
+        }
+    }
 
     rows.sort_by(|a, b| b.last_ts.total_cmp(&a.last_ts));
     rows
+}
+
+/// `job1/C` for an agent-side id of `C:<uuid>` — the remote's name over the
+/// source letter the agent tagged the session with, so its row reads
+/// `job1/C:0f865f` and [`Sources::open_tailer`] can route the key back to
+/// the right remote and, inside the container, the right store. An id that
+/// names no known source gets `?` rather than whatever a hostile agent put
+/// there.
+fn remote_prefix(name: &str, id: &str) -> String {
+    let letter = match id.split_once(':').map(|(p, _)| p) {
+        Some("C") => "C",
+        Some("H") => "H",
+        Some("O") => "O",
+        _ => "?",
+    };
+    format!("{name}/{letter}")
+}
+
+/// A remote's own line on the deck — connecting, disconnected, a version
+/// mismatch, a hardening cap that fired — as a row with no session behind
+/// it, so every consumer of the roster sees it without knowing remotes
+/// exist. `now` as its timestamp keeps it visible: it is a statement about
+/// the present, and must not age out the way a session does.
+fn remote_note_row(name: &str, note: &str, now: f64) -> RosterRow {
+    RosterRow {
+        id: String::new(),
+        key: name.to_string(),
+        state: Liveness::Done,
+        model: String::new(),
+        last_tool: "-".to_string(),
+        last_line: sanitize(note),
+        in_tok: 0,
+        out_tok: 0,
+        cost: None,
+        elapsed: None,
+        last_ts: now,
+        title: sanitize(note),
+        attn_elapsed: None,
+    }
 }
 
 fn roster_row(
@@ -498,6 +577,33 @@ mod tests {
         for key in ["H:bbbbbb", "O:cccccc"] {
             assert!(sources.open_tailer(key, "id", Replay::DEFAULT).is_some());
         }
+    }
+
+    /// A remote's keys route on the name before the slash; an unknown name
+    /// is a miss, not a panic, and never falls through to a local store.
+    #[test]
+    fn open_tailer_routes_remote_keys_by_name() {
+        let sources = Sources::new(
+            "/nonexistent/claude",
+            "/nonexistent/h.db",
+            "/nonexistent/o.db",
+        );
+        for key in ["job1/C:aaaaaa", "job1/H:bbbbbb", "/H:bbbbbb"] {
+            assert!(sources.open_tailer(key, "C:id", Replay::DEFAULT).is_none());
+        }
+    }
+
+    /// The source letter in a remote row's key comes from the agent, which
+    /// is hostile ground: anything that isn't one of the three we know
+    /// becomes `?`.
+    #[test]
+    fn remote_prefix_trusts_only_the_three_known_source_letters() {
+        assert_eq!(remote_prefix("job1", "C:abc"), "job1/C");
+        assert_eq!(remote_prefix("job1", "H:abc"), "job1/H");
+        assert_eq!(remote_prefix("job1", "O:abc"), "job1/O");
+        assert_eq!(remote_prefix("job1", "Z:abc"), "job1/?");
+        assert_eq!(remote_prefix("job1", "../../etc:abc"), "job1/?");
+        assert_eq!(remote_prefix("job1", "no-colon"), "job1/?");
     }
 
     #[test]
