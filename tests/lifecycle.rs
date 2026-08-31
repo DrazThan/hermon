@@ -43,6 +43,8 @@ fn config(linger: f64, max_panes: usize) -> EngineConfig {
         max_panes,
         notify: NotifyCfg::default(),
         replay: Replay::DEFAULT,
+        remotes: Vec::new(),
+        remote_flags: Vec::new(),
     }
 }
 

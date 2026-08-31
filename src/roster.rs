@@ -16,7 +16,7 @@ use anyhow::anyhow;
 use chrono::{DateTime, Local};
 use regex::Regex;
 
-use crate::remote::source::RemoteSource;
+use crate::remote::source::{Link, RemoteSource};
 use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed, sanitize, short_id};
 use crate::source::claude::ClaudeSource;
 use crate::source::hermes::HermesSource;
@@ -368,6 +368,39 @@ pub fn roster_lines(rows: &[RosterRow], ticker: &[StyledLine], now: f64) -> Vec<
     lines
 }
 
+/// `hermon ls`'s one-line remote fleet summary (`2 remotes: job1 ⌁
+/// connecting, buildbox ✓`) — `None` when there are no remotes, so a run
+/// with only local sources prints exactly what it always has.
+///
+/// Distinct from the per-remote note rows [`build_roster`] folds into the
+/// roster itself: those only appear when a remote has something to
+/// complain about (connecting, disconnected, a hardening cap that fired),
+/// while this line names every remote's status regardless — `ls` is a
+/// one-shot snapshot with no deck for a healthy remote to leave a note on.
+pub fn remotes_summary_line(sources: &Sources) -> Option<StyledLine> {
+    if sources.remotes.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = sources
+        .remotes
+        .iter()
+        .map(|r| format!("{} {}", r.name(), link_glyph(&r.link())))
+        .collect();
+    Some(StyledLine(vec![Seg::new(
+        Sem::Dim,
+        format!("{} remote(s): {}", sources.remotes.len(), parts.join(", ")),
+    )]))
+}
+
+fn link_glyph(link: &Link) -> &'static str {
+    match link {
+        Link::Up { .. } => "✓",
+        Link::Connecting => "⌁ connecting",
+        Link::Down => "⌁ disconnected",
+        Link::ProtoMismatch { .. } => "⌁ proto mismatch",
+    }
+}
+
 fn row_line(r: &RosterRow) -> StyledLine {
     StyledLine(vec![
         glyph(r.state),
@@ -523,6 +556,34 @@ mod tests {
             title: "a title".to_string(),
             attn_elapsed: None,
         }
+    }
+
+    #[test]
+    fn remotes_summary_line_is_none_without_remotes() {
+        let sources = Sources::new(
+            "/nonexistent/claude",
+            "/nonexistent/state.db",
+            "/nonexistent/opencode.db",
+        );
+        assert!(remotes_summary_line(&sources).is_none());
+    }
+
+    #[test]
+    fn remotes_summary_line_names_every_remote_and_its_link_state() {
+        // Checked immediately after construction: `Link::Connecting` is the
+        // synchronous default before the supervisor thread has even had a
+        // chance to attempt a spawn, so this needs no waiting.
+        let sources = Sources::new(
+            "/nonexistent/claude",
+            "/nonexistent/state.db",
+            "/nonexistent/opencode.db",
+        )
+        .with_remote(RemoteSource::new(
+            "job1",
+            std::process::Command::new("/nonexistent/transport"),
+        ));
+        let line = remotes_summary_line(&sources).expect("a remote is attached");
+        assert_eq!(line.to_plain(), "1 remote(s): job1 ⌁ connecting");
     }
 
     #[test]

@@ -154,6 +154,30 @@ pub struct SourceArgs {
     /// source (Hermes, OpenCode); ignored by file-backed sources.
     #[arg(long, default_value_t = Replay::DEFAULT.rows)]
     pub replay_lines: u32,
+
+    /// Attach a remote agent as a fourth source (#91), repeatable:
+    /// `docker:<container>[:name]` runs `docker exec -i <container> hermon
+    /// agent`; `ssh:<host>[:name]` runs `ssh -o BatchMode=yes <host> hermon
+    /// agent` (key-based auth only — `BatchMode` never falls back to a
+    /// password prompt); `cmd:<argv…>` is an escape hatch for podman,
+    /// `kubectl exec`, or anything else, parsed like a shell command line
+    /// and spawned as that literal argv, never through a shell. Each
+    /// remote's sessions appear on the roster under a `name/` prefix,
+    /// defaulting to the container/host string; add a `:name` suffix to
+    /// override it. Names must be unique.
+    #[arg(long = "remote")]
+    pub remote: Vec<String>,
+
+    /// Extra flags appended to every `--remote docker:`/`ssh:` agent's own
+    /// `hermon agent` invocation, e.g. `--remote-flags "--claude-dir
+    /// /work/.claude"` when a remote's stores live somewhere other than the
+    /// image's defaults. Split the same shell-words-like way `cmd:` argv is
+    /// (never a shell) and shared by every `--remote` on this invocation
+    /// rather than set per remote — the simpler of the two syntaxes this
+    /// flag could have taken. Ignored by `cmd:` remotes, whose argv is
+    /// already complete.
+    #[arg(long, default_value = "")]
+    pub remote_flags: String,
 }
 
 impl SourceArgs {

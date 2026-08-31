@@ -698,6 +698,8 @@ mod tests {
             linger: 60.0,
             max_panes: 8,
             notify: crate::notify::NotifyCfg::default(),
+            remotes: Vec::new(),
+            remote_flags: Vec::new(),
         };
         let err = run(config).unwrap_err();
         assert!(err.to_string().contains("macOS only"));

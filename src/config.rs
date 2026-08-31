@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::notify::NotifyCfg;
+use crate::remote::spec::RemoteSpec;
 use crate::source::Replay;
 
 /// Everything [`crate::engine::Engine`] needs to scan sources and pace its
@@ -34,4 +35,12 @@ pub struct EngineConfig {
     /// Which alert kinds are enabled and their cooldowns, from `--no-notify*`
     /// / `--notify-cooldown` (#44).
     pub notify: NotifyCfg,
+    /// `--remote` specs (#91), already parsed and validated — turned into
+    /// running [`crate::remote::source::RemoteSource`]s where `Sources` is
+    /// actually constructed, since building the `Command` (unlike parsing)
+    /// belongs next to the `Sources::new` call it feeds.
+    pub remotes: Vec<RemoteSpec>,
+    /// `--remote-flags`, already split, forwarded verbatim to every
+    /// `docker:`/`ssh:` remote's own `hermon agent` invocation.
+    pub remote_flags: Vec<String>,
 }
