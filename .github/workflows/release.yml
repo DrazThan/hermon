@@ -50,9 +50,56 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No binary artifacts yet: the tap builds from the source tarball GitHub
-      # attaches to every release.
+      # The Formula (CLI) still builds from this source tarball GitHub
+      # attaches automatically; the cask (app) gets its own zipped bundle
+      # from the macos-bundle job below.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+
+  # Builds Hermon.app (#78) and attaches it to the release created above, for
+  # the `Casks/hermon-app.rb` cask in the tap. The Formula job stays
+  # untouched — Homebrew CLI installs still build from source.
+  macos-bundle:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-bundle
+        run: cargo install cargo-bundle --locked --version 0.11.0
+
+      # `--format osx` skips the .dmg cargo-bundle also knows how to build —
+      # the cask installs a zipped .app directly, no disk image needed.
+      - name: Build Hermon.app
+        run: cargo bundle --release --format osx
+
+      # Finder launches CFBundleExecutable with no arguments, but the app
+      # must start `hermon gui`. cargo-bundle has no hook for that, so the
+      # compiled binary is renamed and a tiny wrapper script takes its place
+      # as CFBundleExecutable, forwarding into `gui` (see Cargo.toml
+      # [package.metadata.bundle] and NOTES in that file).
+      - name: Wrap executable to launch `gui`
+        run: |
+          app=target/release/bundle/osx/Hermon.app
+          macos_dir="$app/Contents/MacOS"
+          mv "$macos_dir/hermon" "$macos_dir/hermon-bin"
+          cat > "$macos_dir/hermon" <<'EOF'
+          #!/bin/sh
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec "$DIR/hermon-bin" gui "$@"
+          EOF
+          chmod +x "$macos_dir/hermon"
+
+      - name: Zip Hermon.app
+        run: |
+          cd target/release/bundle/osx
+          ditto -c -k --sequesterRsrc --keepParent Hermon.app Hermon.app.zip
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" target/release/bundle/osx/Hermon.app.zip

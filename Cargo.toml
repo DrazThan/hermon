@@ -32,3 +32,17 @@ tempfile = "3.27.0"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# Hermon.app (#78): `cargo bundle --release` wraps the same `hermon` binary
+# the CLI/menubar use. It launches with no arguments (Finder passes none), so
+# the release workflow swaps in a `gui` argv0 wrapper after bundling — see
+# .github/workflows/release.yml. No LSUIElement here: unlike the menubar,
+# this one belongs in the Dock.
+[package.metadata.bundle]
+name = "Hermon"
+identifier = "dev.hermon.app"
+icon = ["assets/hermon.icns"]
+version = "0.1.0"
+copyright = "Copyright (c) hermon contributors"
+category = "Developer Tool"
+short_description = "Live monitor deck for Hermes, Claude Code, and OpenCode agent sessions"
