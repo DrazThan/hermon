@@ -169,7 +169,7 @@ enum NumField {
 impl NumField {
     fn value(self, r: &RosterRow) -> Option<f64> {
         match self {
-            NumField::Cost => Some(r.cost),
+            NumField::Cost => r.cost,
             NumField::Elapsed => r.elapsed,
             NumField::In => Some(r.in_tok as f64),
             NumField::Out => Some(r.out_tok as f64),
@@ -393,7 +393,13 @@ fn key_cmp(a: &RosterRow, b: &RosterRow, key: SortKey) -> Ordering {
         SortKey::Model => a.model.cmp(&b.model),
         SortKey::Tool => a.last_tool.cmp(&b.last_tool),
         SortKey::InOut => (a.in_tok + a.out_tok).cmp(&(b.in_tok + b.out_tok)),
-        SortKey::Cost => a.cost.total_cmp(&b.cost),
+        // A missing cost sorts before any known cost.
+        SortKey::Cost => match (a.cost, b.cost) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Less,
+            (Some(_), None) => Ordering::Greater,
+            (Some(x), Some(y)) => x.total_cmp(&y),
+        },
         // A missing elapsed sorts before any measured one.
         SortKey::Elapsed => match (a.elapsed, b.elapsed) {
             (None, None) => Ordering::Equal,
@@ -455,7 +461,7 @@ mod tests {
             last_line: String::new(),
             in_tok: n * 100,
             out_tok: n,
-            cost: n as f64 * 0.5,
+            cost: Some(n as f64 * 0.5),
             elapsed: Some(n as f64 * 60.0),
             last_ts: 0.0,
             title: format!("title {n}"),
@@ -528,9 +534,9 @@ mod tests {
     #[test]
     fn ties_within_a_sorted_run_keep_input_order() {
         let mut rows = [row("x", 2), row("y", 1), row("z", 2)];
-        rows[0].cost = 2.0;
-        rows[1].cost = 1.0;
-        rows[2].cost = 2.0;
+        rows[0].cost = Some(2.0);
+        rows[1].cost = Some(1.0);
+        rows[2].cost = Some(2.0);
         assert_eq!(sorted(&rows, SortKey::Cost, SortDir::Asc), ["y", "x", "z"]);
         assert_eq!(sorted(&rows, SortKey::Cost, SortDir::Desc), ["x", "z", "y"]);
     }

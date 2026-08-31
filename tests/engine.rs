@@ -260,7 +260,7 @@ impl Deck for FakeDeck {
             last_line: String::new(),
             in_tok: 0,
             out_tok: 0,
-            cost: 0.0,
+            cost: Some(0.0),
             elapsed: None,
             last_ts: now,
             title: String::new(),

@@ -110,7 +110,7 @@ fn live_session_reads_correctly() {
     assert_eq!(live.title, "Live Session");
     assert_eq!(live.in_tok, 150); // input_tokens + cache_read_tokens
     assert_eq!(live.out_tok, 20);
-    assert!((live.cost - 0.05).abs() < 1e-9);
+    assert!(live.cost.is_some_and(|c| (c - 0.05).abs() < 1e-9));
     assert_eq!(live.last_ts, NOW - 10.0);
     assert_eq!(live.last_line, "» please continue");
 }

@@ -224,7 +224,7 @@ fn roster_has_one_row_per_session_across_all_sources() {
     assert_eq!(claude.last_tool, "Read");
     assert_eq!(claude.in_tok, 100 + 25 + 10);
     assert_eq!(claude.out_tok, 30);
-    assert!((claude.cost - 0.25).abs() < 1e-9);
+    assert!(claude.cost.is_some_and(|c| (c - 0.25).abs() < 1e-9));
     assert_eq!(claude.elapsed, Some(280.0));
     assert_eq!(claude.title, "");
 
@@ -234,7 +234,7 @@ fn roster_has_one_row_per_session_across_all_sources() {
     assert_eq!(hermes.last_tool, "terminal");
     assert_eq!(hermes.in_tok, 150);
     assert_eq!(hermes.out_tok, 20);
-    assert!((hermes.cost - 0.05).abs() < 1e-9);
+    assert!(hermes.cost.is_some_and(|c| (c - 0.05).abs() < 1e-9));
     assert_eq!(hermes.elapsed, Some(590.0));
     assert_eq!(hermes.title, "Wire up ls");
 
@@ -244,7 +244,7 @@ fn roster_has_one_row_per_session_across_all_sources() {
     assert_eq!(opencode.last_tool, "bash");
     assert_eq!(opencode.in_tok, 1550);
     assert_eq!(opencode.out_tok, 200);
-    assert!((opencode.cost - 0.25).abs() < 1e-9);
+    assert!(opencode.cost.is_some_and(|c| (c - 0.25).abs() < 1e-9));
     assert_eq!(opencode.elapsed, Some(870.0));
     assert_eq!(opencode.title, "Refactor tests");
 }
@@ -314,7 +314,7 @@ fn rendered_roster_shows_glyphs_columns_and_totals() {
         .expect("hermes row rendered");
     assert!(hermes.starts_with("● H:b356d8  gpt-5.1-codex"), "{hermes}");
     assert!(hermes.contains("terminal"), "{hermes}");
-    assert!(hermes.contains("      150       20   0.0500"), "{hermes}");
+    assert!(hermes.contains("      150       20  $0.0500"), "{hermes}");
     assert!(hermes.ends_with("9m50s  Wire up ls"), "{hermes}");
 
     assert_eq!(
@@ -335,7 +335,7 @@ fn missing_stores_yield_an_empty_roster() {
 
     let lines = plain(&roster_lines(&rows, &[], NOW));
     assert!(lines.iter().any(|l| l.contains("(no sessions in window")));
-    assert_eq!(lines.last().unwrap(), "0 live · 0 done · Σ $0.00 · 0 in");
+    assert_eq!(lines.last().unwrap(), "0 live · 0 done · Σ — · 0 in");
 }
 
 #[test]
@@ -402,10 +402,7 @@ fn ls_with_no_stores_prints_an_empty_roster() {
     );
     assert!(stdout.contains("hermon · 0 session(s)"), "{stdout}");
     assert!(stdout.contains("(no sessions in window"), "{stdout}");
-    assert!(
-        stdout.contains("0 live · 0 done · Σ $0.00 · 0 in"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("0 live · 0 done · Σ — · 0 in"), "{stdout}");
 }
 
 #[test]

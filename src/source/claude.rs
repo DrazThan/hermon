@@ -74,9 +74,16 @@ impl ClaudeStats {
     }
 
     /// The `result` running total when the transcript reports one, else the
-    /// summed per-message costs (`hermon.py:343`).
-    pub fn cost(&self) -> f64 {
-        self.cost_reported.unwrap_or(self.cost_sum)
+    /// summed per-message costs (`hermon.py:343`). Returns `None` if neither
+    /// a result event nor any per-message costs have been seen.
+    pub fn cost(&self) -> Option<f64> {
+        if let Some(reported) = self.cost_reported {
+            Some(reported)
+        } else if self.cost_sum > 0.0 {
+            Some(self.cost_sum)
+        } else {
+            None
+        }
     }
 
     pub fn elapsed(&self) -> Option<f64> {
@@ -722,7 +729,7 @@ mod tests {
         assert_eq!(s.last_line, "Done ✓");
         // The `result` event's top-level usage is a turn summary, not a
         // message: counting it would double the totals.
-        assert_eq!(s.cost(), 0.5);
+        assert_eq!(s.cost(), Some(0.5));
     }
 
     #[test]
@@ -735,18 +742,22 @@ mod tests {
 
         let mut s = ClaudeStats::new(&path);
         s.update();
-        assert!((s.cost() - 0.03).abs() < 1e-9, "summed: {}", s.cost());
+        assert!(
+            s.cost().is_some_and(|c| (c - 0.03).abs() < 1e-9),
+            "summed: {:?}",
+            s.cost()
+        );
 
         append(&path, br#"{"type":"result","total_cost_usd":0.5}"#);
         append(&path, b"\n");
         s.update();
-        assert_eq!(s.cost(), 0.5, "the running result total wins");
+        assert_eq!(s.cost(), Some(0.5), "the running result total wins");
 
         // Later per-message costs must not be added on top of it.
         append(&path, assistant("c", 10, 1, 0.07).as_bytes());
         append(&path, b"\n");
         s.update();
-        assert_eq!(s.cost(), 0.5);
+        assert_eq!(s.cost(), Some(0.5));
     }
 
     #[test]
@@ -798,13 +809,13 @@ mod tests {
         s.update();
         assert_eq!(s.offset, 0, "half-written line must not advance the offset");
         assert_eq!((s.in_tok, s.out_tok), (0, 0));
-        assert_eq!(s.cost(), 0.0);
+        assert_eq!(s.cost(), None);
 
         append(&path, b"\n");
         s.update();
         assert_eq!(s.offset, line.len() as u64 + 1);
         assert_eq!((s.in_tok, s.out_tok), (100, 10));
-        assert_eq!(s.cost(), 0.25);
+        assert_eq!(s.cost(), Some(0.25));
     }
 
     #[test]
@@ -907,7 +918,7 @@ mod tests {
         let s = ClaudeStats::new("/nonexistent.jsonl");
         assert_eq!(s.model, "?");
         assert_eq!(s.last_tool, "-");
-        assert_eq!(s.cost(), 0.0);
+        assert_eq!(s.cost(), None);
         assert_eq!(s.elapsed(), None);
         assert_eq!(s.last_event, None);
         assert_eq!(s.last_line, "");
@@ -932,7 +943,7 @@ mod tests {
         assert_eq!(s.model, "claude-fable-5");
         assert_eq!(s.in_tok, 125 + 250);
         assert_eq!(s.out_tok, 30);
-        assert_eq!(s.cost, 0.5);
+        assert_eq!(s.cost, Some(0.5));
         // The fixture's own timestamps are long past by the time this test
         // runs, so the freshly written file's mtime floors last_ts (see
         // `mtime_floors_a_stale_last_event_timestamp`); the exact
@@ -992,7 +1003,7 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].model, "?");
         assert_eq!(sessions[0].last_tool, "-");
-        assert_eq!(sessions[0].cost, 0.0);
+        assert_eq!(sessions[0].cost, None);
     }
 
     #[test]

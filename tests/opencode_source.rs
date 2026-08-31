@@ -106,7 +106,7 @@ fn live_tool_pending_session_meta() {
     assert_eq!(s.title, "Live One");
     assert_eq!(s.in_tok, 155); // input + cache_read + cache_write
     assert_eq!(s.out_tok, 20);
-    assert!((s.cost - 0.05).abs() < 1e-9);
+    assert!(s.cost.is_some_and(|c| (c - 0.05).abs() < 1e-9));
     assert!(s.tool_pending);
     assert!(!s.turn_done);
     assert!(!s.ended);

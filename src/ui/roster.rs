@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed};
-use crate::roster::RosterRow;
+use crate::roster::{RosterRow, fmt_cost};
 use crate::source::{Attn, Liveness};
 use crate::ui::App;
 use crate::ui::palette;
@@ -73,7 +73,7 @@ fn row_line(row: &RosterRow, pinned: bool, width: usize) -> Line<'static> {
     let (glyph, glyph_style) = palette::glyph_for_liveness(row.state);
     let sems = row_sems(row.state);
     let meta = format!("{} · {}", row.model, fmt_elapsed(row.elapsed));
-    let cost = format!("${:.4}", row.cost);
+    let cost = fmt_cost(row.cost);
     let w_summary = width.saturating_sub(W_GLYPH + W_PIN + W_KEY + W_META + W_COST);
 
     // An unpinned row leaves the column blank in the row's own text color, so
