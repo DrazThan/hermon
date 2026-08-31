@@ -103,3 +103,58 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" target/release/bundle/osx/Hermon.app.zip
+
+  # Static Linux agent binaries for `hermon agent` (#93): the agent runs
+  # inside arbitrary containers, so it needs zero dynamic runtime deps —
+  # musl gives that on any base image, alpine/distroless included. The
+  # formula/cask above are untouched; this is a third, independent artifact
+  # pair, brew-uninvolved.
+  #
+  # Toolchain, verified locally on both targets against this crate before
+  # committing to it (2026-08-31): `cargo-zigbuild` (zig as C compiler *and*
+  # linker), not `cross` (needs Docker-in-Docker and, worse, a rustup
+  # toolchain matching the container's libc exactly — broke here with
+  # "toolchain is not fully qualified") or a plain `rustup target add` +
+  # system musl-gcc (would need two separate cross-gcc packages, one per
+  # target arch). rusqlite's `bundled` feature (Cargo.toml) is the actual
+  # risk: it compiles sqlite3.c from source via the `cc` crate, so the
+  # cross-compiler has to handle C, not just Rust. zig ships prebuilt musl
+  # sysroots for both x86_64 and aarch64, so that C compile just works with
+  # no extra apt packages and no Cross.toml pre-build steps.
+  # `pip install cargo-zigbuild` pulls in the `ziglang` PyPI package (a real
+  # zig build, not a shim) alongside it, so no separate zig install step is
+  # needed either. Confirmed both resulting binaries are static
+  # (`file` reports "statically linked") and actually run in a bare
+  # `alpine` container on both architectures.
+  musl-agent:
+    needs: release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Add musl target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cargo-zigbuild
+        run: pip install cargo-zigbuild==0.23.3
+
+      - name: Build static agent binary
+        run: cargo zigbuild --release --locked --target ${{ matrix.target }}
+
+      - name: Check the binary is actually static
+        run: file target/${{ matrix.target }}/release/hermon | grep "statically linked"
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          out="hermon-${{ matrix.target }}"
+          cp target/${{ matrix.target }}/release/hermon "$out"
+          gh release upload "$GITHUB_REF_NAME" "$out"

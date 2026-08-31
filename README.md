@@ -59,6 +59,25 @@ that streams the same three sources' sessions out. Each remote's sessions
 show up under a `name/` roster prefix (`job1/C:0f865f`), tailed live like
 any local session.
 
+### Architecture
+
+```
+host: hermon watch/gui/menubar                remote: container or ssh host
+  RemoteSource (one per --remote)
+    spawns the transport child ──────▶  docker exec -i / ssh / plain argv
+    writes HostCmd frames (stdin) ───▶  hermon agent
+      OpenTail / CloseTail / Shutdown       reads the same three on-disk
+    reads AgentMsg frames (stdout) ◀──      stores (Claude/Hermes/OpenCode)
+      Hello / Snap / Tail / Bye             locally, tails them like `ls`
+    demuxes, sanitizes, caps sizes
+    shows up as a fourth Source,
+    `name/`-prefixed roster keys
+```
+
+There's no listening port on either side: the agent only ever writes to the
+stdout of the process the transport already spawned, and only ever reads
+that process's stdin. Nothing about the wire protocol opens a socket.
+
 Two ways to attach one:
 
 - **`--remote docker:<container>[:name]`** / **`--remote ssh:<host>[:name]`**
@@ -80,11 +99,14 @@ Two ways to attach one:
   docker run -d --label dev.hermon.agent=1 --label dev.hermon.agent.name=worker1 my-image
   ```
 
-  A Dockerfile only needs the `hermon` binary on `PATH`:
+  A Dockerfile only needs the `hermon` binary on `PATH` — see
+  [Getting the agent binary into a container](#getting-the-agent-binary-into-a-container)
+  below for where it comes from:
 
   ```dockerfile
   FROM my-base-image
-  COPY --from=ghcr.io/drazthan/hermon:latest /usr/local/bin/hermon /usr/local/bin/hermon
+  ADD https://github.com/DrazThan/hermon/releases/latest/download/hermon-x86_64-unknown-linux-musl /usr/local/bin/hermon
+  RUN chmod +x /usr/local/bin/hermon
   LABEL dev.hermon.agent=1
   ```
 
@@ -101,6 +123,89 @@ Two ways to attach one:
   than silently followed. None of that changes the underlying trade-off:
   if you don't want to extend that trust to everything you run, use
   explicit `--remote docker:<name>` instead.
+
+### Getting the agent binary into a container
+
+Every GitHub release attaches two static, musl-linked binaries —
+`hermon-x86_64-unknown-linux-musl` and `hermon-aarch64-unknown-linux-musl` —
+alongside the source tarball and `Hermon.app.zip`. musl means no glibc and no
+dynamic runtime deps: the same binary runs unmodified on Debian, Alpine, or a
+distroless base image.
+
+Get one into a running container (the path the acceptance transcript for
+this feature uses):
+
+```bash
+curl -LO https://github.com/DrazThan/hermon/releases/latest/download/hermon-x86_64-unknown-linux-musl
+docker cp hermon-x86_64-unknown-linux-musl mycontainer:/usr/local/bin/hermon
+docker exec mycontainer chmod +x /usr/local/bin/hermon
+docker exec mycontainer sh -c 'hermon --version'
+docker label mycontainer dev.hermon.agent=1  # or `docker run --label` at start time
+```
+
+Or bake it into the image at build time with the `ADD`/`chmod`/`LABEL`
+Dockerfile snippet above.
+
+### Version skew
+
+`hermon agent`'s first frame is always `Hello{proto_version}`, checked
+against the host's own `PROTO_VERSION`. A mismatch is sticky — the roster
+keeps showing:
+
+```
+⌁ name — agent speaks proto v1, host speaks v2: upgrade hermon inside the container
+```
+
+Reconnecting can't fix it: the transport respawns the same binary, so it
+keeps saying the same version. Only replacing the `hermon` binary inside the
+image (or on the remote host) with one that speaks a compatible protocol
+does. In practice, keep the musl binary you `ADD`/`COPY` into images pinned
+to the same release tag as the host `hermon`, rather than tracking
+`latest` on one side only.
+
+### Clock skew
+
+Liveness classification runs host-side, against the *host's* clock — a
+remote's timestamps are only meaningful relative to it. If a container or
+remote host's clock runs more than ~120s ahead of the host's, the roster
+warns once per connection (`⚠ name — remote clock runs Ns ahead; liveness
+may misread`) and sessions on that remote can misclassify as stuck or idle
+when they aren't. Keep remote clocks synced (NTP, or passing the host clock
+through to the container) if this matters to you.
+
+### Security posture
+
+- **Read-only everywhere.** Exactly like a local source: the agent never
+  sends input to a session and never kills one, and neither does the host
+  through it.
+- **No listening ports.** The wire protocol is stdio only — see
+  [Architecture](#architecture) above. There's nothing to firewall or
+  expose.
+- **Transport auth isn't hermon's job.** `docker exec` trusts whoever can
+  already reach the Docker socket; `ssh:` uses key-based auth only
+  (`BatchMode=yes`, no interactive password fallback — #91). hermon adds no
+  credentials, tokens, or auth of its own on top of either.
+- **Trust model: the agent stream is untrusted input.** The host treats
+  every byte a remote agent sends as hostile — frames are read under a hard
+  size cap, snapshots are truncated at a session-count cap, tail frames
+  naming keys the host never opened are dropped, and every string (titles,
+  models, the `Hello` hostname, tail text) is sanitized before it reaches
+  the UI (#90, #95). Running `hermon agent` inside a container grants that
+  container nothing on the host — the risk direction this hardening
+  addresses is container→host *data*, not host→container control.
+- **`docker exec` runs the container's own binary.** If a container is
+  compromised, its `hermon agent` is compromised too — but by construction
+  that only ever produces hostile *data* on the wire (caught by the
+  sanitization above), never hostile *code* running on the host. The host
+  never executes anything the container sends; it only parses frames.
+- **`--docker-auto` extends trust to labels, not just images you name.**
+  See the label-trust caveat above: any image you run can opt its own
+  container into auto-following by carrying `dev.hermon.agent`. Use
+  explicit `--remote docker:<name>` if you'd rather name every remote
+  yourself.
+- Before tagging an M10 release, run a security review pass (e.g.
+  `/security-review` on the branch) — this is the first milestone that
+  consumes adversarial input from outside the host's own filesystem.
 
 ## Install
 
