@@ -2317,6 +2317,7 @@ dependencies = [
  "ratatui",
  "regex",
  "rusqlite",
+ "serde",
  "serde_json",
  "tao",
  "tempfile",

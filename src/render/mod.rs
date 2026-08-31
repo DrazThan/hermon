@@ -20,6 +20,7 @@ pub mod opencode;
 
 use anyhow::{Result, anyhow};
 use chrono::DateTime;
+use serde::{Deserialize, Serialize};
 
 /// A 24-bit color, ready for `ratatui::style::Color::Rgb`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,7 +49,7 @@ pub const RED: Rgb = rgb(0xf7, 0x76, 0x8e);
 
 /// Semantic role of a run of text, replacing `hermon.py`'s raw escape codes
 /// (`hermon.py:55 BOLD/DIM/RED/...`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sem {
     /// Body text.
     Plain,
@@ -102,7 +103,7 @@ pub fn sanitize(text: &str) -> String {
 }
 
 /// A run of text carrying one semantic style.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Seg {
     pub sem: Sem,
     pub text: String,
@@ -118,7 +119,7 @@ impl Seg {
 }
 
 /// One logical output line, as a sequence of styled runs.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StyledLine(pub Vec<Seg>);
 
 impl StyledLine {

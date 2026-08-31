@@ -5,12 +5,14 @@ pub mod claude;
 pub mod hermes;
 pub mod opencode;
 
+use serde::{Deserialize, Serialize};
+
 use crate::render::StyledLine;
 
 /// The last event observed in a session's transcript. Only the Claude
 /// source can populate this; DB-backed sources (Hermes, OpenCode) leave
 /// `SessionMeta::last_event` as `None`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LastEvent {
     /// A tool call with no result yet; carries the tool name.
     ToolUse(String),
@@ -21,7 +23,7 @@ pub enum LastEvent {
 
 /// Everything a source knows about one session, in the shared shape the
 /// roster and UI consume.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: String,
     pub started_at: f64,
@@ -89,7 +91,7 @@ pub trait Source {
 /// (Claude transcripts) honour `bytes` and ignore `rows`, database-backed
 /// ones (Hermes, OpenCode) do the reverse. A source may clamp either budget
 /// to whatever its store makes cheap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Replay {
     /// Seek back at most this many bytes from the end of a transcript file.
     pub bytes: u64,
