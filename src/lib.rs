@@ -84,8 +84,10 @@ pub fn run() -> anyhow::Result<()> {
         }
         // The window is a second engine consumer, not a second engine
         // configuration: same flags and same 300s fresh window as `watch`.
+        // Arbitrated the same way `watch` is (#72/#77): a running menubar
+        // outranks it, so a `gui` alongside one silences its own banners.
         Command::Gui(args) => {
-            let notify = args.notify_cfg();
+            let notify = arbitrated_notify_cfg(&args, UiKind::Gui);
             let replay = replay_from(&args);
             let config = EngineConfig {
                 claude_dir: args.claude_dir,
