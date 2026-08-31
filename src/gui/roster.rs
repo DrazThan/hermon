@@ -10,8 +10,9 @@
 use eframe::egui::{self, Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder, TableRow};
 
-use crate::render::{StyledLine, fmt_elapsed};
+use crate::render::{Sem, StyledLine, fmt_elapsed};
 use crate::roster::{RosterRow, commas, fmt_cost, tool_annotation, totals_line};
+use crate::ui::palette::pin_glyph;
 use crate::ui::roster::{empty_state, no_matches_state, row_sems};
 use crate::view::{self, SortKey, ViewState};
 
@@ -44,6 +45,7 @@ pub fn render(ui: &mut Ui, app: &mut App) {
     let selected_id = app.selected_id.clone();
     let mut sort_click: Option<SortKey> = None;
     let mut select_click: Option<String> = None;
+    let mut pin_click: Option<String> = None;
 
     egui::ScrollArea::vertical()
         .id_salt("roster-table")
@@ -52,6 +54,7 @@ pub fn render(ui: &mut Ui, app: &mut App) {
                 .striped(true)
                 .sense(egui::Sense::click())
                 .column(Column::exact(24.0))
+                .column(Column::exact(22.0))
                 .column(Column::initial(90.0).at_least(70.0))
                 .column(Column::initial(130.0).at_least(90.0))
                 .column(Column::remainder().at_least(100.0))
@@ -59,6 +62,7 @@ pub fn render(ui: &mut Ui, app: &mut App) {
                 .column(Column::initial(80.0).at_least(60.0))
                 .column(Column::initial(80.0).at_least(60.0))
                 .header(HEADER_HEIGHT, |mut header| {
+                    header.col(|_| {});
                     header.col(|_| {});
                     header.col(|ui| {
                         ui.label(RichText::new("key").color(palette::DIM));
@@ -72,8 +76,9 @@ pub fn render(ui: &mut Ui, app: &mut App) {
                 .body(|body| {
                     body.rows(ROW_HEIGHT, rows.len(), |mut row| {
                         let r = rows[row.index()];
+                        let pinned = app.view.is_pinned(&r.id);
                         row.set_selected(selected_id.as_deref() == Some(r.id.as_str()));
-                        row_cells(&mut row, r);
+                        row_cells(&mut row, r, pinned, &mut pin_click);
                         if row.response().clicked() {
                             select_click = Some(r.id.clone());
                         }
@@ -87,19 +92,72 @@ pub fn render(ui: &mut Ui, app: &mut App) {
     if let Some(id) = select_click {
         app.selected_id = Some(id);
     }
+    if let Some(id) = pin_click {
+        app.toggle_pin(&id);
+    }
 
     ui.separator();
     render_status_strip(ui, app);
 }
 
-/// The attention-first and grid toggles — the desktop-native stand-ins for
-/// the TUI's `[a]` and `[l]` keys. #77 adds the filter box and pin controls
-/// next to them.
+/// The attention-first and grid toggles, the mute button, and the filter
+/// box — the desktop-native stand-ins for the TUI's `[a]`, `[l]`, `[m]` and
+/// `[f]`/`[/]`. Filtering is live: every keystroke goes straight through
+/// [`ViewState::set_filter`], which keeps the previous filter active on a
+/// parse error rather than blanking the roster, so a typo just shows the red
+/// feedback without losing what was there. Active terms show as removable
+/// chips on their own row underneath.
 fn render_top_bar(ui: &mut Ui, app: &mut App) {
     ui.horizontal(|ui| {
         ui.toggle_value(&mut app.view.attention_first, "⚠ attention first");
         ui.toggle_value(&mut app.grid, "▦ grid");
+
+        let mute_label = if app.muted { "🔇 muted" } else { "🔔 mute" };
+        if ui.selectable_label(app.muted, mute_label).clicked() {
+            app.toggle_muted();
+        }
+
+        ui.separator();
+
+        let has_error = app.filter_error.is_some();
+        let mut edit = egui::TextEdit::singleline(&mut app.filter_input)
+            .id(egui::Id::new(super::FILTER_ID))
+            .hint_text("model=claude* cost>1.00");
+        if has_error {
+            edit = edit.text_color(palette::color(Sem::Error));
+        }
+        let response = ui.add(edit);
+        if response.changed() {
+            app.filter_error = app.view.set_filter(&app.filter_input).err();
+        }
+        if let Some(error) = &app.filter_error {
+            response.on_hover_text(error);
+        }
+
+        let output = view::apply(&app.roster, &app.view);
+        ui.label(
+            RichText::new(format!("{} of {}", output.matched, output.total)).color(palette::DIM),
+        );
     });
+
+    if !app.view.filter.chips().is_empty() {
+        ui.horizontal(|ui| {
+            let mut remove: Option<usize> = None;
+            for (i, chip) in app.view.filter.chips().iter().enumerate() {
+                if ui.small_button(format!("{chip} ✕")).clicked() {
+                    remove = Some(i);
+                }
+            }
+            if let Some(i) = remove {
+                let mut terms: Vec<&str> =
+                    app.view.filter.chips().iter().map(String::as_str).collect();
+                terms.remove(i);
+                let input = terms.join(" ");
+                app.filter_error = app.view.set_filter(&input).err();
+                app.filter_input = input;
+            }
+        });
+    }
 }
 
 /// One sortable header cell: the column label plus the active sort's arrow,
@@ -125,13 +183,33 @@ fn sort_header(
     });
 }
 
-/// One row's seven cells, colored by the row's attention state through the
-/// same [`row_sems`] mapping the TUI paints with.
-fn row_cells(row: &mut TableRow<'_, '_>, r: &RosterRow) {
+/// One row's eight cells (state glyph, pin toggle, then the six data
+/// columns), colored by the row's attention state through the same
+/// [`row_sems`] mapping the TUI paints with.
+fn row_cells(
+    row: &mut TableRow<'_, '_>,
+    r: &RosterRow,
+    pinned: bool,
+    pin_click: &mut Option<String>,
+) {
     let sems = row_sems(r.state);
     let (glyph, glyph_color) = palette::glyph_for_liveness(r.state);
     row.col(|ui| {
         ui.label(mono(glyph, glyph_color));
+    });
+    row.col(|ui| {
+        let color = if pinned {
+            palette::color(Sem::User)
+        } else {
+            palette::DIM
+        };
+        let clicked = ui
+            .add(egui::Button::new(RichText::new(pin_glyph()).color(color)).frame(false))
+            .on_hover_text(if pinned { "unpin" } else { "pin" })
+            .clicked();
+        if clicked {
+            *pin_click = Some(r.id.clone());
+        }
     });
     row.col(|ui| {
         ui.label(mono(&r.key, palette::color(sems.text)));

@@ -25,6 +25,7 @@ use std::thread;
 use anyhow::anyhow;
 use eframe::egui;
 
+use crate::arbitration::{self, PidGuard, UiKind};
 use crate::config::EngineConfig;
 use crate::engine::{Engine, Event, Lifecycle, UiCmd};
 use crate::render::StyledLine;
@@ -43,6 +44,15 @@ const PANE_AREA_MIN: f32 = 80.0;
 /// A pane whose session has produced no transcript yet.
 static NO_LINES: VecDeque<StyledLine> = VecDeque::new();
 
+/// The top bar's filter [`egui::TextEdit`]'s id, so `[/]` can request focus
+/// on it from [`App::handle_keys`] without the widget needing to reach back
+/// into the key handler itself.
+const FILTER_ID: &str = "hermon-filter";
+
+/// The key `eframe::Storage` persists [`App::grid`] (the desktop twin of the
+/// TUI's list/grid mode) under.
+const GRID_STORAGE_KEY: &str = "hermon-grid";
+
 /// Opens the window and blocks until it closes, then shuts the engine down
 /// and joins it.
 pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
@@ -54,6 +64,11 @@ pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
         config.opencode_db.clone(),
     ];
     let max_panes = config.max_panes;
+    // Claims the notifier pidfile so a `watch` started alongside this window
+    // sees `gui` running and yields to it (#72's arbitration, extended here
+    // the same way menubar already registers). Held for the window's whole
+    // lifetime and dropped — pidfile removed — once `run_native` returns.
+    let _pidfile = config.notify.any_enabled().then(claim_notifier).flatten();
     let (event_tx, event_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let engine = Engine::spawn(config, event_tx, cmd_rx);
@@ -73,12 +88,14 @@ pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
         Box::new(move |cc| {
             palette::install(&cc.egui_ctx);
             let events = event_rx.take().expect("app creator runs once");
-            Ok(Box::new(App::new(
+            let mut app = App::new(
                 wake(events, cc.egui_ctx.clone()),
                 app_cmds,
                 paths,
                 max_panes,
-            )))
+            );
+            app.restore(cc.storage);
+            Ok(Box::new(app))
         }),
     );
 
@@ -87,6 +104,20 @@ pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
     let _ = cmd_tx.send(UiCmd::Shutdown);
     let _ = engine.join();
     result.map_err(|err| anyhow!("gui: {err}"))
+}
+
+/// Claims the notifier pidfile for [`UiKind::Gui`], the same pattern the
+/// menubar backend uses for its own kind. Not fatal on failure: the window
+/// still notifies, a concurrent `watch` just won't know to stand down.
+fn claim_notifier() -> Option<PidGuard> {
+    let dir = arbitration::runtime_dir()?;
+    match arbitration::claim(&dir, UiKind::Gui) {
+        Ok(guard) => Some(guard),
+        Err(err) => {
+            eprintln!("hermon gui: could not claim the notifier pidfile: {err}");
+            None
+        }
+    }
 }
 
 /// Relays engine events onto a second channel, repainting for each one.
@@ -130,11 +161,26 @@ pub struct App {
     /// The active sort, filter and attention-first flag (#40's pure core),
     /// which #75's header clicks and #77's controls drive.
     pub view: ViewState,
+    /// The filter box's text as typed. Applied live through
+    /// [`ViewState::set_filter`] on every change — unlike the TUI's modal
+    /// palette there is no separate draft/commit step, since the box is
+    /// always on screen rather than something `[Enter]` dismisses.
+    pub filter_input: String,
+    /// The last filter parse error, if the current `filter_input` doesn't
+    /// parse. [`ViewState::set_filter`] leaves the previous filter active
+    /// when this is set, so a typo never blanks the roster.
+    pub filter_error: Option<String>,
+    /// Global notification mute, `[m]` toggles — the desktop twin of
+    /// [`crate::ui::App::muted`], mirroring the engine's own
+    /// [`AlertHistory`](crate::notify::AlertHistory) copy instantly rather
+    /// than waiting on a round trip through it.
+    pub muted: bool,
     /// The store paths the engine is watching, for the empty state —
     /// [`crate::ui::App::paths`]'s desktop twin.
     pub paths: Vec<String>,
     /// Whether the pane area tiles every session with a slot, rather than
-    /// just the selected one.
+    /// just the selected one. Persisted across launches via `eframe`'s
+    /// native storage.
     pub grid: bool,
     /// Whether the selected pane has the window to itself.
     pub zoomed: bool,
@@ -167,6 +213,9 @@ impl App {
             selected_id: None,
             panes: HashMap::new(),
             view: ViewState::default(),
+            filter_input: String::new(),
+            filter_error: None,
+            muted: false,
             paths,
             grid: false,
             zoomed: false,
@@ -183,6 +232,41 @@ impl App {
     /// opens with.
     pub fn default_title() -> String {
         title_for(0)
+    }
+
+    /// Restores window state persisted by [`App::save`] — currently just
+    /// [`App::grid`], the desktop twin of the TUI's list/grid mode. A no-op
+    /// on the very first launch, when `storage` has nothing under the key
+    /// yet.
+    fn restore(&mut self, storage: Option<&dyn eframe::Storage>) {
+        if let Some(storage) = storage {
+            self.grid = eframe::get_value(storage, GRID_STORAGE_KEY).unwrap_or(false);
+        }
+    }
+
+    /// Sets the engine's global mute flag `[m]` and the top bar toggle both
+    /// read.
+    fn toggle_muted(&mut self) {
+        self.muted = !self.muted;
+        let _ = self.cmds.send(UiCmd::SetMuted(self.muted));
+    }
+
+    /// Pins or unpins `id`, then tells the engine the whole pinned set so its
+    /// `--max-panes` eviction never picks one of them — the desktop twin of
+    /// [`crate::ui::App::toggle_pin`].
+    fn toggle_pin(&mut self, id: &str) {
+        if self.view.is_pinned(id) {
+            self.view.unpin(id);
+        } else {
+            self.view.pin(id);
+        }
+        let pinned_keys: std::collections::HashSet<String> = self
+            .roster
+            .iter()
+            .filter(|row| self.view.is_pinned(&row.id))
+            .map(|row| row.key.clone())
+            .collect();
+        let _ = self.cmds.send(UiCmd::Pinned(pinned_keys));
     }
 
     /// Applies everything that has arrived since the last frame. Returns the
@@ -310,19 +394,55 @@ impl App {
         self.selected_row().map(|row| row.key.clone())
     }
 
-    /// The keyboard half of the pane controls: zoom in and out, and park the
-    /// selected pane at the top of its scrollback or back on its tail. #77
-    /// owns the rest of the key map.
+    /// Where the selected session currently sits among the visible
+    /// (filtered, sorted) rows; 0 when it is gone, which is also where an
+    /// untouched cursor starts — the desktop twin of
+    /// [`crate::ui::App::selected_index`].
+    fn selected_index(&self) -> usize {
+        self.selected_id
+            .as_ref()
+            .and_then(|id| {
+                view::apply(&self.roster, &self.view)
+                    .rows
+                    .iter()
+                    .position(|row| &row.id == id)
+            })
+            .unwrap_or(0)
+    }
+
+    fn select_at(&mut self, position: usize) {
+        let rows = view::apply(&self.roster, &self.view).rows;
+        let position = position.min(rows.len().saturating_sub(1));
+        self.selected_id = rows.get(position).map(|row| row.id.clone());
+    }
+
+    fn select_next(&mut self) {
+        self.select_at(self.selected_index() + 1);
+    }
+
+    fn select_prev(&mut self) {
+        self.select_at(self.selected_index().saturating_sub(1));
+    }
+
+    /// The keyboard half of the fleet controls: `j`/`k` move the selection,
+    /// `Enter` zooms and `g`/`G` jump the selected pane's scrollback (#76),
+    /// `m` mutes and `/` focuses the filter box (#77). Skipped entirely
+    /// while a widget — the filter box included — already wants the
+    /// keyboard, so typing a filter term never doubles as a shortcut.
     fn handle_keys(&mut self, ctx: &egui::Context) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let (escape, enter, top, tail) = ctx.input(|input| {
+        let (escape, enter, top, tail, next, prev, mute, focus_filter) = ctx.input(|input| {
             (
                 input.key_pressed(egui::Key::Escape),
                 input.key_pressed(egui::Key::Enter),
                 input.key_pressed(egui::Key::G) && !input.modifiers.shift,
                 input.key_pressed(egui::Key::G) && input.modifiers.shift,
+                input.key_pressed(egui::Key::J),
+                input.key_pressed(egui::Key::K),
+                input.key_pressed(egui::Key::M),
+                input.key_pressed(egui::Key::Slash),
             )
         });
         if escape {
@@ -330,6 +450,18 @@ impl App {
         }
         if enter && self.selected_row().is_some() {
             self.zoomed = true;
+        }
+        if next {
+            self.select_next();
+        }
+        if prev {
+            self.select_prev();
+        }
+        if mute {
+            self.toggle_muted();
+        }
+        if focus_filter {
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(FILTER_ID)));
         }
         if let Some(key) = self.selected_key().filter(|_| top || tail) {
             let view = self.pane_views.entry(key).or_default();
@@ -442,6 +574,13 @@ impl eframe::App for App {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         palette::BG.to_normalized_gamma_f32()
     }
+
+    /// Persists [`App::grid`]; window size and position are `eframe`'s own
+    /// `persist_window` doing the rest, automatic once the `persistence`
+    /// feature is on.
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, GRID_STORAGE_KEY, &self.grid);
+    }
 }
 
 /// `hermon — 3 live`, the window title.
@@ -451,6 +590,7 @@ fn title_for(live: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::sync::mpsc::Sender;
     use std::time::{Duration, Instant};
 
@@ -821,5 +961,184 @@ mod tests {
             rows.iter()
                 .any(|r| Some(r.id.as_str()) == app.selected_id.as_deref())
         );
+    }
+
+    // ------------------------------------------------------------ #77 controls
+
+    /// `j`/`k` walk the visible (filtered, sorted) rows and clamp at either
+    /// end rather than wrapping — the desktop twin of the TUI's own
+    /// `select_next`/`select_prev`.
+    #[test]
+    fn select_next_and_prev_move_through_the_visible_rows_and_clamp() {
+        let (_tx, mut app) = app();
+        app.apply_event(Event::Roster(vec![
+            row("C:aaa", Liveness::Live),
+            row("H:bbb", Liveness::Live),
+        ]));
+        app.selected_id = Some("C:aaa-id".to_string());
+
+        app.select_next();
+        assert_eq!(app.selected_id.as_deref(), Some("H:bbb-id"));
+        app.select_next();
+        assert_eq!(
+            app.selected_id.as_deref(),
+            Some("H:bbb-id"),
+            "clamps at the last row rather than wrapping"
+        );
+
+        app.select_prev();
+        assert_eq!(app.selected_id.as_deref(), Some("C:aaa-id"));
+        app.select_prev();
+        assert_eq!(
+            app.selected_id.as_deref(),
+            Some("C:aaa-id"),
+            "clamps at the first row rather than wrapping"
+        );
+    }
+
+    /// Pinning tells the engine the whole pinned set, keyed by
+    /// [`RosterRow::key`] — the desktop twin of `crate::ui::App::toggle_pin`,
+    /// which #77's pin column and `[p]`-equivalent both call.
+    #[test]
+    fn toggle_pin_flips_view_state_and_sends_the_whole_pinned_set() {
+        let (tx, cmds, mut app) = app_with_cmds();
+        tx.send(Event::Roster(vec![
+            row("C:aaa", Liveness::Live),
+            row("H:bbb", Liveness::Live),
+        ]))
+        .unwrap();
+        app.drain();
+
+        app.toggle_pin("C:aaa-id");
+        assert!(app.view.is_pinned("C:aaa-id"));
+        assert_eq!(
+            cmds.try_iter().collect::<Vec<_>>(),
+            vec![UiCmd::Pinned(HashSet::from(["C:aaa".to_string()]))]
+        );
+
+        app.toggle_pin("C:aaa-id");
+        assert!(!app.view.is_pinned("C:aaa-id"));
+        assert_eq!(
+            cmds.try_iter().collect::<Vec<_>>(),
+            vec![UiCmd::Pinned(HashSet::new())]
+        );
+    }
+
+    /// `[m]` and the mute button both go through this: it flips the local
+    /// copy instantly, the same way `crate::ui::App::muted` does, and tells
+    /// the engine's `AlertHistory`.
+    #[test]
+    fn toggle_muted_flips_the_flag_and_notifies_the_engine() {
+        let (_tx, cmds, mut app) = app_with_cmds();
+        app.toggle_muted();
+        assert!(app.muted);
+        assert_eq!(
+            cmds.try_iter().collect::<Vec<_>>(),
+            vec![UiCmd::SetMuted(true)]
+        );
+
+        app.toggle_muted();
+        assert!(!app.muted);
+        assert_eq!(
+            cmds.try_iter().collect::<Vec<_>>(),
+            vec![UiCmd::SetMuted(false)]
+        );
+    }
+
+    /// `j`/`k` move the selection and `m` mutes, through the same
+    /// `ctx.input` path #76's `Enter`/`Esc`/`g`/`G` already use — extending
+    /// it, not replacing it.
+    #[test]
+    fn j_k_and_m_drive_selection_and_mute_through_handle_keys() {
+        let (_tx, mut app) = app();
+        let ctx = egui::Context::default();
+        app.apply_event(Event::Roster(vec![
+            row("C:aaa", Liveness::Live),
+            row("H:bbb", Liveness::Live),
+        ]));
+        app.selected_id = Some("C:aaa-id".to_string());
+
+        let key = |key: egui::Key| egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            ..egui::RawInput::default()
+        };
+
+        let mut out = ctx.run_ui(key(egui::Key::J), |ui| app.draw(ui));
+        out.textures_delta.clear();
+        assert_eq!(app.selected_id.as_deref(), Some("H:bbb-id"));
+
+        let mut out = ctx.run_ui(key(egui::Key::K), |ui| app.draw(ui));
+        out.textures_delta.clear();
+        assert_eq!(app.selected_id.as_deref(), Some("C:aaa-id"));
+
+        let mut out = ctx.run_ui(key(egui::Key::M), |ui| app.draw(ui));
+        out.textures_delta.clear();
+        assert!(app.muted);
+    }
+
+    /// `[/]` moves keyboard focus to the filter box so typing goes straight
+    /// into it, without the box needing to reach back into the key handler.
+    #[test]
+    fn slash_requests_focus_on_the_filter_box() {
+        let (_tx, mut app) = app();
+        let ctx = egui::Context::default();
+
+        let key = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Slash,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            ..egui::RawInput::default()
+        };
+        let mut out = ctx.run_ui(key, |ui| app.draw(ui));
+        out.textures_delta.clear();
+
+        let id = egui::Id::new(FILTER_ID);
+        assert_eq!(ctx.memory(|memory| memory.focused()), Some(id));
+    }
+
+    /// A fake in-memory `Storage` — `eframe`'s own file-backed one only
+    /// exists once a window has actually opened, so the save/restore round
+    /// trip is tested against this instead.
+    #[derive(Default)]
+    struct FakeStorage(HashMap<String, String>);
+
+    impl eframe::Storage for FakeStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_string(), value);
+        }
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+        fn flush(&mut self) {}
+    }
+
+    /// [`App::save`] and [`App::restore`] round-trip the grid flag — the
+    /// "view mode" half of #77's window-state persistence (size and position
+    /// are `eframe`'s own `persist_window`, not this app's storage key).
+    #[test]
+    fn grid_mode_round_trips_through_storage() {
+        let make = app;
+        let (_tx, mut app) = make();
+        app.grid = true;
+        let mut storage = FakeStorage::default();
+        eframe::App::save(&mut app, &mut storage as &mut dyn eframe::Storage);
+
+        let (_tx2, mut restored) = make();
+        assert!(!restored.grid);
+        restored.restore(Some(&storage as &dyn eframe::Storage));
+        assert!(restored.grid);
     }
 }
