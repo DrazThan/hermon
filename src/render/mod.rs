@@ -5,6 +5,14 @@
 //! `hermon ls`, which prints [`StyledLine::to_plain`]. Line wrapping belongs
 //! to the pane widget; renderers emit logical lines and use [`clip`] only for
 //! content truncation.
+//!
+//! **Security: Terminal control sanitization.** The render boundary operates
+//! under a defensive contract that extends beyond JSON shape to text content:
+//! [`to_plain()`](StyledLine::to_plain) output contains no byte < 0x20 except
+//! newline (0x0A). Control sequences (ANSI/OSC, C0/C1, ESC) are stripped at
+//! the [`Seg::new`] choke point and replaced with a visible placeholder
+//! (`U+FFFD`), making hostile or malformed bytes visible rather than silent.
+//! This applies uniformly to all sources (local and future remote agents).
 
 pub mod claude;
 pub mod hermes;
@@ -75,6 +83,24 @@ impl Sem {
     }
 }
 
+/// Strips terminal control sequences from text, making them visible as placeholders.
+/// Replaces C0 controls (0x00-0x1F except 0x0A for newline), C1 controls (0x80-0x9F),
+/// with U+FFFD (replacement character). Newlines are preserved; all other control bytes
+/// become visible, foiling ANSI/OSC injection attempts.
+pub fn sanitize(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let code = c as u32;
+            // C0 controls except newline (0x0A): 0x00-0x09, 0x0B-0x1F, and C1: 0x80-0x9F
+            if (code <= 0x09 || (0x0B..=0x1F).contains(&code)) || (0x80..=0x9F).contains(&code) {
+                '\u{FFFD}' // U+FFFD REPLACEMENT CHARACTER
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 /// A run of text carrying one semantic style.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seg {
@@ -86,7 +112,7 @@ impl Seg {
     pub fn new(sem: Sem, text: impl Into<String>) -> Self {
         Seg {
             sem,
-            text: text.into(),
+            text: sanitize(&text.into()),
         }
     }
 }
@@ -286,6 +312,121 @@ mod tests {
             "2026-13-40T99:00:00Z",
         ] {
             assert!(parse_ts(bad).is_err(), "expected Err for {bad:?}");
+        }
+    }
+
+    // ---------------------------------------------------- sanitize tests
+
+    #[test]
+    fn sanitize_keeps_normal_text() {
+        assert_eq!(sanitize("hello world"), "hello world");
+        assert_eq!(sanitize("Claude 3.5"), "Claude 3.5");
+        assert_eq!(sanitize("café"), "café");
+    }
+
+    #[test]
+    fn sanitize_keeps_newlines() {
+        assert_eq!(sanitize("line1\nline2"), "line1\nline2");
+    }
+
+    #[test]
+    fn sanitize_removes_null_byte() {
+        assert_eq!(sanitize("before\x00after"), "before\u{FFFD}after");
+    }
+
+    #[test]
+    fn sanitize_removes_tab() {
+        assert_eq!(sanitize("col1\tcol2"), "col1\u{FFFD}col2");
+    }
+
+    #[test]
+    fn sanitize_removes_c0_controls() {
+        // BEL (0x07), BS (0x08), VT (0x0B), FF (0x0C), CR (0x0D)
+        assert_eq!(sanitize("x\x07y"), "x\u{FFFD}y"); // BEL
+        assert_eq!(sanitize("x\x08y"), "x\u{FFFD}y"); // BS
+        assert_eq!(sanitize("x\x0by"), "x\u{FFFD}y"); // VT
+        assert_eq!(sanitize("x\x0cy"), "x\u{FFFD}y"); // FF
+        assert_eq!(sanitize("x\x0dy"), "x\u{FFFD}y"); // CR
+    }
+
+    #[test]
+    fn sanitize_removes_esc() {
+        assert_eq!(sanitize("hello\x1bworld"), "hello\u{FFFD}world");
+    }
+
+    #[test]
+    fn sanitize_removes_c1_controls() {
+        // C1 range: 0x80-0x9F — use char::from_u32 to construct them
+        if let Some(c80) = char::from_u32(0x80) {
+            let s = format!("x{}y", c80);
+            assert_eq!(sanitize(&s), "x\u{FFFD}y");
+        }
+        if let Some(c9f) = char::from_u32(0x9F) {
+            let s = format!("x{}y", c9f);
+            assert_eq!(sanitize(&s), "x\u{FFFD}y");
+        }
+    }
+
+    #[test]
+    fn sanitize_osc_52_clipboard_attack() {
+        // OSC 52 sequence: ESC ] 52 ; c ; data BEL
+        // Only ESC (0x1B) and BEL (0x07) are control bytes that get replaced
+        let hostile = "text\x1b]52;c;Y2lhbmV0\x07more";
+        assert_eq!(sanitize(hostile), "text\u{FFFD}]52;c;Y2lhbmV0\u{FFFD}more");
+    }
+
+    #[test]
+    fn sanitize_osc_0_title_attack() {
+        // OSC 0 sequence: ESC ] 0 ; title BEL
+        // Only ESC (0x1B) and BEL (0x07) are control bytes
+        let hostile = "prefix\x1b]0;pwned\x07suffix";
+        assert_eq!(sanitize(hostile), "prefix\u{FFFD}]0;pwned\u{FFFD}suffix");
+    }
+
+    #[test]
+    fn sanitize_csi_sequence() {
+        // CSI sequence: ESC [ ... m (e.g., color code)
+        // Only ESC (0x1B) is a control byte
+        let hostile = "before\x1b[1;31mafter";
+        assert_eq!(sanitize(hostile), "before\u{FFFD}[1;31mafter");
+    }
+
+    #[test]
+    fn sanitize_to_plain_is_printable_only() {
+        let line = StyledLine(vec![
+            Seg::new(Sem::Bold, "prefix\x1b]0;pwned\x07middle"),
+            Seg::new(Sem::Plain, "normal\x00text"),
+            Seg::new(Sem::Error, "error\x1bcode"),
+        ]);
+        let plain = line.to_plain();
+        // Check no byte < 0x20 except newline
+        for b in plain.as_bytes() {
+            assert!(
+                *b >= 0x20 || *b == 0x0A,
+                "found control byte 0x{:02x} in to_plain output",
+                b
+            );
+        }
+    }
+
+    #[test]
+    fn seg_constructor_sanitizes() {
+        let seg = Seg::new(Sem::Plain, "text\x1bESC");
+        assert_eq!(seg.text, "text\u{FFFD}ESC");
+    }
+
+    #[test]
+    fn hostile_session_title_is_neutralized_in_roster() {
+        // Session title with control sequences
+        let hostile_title = "Session\x1b]0;hacked\x07Title";
+        let seg = Seg::new(Sem::Plain, hostile_title);
+        let plain = seg.text;
+        for b in plain.as_bytes() {
+            assert!(
+                *b >= 0x20 || *b == 0x0A,
+                "session title not neutralized: 0x{:02x}",
+                b
+            );
         }
     }
 }

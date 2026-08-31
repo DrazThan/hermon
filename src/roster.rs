@@ -16,7 +16,7 @@ use anyhow::anyhow;
 use chrono::{DateTime, Local};
 use regex::Regex;
 
-use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed, short_id};
+use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed, sanitize, short_id};
 use crate::source::claude::ClaudeSource;
 use crate::source::hermes::HermesSource;
 use crate::source::opencode::OpenCodeSource;
@@ -164,9 +164,9 @@ fn roster_row(
         id: s.id.clone(),
         key: format!("{label_prefix}:{}", short_id(&s.id)),
         state,
-        model: s.model.clone(),
-        last_tool,
-        last_line: s.last_line.clone(),
+        model: sanitize(&s.model),
+        last_tool: sanitize(&last_tool),
+        last_line: sanitize(&s.last_line),
         in_tok: s.in_tok,
         out_tok: s.out_tok,
         cost: s.cost,
@@ -174,7 +174,7 @@ fn roster_row(
         // means the elapsed column has nothing to say.
         elapsed: (s.started_at > 0.0).then_some(s.last_ts - s.started_at),
         last_ts: s.last_ts,
-        title: s.title.clone(),
+        title: sanitize(&s.title),
         attn_elapsed: None,
     })
 }
