@@ -53,14 +53,29 @@ Each store path is overridable per subcommand: `--claude-dir`, `--hermes-db`,
 
 ## Install
 
+Two things live in the tap: a formula for the CLI (`hermon watch`/`ls`/
+`render`/`menubar`/`gui`, all still available from a terminal) and a cask for
+`Hermon.app`, a Dock-launchable window around `hermon gui`. Pick the formula
+if you live in a terminal; pick the cask if you want an app icon. Nothing
+stops you installing both.
+
 ```bash
+# CLI
 brew tap drazthan/hermon
 brew install hermon
+
+# Desktop app
+brew install --cask drazthan/hermon/hermon-app
 ```
 
-The tap builds from source against Homebrew's `rust`, so the first install
-spends about half a minute compiling; there are no bottles or prebuilt
-binaries yet.
+The formula builds from source against Homebrew's `rust`, so the first
+install spends about half a minute compiling; there are no bottles or
+prebuilt binaries yet. The cask downloads a prebuilt, **unsigned**
+`Hermon.app` attached to the GitHub release — macOS Gatekeeper will refuse a
+plain double-click on first launch. Right-click (or Control-click) the app in
+Finder, choose **Open**, and confirm in the dialog that appears; every launch
+after that works normally. Signing and notarization (an Apple Developer ID,
+$99/year) are future work — see [Non-goals](#non-goals).
 
 From a checkout instead:
 
@@ -111,6 +126,21 @@ hermon menubar --uninstall-login-item
 
 With launch-at-login installed, the menu bar stays running across reboots and
 automatically restarts if it crashes. Logs go to `~/.local/share/hermon/`.
+
+## Desktop app (macOS)
+
+`Hermon.app` is a Dock-launchable window around `hermon gui` — the same
+roster, panes, and view modes as `hermon watch`, in a native `eframe`
+window instead of a terminal (see [Views and
+keybindings](#views-and-keybindings) below; they're shared). Install it as a
+cask (see [Install](#install)) or launch it straight from a checkout:
+
+```bash
+cargo run -- gui
+```
+
+Unlike the menu bar app, `Hermon.app` keeps a Dock icon and app switcher
+entry — it isn't a background/menu-bar-only (`LSUIElement`) process.
 
 ## Views and keybindings
 
