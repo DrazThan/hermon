@@ -15,6 +15,7 @@
 //! [`view::apply`] and never orders them itself.
 
 pub mod palette;
+pub mod roster;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{self, Receiver};
@@ -25,10 +26,10 @@ use eframe::egui;
 
 use crate::config::EngineConfig;
 use crate::engine::{Engine, Event, Lifecycle, UiCmd};
-use crate::render::{Sem, StyledLine, fmt_elapsed};
+use crate::render::StyledLine;
 use crate::roster::RosterRow;
 use crate::source::Liveness;
-use crate::view::{self, ViewState};
+use crate::view::ViewState;
 
 /// Transcript lines kept per open pane, as in [`crate::ui`]: far more than
 /// any viewport shows, since the surplus is what #76's scrollback reads.
@@ -40,6 +41,13 @@ const MIN_WINDOW_SIZE: [f32; 2] = [480.0, 320.0];
 /// Opens the window and blocks until it closes, then shuts the engine down
 /// and joins it.
 pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
+    // The store paths the engine is watching, for the empty state — taken
+    // before `config` moves into the engine below.
+    let paths = vec![
+        config.claude_dir.clone(),
+        config.hermes_db.clone(),
+        config.opencode_db.clone(),
+    ];
     let (event_tx, event_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let engine = Engine::spawn(config, event_tx, cmd_rx);
@@ -58,7 +66,7 @@ pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
         Box::new(move |cc| {
             palette::install(&cc.egui_ctx);
             let events = event_rx.take().expect("app creator runs once");
-            Ok(Box::new(App::new(wake(events, cc.egui_ctx.clone()))))
+            Ok(Box::new(App::new(wake(events, cc.egui_ctx.clone()), paths)))
         }),
     );
 
@@ -107,8 +115,11 @@ pub struct App {
     /// panes; until then the engine tails nothing and this stays empty.
     pub panes: HashMap<String, VecDeque<StyledLine>>,
     /// The active sort, filter and attention-first flag (#40's pure core),
-    /// which #77's controls drive.
+    /// which #75's header clicks and #77's controls drive.
     pub view: ViewState,
+    /// The store paths the engine is watching, for the empty state —
+    /// [`crate::ui::App::paths`]'s desktop twin.
+    pub paths: Vec<String>,
     events: Receiver<Event>,
     /// The title last pushed to the window, so an unchanged one costs no
     /// viewport command.
@@ -116,13 +127,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(events: Receiver<Event>) -> Self {
+    pub fn new(events: Receiver<Event>, paths: Vec<String>) -> Self {
         App {
             roster: Vec::new(),
             ticker: Vec::new(),
             selected_id: None,
             panes: HashMap::new(),
             view: ViewState::default(),
+            paths,
             events,
             title: Self::default_title(),
         }
@@ -193,27 +205,11 @@ impl App {
         }
     }
 
-    /// The body: one label per session, proving the event loop lands on
-    /// screen. Real widgets are #75's.
-    fn draw(&self, ui: &mut egui::Ui) {
-        let rows = view::apply(&self.roster, &self.view).rows;
-        if rows.is_empty() {
-            ui.label(egui::RichText::new("no sessions").color(palette::DIM));
-            return;
-        }
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for row in rows {
-                let (glyph, color) = palette::glyph_for_liveness(row.state);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(glyph).color(color).monospace());
-                    ui.label(
-                        egui::RichText::new(row_line(row))
-                            .color(palette::color(Sem::Plain))
-                            .monospace(),
-                    );
-                });
-            }
-        });
+    /// The body: the fleet table, real widgets and all — [`roster::render`]
+    /// owns the layout, this stays a thin call so the update path is still
+    /// one function ([`App::apply_event`]) tests can drive without a window.
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        roster::render(ui, self);
     }
 }
 
@@ -238,17 +234,6 @@ fn title_for(live: usize) -> String {
     format!("hermon \u{2014} {live} live")
 }
 
-/// One session as plain text: `C:0f865f  sonnet-4.5  Bash  3m07s`.
-fn row_line(row: &RosterRow) -> String {
-    format!(
-        "{}  {}  {}  {}",
-        row.key,
-        row.model,
-        row.last_tool,
-        fmt_elapsed(row.elapsed)
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::Sender;
@@ -257,6 +242,7 @@ mod tests {
     use super::*;
     use crate::engine::Cause;
     use crate::source::Attn;
+    use crate::view;
 
     fn row(key: &str, state: Liveness) -> RosterRow {
         RosterRow {
@@ -278,7 +264,7 @@ mod tests {
 
     fn app() -> (Sender<Event>, App) {
         let (tx, rx) = mpsc::channel();
-        (tx, App::new(rx))
+        (tx, App::new(rx, Vec::new()))
     }
 
     /// One egui pass with no window behind it. The output carries texture
@@ -361,7 +347,7 @@ mod tests {
     fn a_quiet_window_settles_and_an_engine_event_wakes_it() {
         let ctx = egui::Context::default();
         let (tx, engine_rx) = mpsc::channel();
-        let mut app = App::new(wake(engine_rx, ctx.clone()));
+        let mut app = App::new(wake(engine_rx, ctx.clone()), Vec::new());
         app.apply_event(Event::Roster(vec![row("C:aaa", Liveness::Live)]));
 
         // A fresh context takes a pass or two to settle (fonts, first
@@ -419,6 +405,32 @@ mod tests {
         app.view.set_filter("key=H:*").unwrap();
         let rows = view::apply(&app.roster, &app.view).rows;
         assert_eq!(rows.len(), 1);
-        assert_eq!(row_line(rows[0]), "H:bbb  sonnet-4.5  Bash  3m07s");
+        assert_eq!(rows[0].key, "H:bbb");
+    }
+
+    /// The table's selection is keyed by [`RosterRow::id`], the same
+    /// invariant [`ViewState::pinned`] relies on: a tick that reorders the
+    /// roster must not lose or shift the cursor.
+    #[test]
+    fn selection_survives_a_tick_reorder() {
+        let (_tx, mut app) = app();
+        app.apply_event(Event::Roster(vec![
+            row("C:aaa", Liveness::Live),
+            row("H:bbb", Liveness::Live),
+        ]));
+        app.selected_id = Some("H:bbb-id".to_string());
+
+        // Newest activity first next tick: the same two sessions, reversed.
+        app.apply_event(Event::Roster(vec![
+            row("H:bbb", Liveness::Live),
+            row("C:aaa", Liveness::Live),
+        ]));
+
+        let rows = view::apply(&app.roster, &app.view).rows;
+        assert_eq!(app.selected_id.as_deref(), Some("H:bbb-id"));
+        assert!(
+            rows.iter()
+                .any(|r| Some(r.id.as_str()) == app.selected_id.as_deref())
+        );
     }
 }
