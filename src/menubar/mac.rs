@@ -1,13 +1,10 @@
 //! The macOS tray backend: an NSStatusItem via `tray-icon`, driven by
 //! `tao`'s event loop (its required host — see the crate's platform notes).
 //! The engine runs on its own thread exactly as `watch` does
-//! ([`crate::ui::run_tui`]); this loop just drains [`Event::Roster`] and
-//! keeps the status item's title in sync.
-//!
-//! Text-only title for v1 — no icon — since NSStatusItem renders a
-//! title-only button fine, and template-image work is follow-up per the
-//! ticket. No menu either: #71 adds the dropdown (and its Quit item) on top
-//! of this module.
+//! ([`crate::ui::run_tui`]); this loop drains [`Event::Roster`] and keeps
+//! the status item's title in sync. #71's dropdown menu is built via the pure
+//! `build_menu` function; wiring it to the tray API is follow-up work with
+//! version-specific muda integration.
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
