@@ -37,6 +37,8 @@ fn config() -> EngineConfig {
         max_panes: 8,
         notify: NotifyCfg::default(),
         replay: Replay::DEFAULT,
+        remotes: Vec::new(),
+        remote_flags: Vec::new(),
     }
 }
 

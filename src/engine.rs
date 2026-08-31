@@ -25,6 +25,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::EngineConfig;
 use crate::notify::{self, Alert, AlertHistory, DoneCause, LifecycleTransition, Notifier};
+use crate::remote::source::RemoteSource;
+use crate::remote::spec::to_command;
 use crate::render::{Sem, StyledLine};
 use crate::roster::{RosterRow, Sources, TICKER_LIMIT, api_call_ticker, build_roster};
 use crate::source::{Attn, Liveness, Replay, Tailer};
@@ -185,6 +187,10 @@ impl Engine {
     pub fn spawn(config: EngineConfig, tx: Sender<Event>, rx: Receiver<UiCmd>) -> JoinHandle<()> {
         thread::spawn(move || {
             let mut deck = Sources::new(&config.claude_dir, &config.hermes_db, &config.opencode_db);
+            for spec in &config.remotes {
+                let cmd = to_command(spec, &config.remote_flags);
+                deck = deck.with_remote(RemoteSource::new(spec.name.clone(), cmd));
+            }
             let clock: Clock = Arc::new(now_secs);
             run(&config, &mut deck, &clock, &tx, &rx);
         })

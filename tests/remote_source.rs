@@ -312,6 +312,50 @@ fn a_remote_that_never_connects_shows_one_connecting_line() {
 }
 
 #[test]
+fn a_missing_binary_in_the_container_names_the_fix_instead_of_going_silent() {
+    // The child a `docker exec`/`ssh` transport would spawn when `hermon`
+    // isn't on the remote's PATH: it writes the shell's own "not found" and
+    // exits immediately, over and over as the supervisor keeps respawning.
+    let mut cmd = Proc::new("sh");
+    cmd.arg("-c").arg("echo 'hermon: not found' >&2; exit 127");
+    let remote = RemoteSource::new("job1", cmd);
+    let mut sources = local_sources().with_remote(remote);
+
+    let rows = wait_for(Duration::from_secs(10), || {
+        let rows = roster(&mut sources);
+        rows.iter()
+            .any(|r| r.title.contains("not found in container"))
+            .then_some(rows)
+    })
+    .expect("a missing binary is diagnosed rather than surfacing as silence");
+    assert!(rows.iter().all(|r| r.key == "job1"), "{rows:?}");
+    let note = rows
+        .iter()
+        .find(|r| r.title.contains("not found in container"))
+        .expect("the missing-binary row");
+    assert_eq!(
+        note.title,
+        "⌁ job1 — 'hermon' not found in container: copy the binary in or add to the image",
+        "names the fix, not just the symptom"
+    );
+
+    // The supervisor keeps respawning a binary that will never appear; that
+    // must not spin the host or crash it. A few more polls over the
+    // reconnect loop should still show the same one line, not a pile of
+    // duplicates.
+    thread::sleep(Duration::from_secs(2));
+    let rows = roster(&mut sources);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.key == "job1" && r.title.contains("not found in container"))
+            .count(),
+        1,
+        "one line, not spammed per respawn: {:?}",
+        rows.iter().map(|r| &r.title).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn an_oversized_frame_is_dropped_and_the_stream_resyncs() {
     let workdir = TempDir::new().expect("create temp dir");
     let mut hostile = session("C:11111111-2222-3333-4444-555555555555");
