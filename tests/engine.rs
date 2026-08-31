@@ -46,6 +46,7 @@ fn config(hermes_db: &std::path::Path) -> EngineConfig {
         replay: Replay::DEFAULT,
         remotes: Vec::new(),
         remote_flags: Vec::new(),
+        docker_auto: false,
     }
 }
 
@@ -163,6 +164,7 @@ fn shutdown_joins_promptly_with_no_sessions() {
             replay: Replay::DEFAULT,
             remotes: Vec::new(),
             remote_flags: Vec::new(),
+            docker_auto: false,
         },
         tx,
         rx,
@@ -204,6 +206,7 @@ fn a_hung_up_ui_ends_the_loop_via_the_failing_send() {
             replay: Replay::DEFAULT,
             remotes: Vec::new(),
             remote_flags: Vec::new(),
+            docker_auto: false,
         },
         tx,
         rx,
@@ -308,6 +311,7 @@ fn pane_config() -> EngineConfig {
         replay: Replay::DEFAULT,
         remotes: Vec::new(),
         remote_flags: Vec::new(),
+        docker_auto: false,
     }
 }
 

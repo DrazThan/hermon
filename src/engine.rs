@@ -25,8 +25,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::EngineConfig;
 use crate::notify::{self, Alert, AlertHistory, DoneCause, LifecycleTransition, Notifier};
+use crate::remote::discover::{self, Discovered};
 use crate::remote::source::RemoteSource;
-use crate::remote::spec::to_command;
+use crate::remote::spec::{docker_spec, to_command};
 use crate::render::{Sem, StyledLine};
 use crate::roster::{RosterRow, Sources, TICKER_LIMIT, api_call_ticker, build_roster};
 use crate::source::{Attn, Liveness, Replay, Tailer};
@@ -131,6 +132,19 @@ pub trait Deck {
         session_id: &str,
         replay: Replay,
     ) -> Option<Box<dyn Tailer>>;
+
+    /// Applies one `--docker-auto` discovery tick's decisions: spawns each
+    /// newly (or re-)discovered container's remote, tears down each one
+    /// that disappeared. Default no-op — only [`Sources`], the production
+    /// deck, has remotes to manage; the engine's test fakes never enable
+    /// `--docker-auto`, so they never need an override.
+    fn sync_docker_auto(
+        &mut self,
+        _spawn: Vec<Discovered>,
+        _remove: Vec<String>,
+        _remote_flags: &[String],
+    ) {
+    }
 }
 
 impl Deck for Sources {
@@ -145,6 +159,22 @@ impl Deck for Sources {
         replay: Replay,
     ) -> Option<Box<dyn Tailer>> {
         Sources::open_tailer(self, key, session_id, replay)
+    }
+
+    fn sync_docker_auto(
+        &mut self,
+        spawn: Vec<Discovered>,
+        remove: Vec<String>,
+        remote_flags: &[String],
+    ) {
+        for name in remove {
+            self.remove_remote(&name);
+        }
+        for d in spawn {
+            let spec = docker_spec(d.container, d.name);
+            let cmd = to_command(&spec, remote_flags);
+            self.add_remote(RemoteSource::new(spec.name.clone(), cmd));
+        }
     }
 }
 
@@ -176,6 +206,76 @@ struct Tracked {
     /// re-entry, and on switching from one attention reason to the other,
     /// so elapsed-in-state always measures the *current* reason.
     attn_since: Option<f64>,
+}
+
+/// Cross-tick bookkeeping for `--docker-auto`, threaded through [`run`]'s
+/// loop the same way `tracked`/`ids` are: which containers are currently
+/// spawned (by container id, to the name they're running under, so a
+/// rename can be told apart from a plain disappear-then-reappear), whether
+/// `docker` has already proven unusable this run, and which warnings have
+/// already been printed once so a standing collision doesn't spam stderr
+/// every tick.
+#[derive(Debug, Default)]
+struct DockerAutoState {
+    managed: HashMap<String, String>,
+    disabled: bool,
+    warned: HashSet<String>,
+}
+
+/// Runs `docker ps --filter label=<AGENT_LABEL> --format {{json .}}` for
+/// one discovery tick. `Err` names why it failed — `docker` missing from
+/// `PATH`, or a nonzero exit (daemon unreachable, say) — so the caller can
+/// warn once and turn the feature off rather than retrying a broken
+/// `docker` every tick forever.
+fn run_docker_ps() -> Result<String, String> {
+    let output = std::process::Command::new("docker")
+        .args([
+            "ps",
+            "--filter",
+            &format!("label={}", discover::AGENT_LABEL),
+            "--format",
+            "{{json .}}",
+        ])
+        .output()
+        .map_err(|e| format!("docker ps: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docker ps: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// One `--docker-auto` discovery tick: runs `docker ps`, reconciles it
+/// against last tick's bookkeeping, and applies the result to `deck`. A
+/// no-op once `docker` has proven unusable ([`DockerAutoState::disabled`])
+/// — the "bounded" half of the issue's "poll, bounded; docker absent -> one
+/// warning, feature off".
+fn sync_docker_auto(config: &EngineConfig, deck: &mut dyn Deck, state: &mut DockerAutoState) {
+    if !config.docker_auto || state.disabled {
+        return;
+    }
+    let stdout = match run_docker_ps() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("hermon: --docker-auto: {e}, disabling for this run");
+            state.disabled = true;
+            return;
+        }
+    };
+    let containers = discover::parse_ps(&stdout);
+    let explicit: HashSet<String> = config.remotes.iter().map(|r| r.name.clone()).collect();
+    let (sync, next) = discover::reconcile(&containers, &explicit, &state.managed);
+    for warning in &sync.warnings {
+        if state.warned.insert(warning.clone()) {
+            eprintln!("hermon: {warning}");
+        }
+    }
+    state.managed = next;
+    if !sync.spawn.is_empty() || !sync.remove.is_empty() {
+        deck.sync_docker_auto(sync.spawn, sync.remove, &config.remote_flags);
+    }
 }
 
 pub struct Engine;
@@ -254,6 +354,8 @@ fn run(
     // Keys the UI has pinned, replaced wholesale on every `UiCmd::Pinned`.
     // Eviction never picks a victim from this set (#42).
     let mut pinned: HashSet<String> = HashSet::new();
+    // `--docker-auto` (#92) bookkeeping; a no-op tick when the flag is off.
+    let mut docker_auto = DockerAutoState::default();
 
     let mut next_scan = Instant::now();
     let mut next_pane_tick = Instant::now();
@@ -273,6 +375,7 @@ fn run(
                 &mut hist,
                 &notifier,
                 &pinned,
+                &mut docker_auto,
             )
             .is_err()
             {
@@ -356,7 +459,9 @@ fn scan(
     hist: &mut AlertHistory,
     notifier: &Notifier,
     pinned: &HashSet<String>,
+    docker_auto: &mut DockerAutoState,
 ) -> Result<(), ()> {
+    sync_docker_auto(config, deck, docker_auto);
     let now = clock();
     let mut rows = deck.roster(now, config.fresh_window, config.idle_timeout);
 

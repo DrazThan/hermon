@@ -43,4 +43,8 @@ pub struct EngineConfig {
     /// `--remote-flags`, already split, forwarded verbatim to every
     /// `docker:`/`ssh:` remote's own `hermon agent` invocation.
     pub remote_flags: Vec<String>,
+    /// `--docker-auto` (#92): poll `docker ps` on every scan tick and
+    /// follow any container labeled `dev.hermon.agent`, alongside whatever
+    /// `remotes` already lists explicitly.
+    pub docker_auto: bool,
 }

@@ -51,6 +51,57 @@ Each store path is overridable per subcommand: `--claude-dir`, `--hermes-db`,
 `--opencode-db`, `--hermes-log`. Both SQLite stores are opened read-only
 (`file:…?mode=ro`), safe alongside the real tool running (WAL).
 
+## Remote agents (containers, hosts)
+
+`hermon watch`/`gui`/`menubar` can also follow sessions running inside a
+container or on another host over `hermon agent`, a small stdio-piped mode
+that streams the same three sources' sessions out. Each remote's sessions
+show up under a `name/` roster prefix (`job1/C:0f865f`), tailed live like
+any local session.
+
+Two ways to attach one:
+
+- **`--remote docker:<container>[:name]`** / **`--remote ssh:<host>[:name]`**
+  (repeatable) — explicit, one flag per remote, resolved once at startup.
+  `ssh:` uses key-based auth only (`BatchMode=yes`, no password fallback).
+  `--remote cmd:<argv…>` is an escape hatch for podman, `kubectl exec`, or
+  anything else. `--remote-flags "..."` forwards extra flags (e.g.
+  `--claude-dir /work/.claude`) to every remote's own `hermon agent`
+  invocation. This is the **paranoid mode**: nothing is followed that you
+  didn't name yourself.
+- **`--docker-auto`** — follow every currently-running container labeled
+  `dev.hermon.agent`, polled alongside the roster scan (no separate timer).
+  A container's own name is the roster prefix, unless it also carries a
+  `dev.hermon.agent.name` label to override it. Containers are picked up
+  and torn down automatically as they start and stop; an explicit
+  `--remote` with the same name always wins a collision.
+
+  ```bash
+  docker run -d --label dev.hermon.agent=1 --label dev.hermon.agent.name=worker1 my-image
+  ```
+
+  A Dockerfile only needs the `hermon` binary on `PATH`:
+
+  ```dockerfile
+  FROM my-base-image
+  COPY --from=ghcr.io/drazthan/hermon:latest /usr/local/bin/hermon /usr/local/bin/hermon
+  LABEL dev.hermon.agent=1
+  ```
+
+  **`--docker-auto` extends monitoring trust to every labeled image you
+  run.** A container's labels come from its image, not from you — running
+  any third-party image with `LABEL dev.hermon.agent` set gets it
+  auto-followed with no action on your part, the same as any other trust
+  decision you make by running an image at all. Container names and the
+  `dev.hermon.agent.name` label are validated the same way an explicit
+  `--remote docker:` spec's container name is (rejecting a leading `-` or
+  an unexpected character before it can reach `docker exec`'s argv), the
+  label is sanitized and length-capped before it becomes a roster prefix,
+  and a collision with an explicit `--remote` is refused and logged rather
+  than silently followed. None of that changes the underlying trade-off:
+  if you don't want to extend that trust to everything you run, use
+  explicit `--remote docker:<name>` instead.
+
 ## Install
 
 Two things live in the tap: a formula for the CLI (`hermon watch`/`ls`/
@@ -317,6 +368,9 @@ Defaults make `hermon watch` correct with zero flags.
 | `--replay-bytes` | `20480` | history a freshly opened pane replays from a file-backed source (Claude) |
 | `--replay-lines` | `40` | history a freshly opened pane replays from a DB-backed source (Hermes, OpenCode) |
 | `--fresh-window` (`ls`, `render` only) | `3600` | roster lookback for recently-finished sessions; `watch` isn't given this flag and keeps the tighter 300s inherited default |
+| `--remote` | none | attach a remote agent, repeatable; see [Remote agents](#remote-agents-containers-hosts) |
+| `--remote-flags` | none | extra flags forwarded to every `--remote docker:`/`ssh:` remote's own `hermon agent` |
+| `--docker-auto` | off | follow every container labeled `dev.hermon.agent` automatically; see [Remote agents](#remote-agents-containers-hosts) |
 
 `hermon ls` and `hermon render` honor `NO_COLOR` (and fall back to plain text
 automatically when stdout isn't a terminal); the ratatui screen (`hermon

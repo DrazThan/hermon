@@ -228,6 +228,21 @@ pub fn split_argv(s: &str) -> Result<Vec<String>, SpecError> {
     Ok(words)
 }
 
+/// Builds a `docker:` [`RemoteSpec`] directly from an already-validated
+/// container name and display name — the constructor #92's `--docker-auto`
+/// discovery uses instead of building a spec string and feeding
+/// docker-influenced data back through [`parse_spec`], per the provenance
+/// invariant above. Callers must run [`validate_name`] on both `container`
+/// and `name` themselves first; this does not re-validate either.
+pub fn docker_spec(container: impl Into<String>, name: impl Into<String>) -> RemoteSpec {
+    RemoteSpec {
+        name: name.into(),
+        kind: Kind::Docker {
+            container: container.into(),
+        },
+    }
+}
+
 /// Builds the `Command` [`RemoteSource::new`] spawns and supervises for
 /// this spec — the only place in this module that constructs a `Command`,
 /// and it does not spawn one. `agent_flags` (`--remote-flags`, already
@@ -468,6 +483,15 @@ mod tests {
     }
 
     // ------------------------------------------------------------- misc
+
+    #[test]
+    fn docker_spec_builds_a_docker_kind_spec_without_string_parsing() {
+        let spec = docker_spec("job1", "worker");
+        assert_eq!(spec.name, "worker");
+        let cmd = to_command(&spec, &[]);
+        assert_eq!(cmd.get_program().to_string_lossy(), "docker");
+        assert_eq!(args_of(&cmd), vec!["exec", "-i", "job1", "hermon", "agent"]);
+    }
 
     #[test]
     fn an_unknown_transport_is_rejected() {
