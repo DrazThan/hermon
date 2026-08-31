@@ -92,11 +92,13 @@ pub fn render(ui: &mut Ui, app: &mut App) {
     render_status_strip(ui, app);
 }
 
-/// The attention-first toggle — the desktop-native stand-in for the TUI's
-/// `[a]` key. #77 adds the filter box and pin controls next to it.
+/// The attention-first and grid toggles — the desktop-native stand-ins for
+/// the TUI's `[a]` and `[l]` keys. #77 adds the filter box and pin controls
+/// next to them.
 fn render_top_bar(ui: &mut Ui, app: &mut App) {
     ui.horizontal(|ui| {
         ui.toggle_value(&mut app.view.attention_first, "⚠ attention first");
+        ui.toggle_value(&mut app.grid, "▦ grid");
     });
 }
 
@@ -233,7 +235,8 @@ mod tests {
     fn render_lays_out_every_branch() {
         let ctx = egui::Context::default();
         let (_tx, rx) = mpsc::channel();
-        let mut app = App::new(rx, vec!["/tmp/claude".to_string()]);
+        let (cmds, _cmd_rx) = mpsc::channel();
+        let mut app = App::new(rx, cmds, vec!["/tmp/claude".to_string()], 6);
         pass(&ctx, |ui| render(ui, &mut app));
 
         app.apply_event(Event::Roster(vec![
