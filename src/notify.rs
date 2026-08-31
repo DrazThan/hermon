@@ -94,6 +94,28 @@ pub struct NotifyCfg {
     pub min_session_secs: f64,
 }
 
+impl NotifyCfg {
+    /// Every alert kind off, tuning untouched — what a process that lost
+    /// [`crate::arbitration`] runs with. Distinct from `--no-notify` only in
+    /// where it comes from; the engine cannot tell the two apart, and
+    /// shouldn't.
+    pub fn silenced(self) -> Self {
+        NotifyCfg {
+            turn_done: false,
+            error: false,
+            stuck: false,
+            perm_wait: false,
+            ..self
+        }
+    }
+
+    /// Whether any kind can still fire — the test for "this process is a
+    /// notifier", which is what claiming an arbitration pidfile asserts.
+    pub fn any_enabled(&self) -> bool {
+        self.turn_done || self.error || self.stuck || self.perm_wait
+    }
+}
+
 impl Default for NotifyCfg {
     fn default() -> Self {
         NotifyCfg {
@@ -345,7 +367,7 @@ pub fn probe() -> Notifier {
 /// Escapes `"` and `\` for embedding in a double-quoted AppleScript string
 /// literal. Order matters: backslashes first, so escaping a quote doesn't
 /// double-escape the backslash that `"` → `\"` just introduced.
-fn applescript_escape(s: &str) -> String {
+pub(crate) fn applescript_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
