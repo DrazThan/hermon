@@ -21,12 +21,13 @@ Full detail (issues, acceptance criteria) lives on the
 | [M5 — fleet controls](https://github.com/DrazThan/hermon/milestone/5) | ✅ done | Sort, filter, pin, paging, attention-sort, palette overlay. |
 | [M6 — notifications](https://github.com/DrazThan/hermon/milestone/6) | ✅ done | `decide_alerts`/`AlertHistory` pure core ([#43](https://github.com/DrazThan/hermon/issues/43)); delivery (`osascript`), mute key and CLI flags ([#44](https://github.com/DrazThan/hermon/issues/44)). |
 | [M7 — polish & packaging](https://github.com/DrazThan/hermon/milestone/7) | ✅ done | README + this roadmap ([#45](https://github.com/DrazThan/hermon/issues/45)), release build + brew tap ([#46](https://github.com/DrazThan/hermon/issues/46)), retiring `hermon.py` ([#47](https://github.com/DrazThan/hermon/issues/47)). |
+| [M8 — menu bar launch-at-login](https://github.com/DrazThan/hermon/milestone/8) | ✅ done | `--install-login-item` / `--uninstall-login-item` flags on `hermon menubar` to register with launchd ([#73](https://github.com/DrazThan/hermon/issues/73)); formula update, README docs. |
 
 ## Sequencing notes
 
-- Every milestone is closed. M7 finished with #47, which deleted `hermon.py`
-  and its `unittest` suite after a final row-for-row parity signoff of
-  `hermon ls` and `hermon render` against them on all three sources.
+- Every milestone is closed. M8 brings launch-at-login support to the menu bar
+  via `--install-login-item` / `--uninstall-login-item`, shipping with a formula
+  update in the tap and README documentation.
 - The Rust binary is now the only implementation. The Python one is reachable
   at the `python-final` tag — see
   [Predecessor](../packaging/RELEASE_NOTES.md#7-predecessor-the-python-implementation).
