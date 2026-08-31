@@ -154,6 +154,21 @@ pub fn run() -> anyhow::Result<()> {
             };
             menubar::run(config)
         }
+        Command::Agent(args) => {
+            let config = remote::agent::AgentConfig {
+                claude_dir: args.claude_dir,
+                hermes_db: args.hermes_db,
+                opencode_db: args.opencode_db,
+                idle_timeout: args.idle_timeout,
+                // `watch`/`gui`'s fixed 300s (`hermon.py:1463`) — agent mode
+                // has no fresh-window flag of its own, and the host does its
+                // own classification anyway, so a wider window here just
+                // means OpenCode sessions age off the snapshot a bit later.
+                fresh_window: 300.0,
+                interval: Duration::from_secs_f64(args.interval),
+            };
+            remote::agent::run(config)
+        }
     }
 }
 

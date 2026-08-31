@@ -27,6 +27,10 @@ pub enum Command {
     Render(RenderArgs),
     /// Live fleet counts in the macOS menu bar (macOS only).
     Menubar(MenubarArgs),
+    /// Stream session frames over stdio for a host `hermon` process to
+    /// consume — the in-container half of the remote wire protocol (#88,
+    /// #89). `--interval` (from [`SourceArgs`]) is the `Snap` cadence.
+    Agent(SourceArgs),
 }
 
 /// Menubar-specific options, including source flags and login-item management.
