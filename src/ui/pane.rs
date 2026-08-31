@@ -22,6 +22,12 @@ use crate::render::{Seg, Sem, StyledLine, fmt_elapsed};
 use crate::source::{Attn, Liveness};
 use crate::ui::palette;
 
+/// Transcript lines kept for an open pane. Far more than any viewport shows —
+/// the surplus is what grid mode's scrollback (and the desktop pane's) reads.
+/// One constant for both front ends: a chatty agent must not outgrow memory
+/// in either.
+pub const SCROLLBACK: usize = 5_000;
+
 /// A session's pane: what to draw and how far back it is scrolled.
 pub struct Pane<'a> {
     pub key: &'a str,
@@ -71,8 +77,9 @@ pub fn render(frame: &mut Frame, area: Rect, pane: &Pane) {
 
 /// The line appended below an attention pane's transcript, narrating why it
 /// needs eyes on it and for how long — `None` for `Live`/`Done`, which get
-/// no extra line.
-fn attention_status(state: Liveness, elapsed: Option<f64>) -> Option<StyledLine> {
+/// no extra line. Shared with [`crate::gui::pane`], so both front ends say
+/// the same thing about a session that needs eyes on it.
+pub(crate) fn attention_status(state: Liveness, elapsed: Option<f64>) -> Option<StyledLine> {
     let elapsed = fmt_elapsed(elapsed);
     match state {
         Liveness::Attention(Attn::PermWait) => Some(StyledLine(vec![Seg::new(
@@ -139,10 +146,19 @@ fn render_more(frame: &mut Frame, inner: Rect, below: usize) {
     );
 }
 
-/// Logical lines laid out for a pane `width` columns wide. Breaks at the
-/// last space that fits and hard-splits words longer than the pane; an empty
-/// logical line stays one empty display line.
+/// Logical lines laid out for a pane `width` columns wide, as ratatui lines.
 pub fn wrap(lines: &VecDeque<StyledLine>, width: usize) -> Vec<Line<'static>> {
+    wrap_styled(lines, width).iter().map(to_line).collect()
+}
+
+/// Logical lines broken into display lines `width` columns wide. Breaks at
+/// the last space that fits and hard-splits words longer than the pane; an
+/// empty logical line stays one empty display line.
+///
+/// Styling survives untouched, so the desktop pane wraps through this too
+/// ([`crate::gui::pane`]) and both front ends break the same transcript in
+/// the same places.
+pub fn wrap_styled(lines: &VecDeque<StyledLine>, width: usize) -> Vec<StyledLine> {
     if width == 0 {
         return Vec::new();
     }
@@ -152,21 +168,21 @@ pub fn wrap(lines: &VecDeque<StyledLine>, width: usize) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn wrap_one(line: &StyledLine, width: usize) -> Vec<Line<'static>> {
+fn wrap_one(line: &StyledLine, width: usize) -> Vec<StyledLine> {
     let chars: Vec<(Sem, char)> = line
         .0
         .iter()
         .flat_map(|seg| seg.text.chars().map(move |c| (seg.sem, c)))
         .collect();
     if chars.is_empty() {
-        return vec![Line::default()];
+        return vec![StyledLine::default()];
     }
 
     let mut out = Vec::new();
     let mut start = 0;
     while start < chars.len() {
         if chars.len() - start <= width {
-            out.push(to_line(&chars[start..]));
+            out.push(to_styled(&chars[start..]));
             break;
         }
         // One past the last character that fits, so a line ending exactly on
@@ -177,30 +193,32 @@ fn wrap_one(line: &StyledLine, width: usize) -> Vec<Line<'static>> {
             Some(i) if i > 0 => (start + i, start + i + 1),
             _ => (hard, hard),
         };
-        out.push(to_line(&chars[start..end]));
+        out.push(to_styled(&chars[start..end]));
         start = next;
     }
     out
 }
 
-/// Runs of same-styled characters back into spans.
-fn to_line(chars: &[(Sem, char)]) -> Line<'static> {
-    let mut spans: Vec<Span> = Vec::new();
-    let mut current: Option<(Sem, String)> = None;
+/// Runs of same-styled characters back into segments.
+fn to_styled(chars: &[(Sem, char)]) -> StyledLine {
+    let mut segs: Vec<Seg> = Vec::new();
     for &(sem, c) in chars {
-        match &mut current {
-            Some((run, text)) if *run == sem => text.push(c),
-            _ => {
-                if let Some((run, text)) = current.replace((sem, c.to_string())) {
-                    spans.push(Span::styled(text, palette::style(run)));
-                }
-            }
+        match segs.last_mut() {
+            Some(seg) if seg.sem == sem => seg.text.push(c),
+            _ => segs.push(Seg::new(sem, c.to_string())),
         }
     }
-    if let Some((run, text)) = current {
-        spans.push(Span::styled(text, palette::style(run)));
-    }
-    Line::from(spans)
+    StyledLine(segs)
+}
+
+/// A display line as a ratatui line, one span per segment.
+fn to_line(line: &StyledLine) -> Line<'static> {
+    Line::from(
+        line.0
+            .iter()
+            .map(|seg| Span::styled(seg.text.clone(), palette::style(seg.sem)))
+            .collect::<Vec<Span>>(),
+    )
 }
 
 #[cfg(test)]

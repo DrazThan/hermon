@@ -43,10 +43,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const REDRAW_INTERVAL: Duration = Duration::from_millis(100);
 /// Preview box: four lines of session detail plus its border.
 const PREVIEW_HEIGHT: u16 = 6;
-/// Transcript lines kept for an open pane. Far more than the preview box
-/// shows — the surplus is what grid mode's scrollback reads.
-const PANE_SCROLLBACK: usize = 5_000;
-
 /// Most panes the grid tiles at once, per the artboards: past this the last
 /// tile becomes the `+ N more sessions` placeholder and `[Tab]` pages.
 const GRID_SLOTS: usize = 6;
@@ -302,7 +298,7 @@ impl App {
     }
 
     /// Appends a fast tick's lines to a pane's buffer, dropping the oldest
-    /// past [`PANE_SCROLLBACK`]. Lines for any other key are stale — in
+    /// past [`pane::SCROLLBACK`]. Lines for any other key are stale — in
     /// flight when the pane closed — and discarded.
     fn buffer_pane(&mut self, key: &str, lines: Vec<StyledLine>) {
         if !self.open_panes.iter().any(|open| open == key) {
@@ -310,7 +306,7 @@ impl App {
         }
         let buffer = self.panes.entry(key.to_string()).or_default();
         buffer.extend(lines);
-        while buffer.len() > PANE_SCROLLBACK {
+        while buffer.len() > pane::SCROLLBACK {
             buffer.pop_front();
         }
     }
@@ -990,7 +986,7 @@ mod tests {
         }
 
         let buffer = &app.panes["a"];
-        assert_eq!(buffer.len(), PANE_SCROLLBACK);
+        assert_eq!(buffer.len(), pane::SCROLLBACK);
         assert_eq!(buffer.front().unwrap().to_plain(), "line 1000");
         assert_eq!(buffer.back().unwrap().to_plain(), "line 5999");
     }
