@@ -468,7 +468,13 @@ pub(crate) fn totals_line(rows: &[RosterRow]) -> StyledLine {
         }
     };
 
-    let in_tok: u64 = rows.iter().map(|r| r.in_tok).sum();
+    // Saturating, not `sum()`: a remote's token counts are numbers a hostile
+    // agent picks, and two of them near u64::MAX would otherwise wrap to a
+    // small total in release and panic the engine thread in debug.
+    let in_tok: u64 = rows
+        .iter()
+        .map(|r| r.in_tok)
+        .fold(0u64, u64::saturating_add);
 
     let mut parts = Vec::new();
     if perm_wait > 0 {
@@ -768,6 +774,22 @@ mod tests {
         assert_eq!(
             totals_line(&rows).to_plain(),
             "1 live · 1 done · Σ $3.00 · 2,469,134 in"
+        );
+    }
+
+    #[test]
+    fn hostile_token_counts_saturate_instead_of_wrapping() {
+        // `in_tok` is a u64 straight off a remote's wire, so two sessions can
+        // be made to overflow the total: it must clamp, not wrap (release) or
+        // panic the poll loop (debug).
+        let mut a = row("C:aaaaaa", Liveness::Live);
+        let mut b = row("C:bbbbbb", Liveness::Live);
+        a.in_tok = u64::MAX;
+        b.in_tok = u64::MAX;
+        let total = totals_line(&[a, b]).to_plain();
+        assert!(
+            total.ends_with(&format!("{} in", commas(u64::MAX))),
+            "{total}"
         );
     }
 

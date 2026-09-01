@@ -31,7 +31,7 @@ use crate::engine::{Engine, Event, Lifecycle, UiCmd};
 use crate::render::StyledLine;
 use crate::roster::RosterRow;
 use crate::source::Liveness;
-use crate::ui::pane::SCROLLBACK;
+use crate::ui::pane::trim_scrollback;
 use crate::view::{self, ViewState};
 
 const WINDOW_SIZE: [f32; 2] = [900.0, 620.0];
@@ -317,7 +317,9 @@ impl App {
     }
 
     /// Appends a fast tick's lines to a pane's buffer, dropping the oldest
-    /// past [`SCROLLBACK`]. Lines for any other key are stale — in flight
+    /// past [`crate::ui::pane::SCROLLBACK`] or
+    /// [`crate::ui::pane::SCROLLBACK_BYTES`],
+    /// whichever trips first. Lines for any other key are stale — in flight
     /// when the pane closed — and discarded.
     fn buffer_pane(&mut self, key: &str, lines: Vec<StyledLine>) {
         if !self.open_panes.iter().any(|open| open == key) {
@@ -326,9 +328,7 @@ impl App {
         let arrived = lines.len();
         let buffer = self.panes.entry(key.to_string()).or_default();
         buffer.extend(lines);
-        while buffer.len() > SCROLLBACK {
-            buffer.pop_front();
-        }
+        trim_scrollback(buffer);
         // The pane's wrap is cached, and a paused pane counts what it is not
         // showing: both live on the view, which the writer keeps honest.
         let view = self.pane_views.entry(key.to_string()).or_default();
@@ -597,6 +597,7 @@ mod tests {
     use super::*;
     use crate::engine::Cause;
     use crate::source::Attn;
+    use crate::ui::pane::{SCROLLBACK, SCROLLBACK_BYTES};
     use crate::view;
 
     fn row(key: &str, state: Liveness) -> RosterRow {
@@ -723,6 +724,29 @@ mod tests {
             lines: vec![StyledLine::default(); SCROLLBACK + 10],
         });
         assert_eq!(app.panes["C:aaa"].len(), SCROLLBACK);
+    }
+
+    /// A line count caps nothing when a remote picks how long its lines are:
+    /// 200 lines of 64 KiB is 13 MB in a buffer only 4% full by line count.
+    #[test]
+    fn pane_buffer_is_capped_in_bytes_as_well_as_lines() {
+        let mut app = app_with_pane("C:aaa");
+        let big = StyledLine(vec![crate::render::Seg::new(
+            crate::render::Sem::Plain,
+            "x".repeat(64 * 1024),
+        )]);
+        for _ in 0..200 {
+            app.apply_event(Event::PaneLines {
+                key: "C:aaa".to_string(),
+                lines: vec![big.clone(); 10],
+            });
+        }
+        let bytes: usize = app.panes["C:aaa"].iter().map(StyledLine::byte_len).sum();
+        assert!(
+            app.panes["C:aaa"].len() < SCROLLBACK,
+            "the line cap never trips"
+        );
+        assert!(bytes <= SCROLLBACK_BYTES, "{bytes} bytes held");
     }
 
     /// The cursor is what the engine tails: selecting a session opens its

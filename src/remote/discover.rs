@@ -37,6 +37,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use chrono::DateTime;
+
 use crate::remote::spec::validate_name;
 use crate::render::{clip, sanitize};
 
@@ -66,6 +68,8 @@ struct PsEntry {
     names: String,
     #[serde(rename = "Labels", default)]
     labels: String,
+    #[serde(rename = "CreatedAt", default)]
+    created_at: String,
 }
 
 /// One running, labeled container as `docker ps` reported it, before any
@@ -81,6 +85,10 @@ pub struct Container {
     /// The raw `dev.hermon.agent.name` label value, if the container set
     /// one — not yet validated or sanitized.
     pub agent_name: Option<String>,
+    /// When docker says the container was created, as epoch seconds; `None`
+    /// when `docker ps` reported no parseable `CreatedAt`. The tiebreak for
+    /// a contested name — see [`reconcile`].
+    pub created: Option<i64>,
 }
 
 /// Parses `docker ps --format {{json .}}` output: one JSON object per
@@ -106,8 +114,23 @@ pub fn parse_ps(stdout: &str) -> Vec<Container> {
             // `validate_name`-clean token.
             name: e.names.split(',').next().unwrap_or_default().to_string(),
             agent_name: label_value(&e.labels, AGENT_NAME_LABEL),
+            created: parse_created(&e.created_at),
         })
         .collect()
+}
+
+/// `docker ps`'s `CreatedAt` — `2026-08-31 12:00:00 +0000 UTC` — as epoch
+/// seconds. The trailing zone *name* is dropped before parsing (chrono reads
+/// the numeric offset, which is the part that carries meaning) and anything
+/// this doesn't recognise is `None` rather than an error: a `docker ps` build
+/// that words the field differently costs discovery its tiebreak, not its
+/// containers.
+fn parse_created(raw: &str) -> Option<i64> {
+    let mut parts = raw.split_whitespace();
+    let stamp = format!("{} {} {}", parts.next()?, parts.next()?, parts.next()?);
+    DateTime::parse_from_str(&stamp, "%Y-%m-%d %H:%M:%S %z")
+        .ok()
+        .map(|dt| dt.timestamp())
 }
 
 /// Whether `docker ps`'s comma-joined `key=value,…` `Labels` field carries
@@ -171,34 +194,38 @@ pub fn reconcile(
 ) -> (Sync, HashMap<String, String>) {
     let mut sync = Sync::default();
     let mut next: HashMap<String, String> = HashMap::new();
-    // Names claimed by a container already processed this tick, so two
-    // containers racing for the same label don't both spawn.
-    let mut claimed: HashSet<String> = HashSet::new();
+    // Name -> the container id holding it, so two containers racing for the
+    // same label don't both spawn. Seeded from `managed`: the incumbent owns
+    // its name before the loop starts, so whoever `docker ps` happens to
+    // list first cannot take it. That ordering is attacker-chosen — `docker
+    // ps` lists newest-first, so a container started *after* a legitimate
+    // one and carrying its `dev.hermon.agent.name` would otherwise be
+    // processed first, win the name, and get the victim torn down under it.
+    // A departed container's name stays claimed for the one tick it takes
+    // its removal to land, which costs a newcomer a tick and costs an
+    // impostor the hijack.
+    let mut claimed: HashMap<String, String> = managed
+        .iter()
+        .map(|(id, name)| (name.clone(), id.clone()))
+        .collect();
 
-    for c in containers {
-        if let Err(e) = validate_name(&c.name) {
-            sync.warnings.push(format!(
-                "docker-auto: container {} has an invalid name {:?} ({e}), skipping",
-                c.id, c.name
-            ));
-            continue;
-        }
+    // `managed` only protects a name its holder already held, so an impostor
+    // that starts in the *same* tick as its victim faces no incumbent at all
+    // and wins on `docker ps`'s newest-first ordering alone. Creation time is
+    // the one ordering it cannot forge — a container cannot be older than one
+    // it did not outlive — so contested names go to the older container.
+    // Unknown timestamps sort last, so a container docker did date always
+    // outranks one it didn't.
+    let mut ordered: Vec<&Container> = containers.iter().collect();
+    ordered.sort_by_key(|c| c.created.unwrap_or(i64::MAX));
 
-        let name = match &c.agent_name {
-            Some(raw) => match validate_name(raw) {
-                Ok(()) => clip(&sanitize(raw), MAX_LABEL_NAME_LEN),
-                Err(e) => {
-                    sync.warnings.push(format!(
-                        "docker-auto: container {:?} has an invalid {AGENT_NAME_LABEL} label \
-                         {raw:?} ({e}), falling back to the container name",
-                        c.name
-                    ));
-                    c.name.clone()
-                }
-            },
-            None => c.name.clone(),
-        };
+    let contenders: Vec<(&Container, String)> = ordered
+        .into_iter()
+        .filter_map(|c| resolve_name(c, &mut sync.warnings).map(|name| (c, name)))
+        .collect();
+    let untieable = untieable_names(&contenders, &claimed);
 
+    for (c, name) in contenders {
         if explicit.contains(&name) {
             sync.warnings.push(format!(
                 "docker-auto: container {:?} labeled name {name:?} collides with an explicit \
@@ -207,14 +234,26 @@ pub fn reconcile(
             ));
             continue;
         }
-        if !claimed.insert(name.clone()) {
+        if untieable.contains(&name) {
             sync.warnings.push(format!(
-                "docker-auto: container {:?} labeled name {name:?} collides with another \
-                 discovered container this tick, ignoring",
+                "docker-auto: container {:?} claims name {name:?} against a container it cannot \
+                 be ordered against (equal or unknown creation time), refusing both — docker's \
+                 listing order is not a tiebreak (possible label spoofing)",
                 c.name
             ));
             continue;
         }
+        if let Some(holder) = claimed.get(&name)
+            && holder != &c.id
+        {
+            sync.warnings.push(format!(
+                "docker-auto: container {:?} labeled name {name:?} collides with container \
+                 {holder}, which already holds it, ignoring (possible label spoofing)",
+                c.name
+            ));
+            continue;
+        }
+        claimed.insert(name.clone(), c.id.clone());
 
         if managed.get(&c.id) != Some(&name) {
             if let Some(old) = managed.get(&c.id) {
@@ -238,13 +277,84 @@ pub fn reconcile(
     (sync, next)
 }
 
+/// The roster name one container would run under: its validated
+/// `dev.hermon.agent.name` label if it has a usable one, its own container
+/// name otherwise. `None` when the container name itself is unusable, since
+/// that name reaches argv. Anything skipped or fallen back on is warned about
+/// here, once, before any name is contested.
+fn resolve_name(c: &Container, warnings: &mut Vec<String>) -> Option<String> {
+    if let Err(e) = validate_name(&c.name) {
+        warnings.push(format!(
+            "docker-auto: container {} has an invalid name {:?} ({e}), skipping",
+            c.id, c.name
+        ));
+        return None;
+    }
+    let Some(raw) = &c.agent_name else {
+        return Some(c.name.clone());
+    };
+    match validate_name(raw) {
+        Ok(()) => Some(clip(&sanitize(raw), MAX_LABEL_NAME_LEN)),
+        Err(e) => {
+            warnings.push(format!(
+                "docker-auto: container {:?} has an invalid {AGENT_NAME_LABEL} label \
+                 {raw:?} ({e}), falling back to the container name",
+                c.name
+            ));
+            Some(c.name.clone())
+        }
+    }
+}
+
+/// The names no container may have this tick: those whose two oldest
+/// contenders cannot be told apart — the same second on docker's
+/// second-granular `CreatedAt`, or both undated.
+///
+/// Creation time is the only ordering an impostor cannot forge, and a tie
+/// takes it away. What is left underneath is `docker ps`'s own newest-first
+/// listing, which is precisely the ordering the attacker chooses by starting
+/// its container when it likes. So a tie refuses *both* contenders rather
+/// than letting the list decide: the victim loses its name for as long as the
+/// impostor keeps claiming it, visibly and with a warning, which beats the
+/// impostor silently being followed under it.
+///
+/// A name an incumbent already holds is never untieable — `claimed` was
+/// seeded from `managed`, and being followed already is a tiebreak of its
+/// own that no newcomer of any age gets to overturn.
+fn untieable_names(
+    contenders: &[(&Container, String)],
+    claimed: &HashMap<String, String>,
+) -> HashSet<String> {
+    let mut oldest: HashMap<&str, Option<i64>> = HashMap::new();
+    let mut untieable = HashSet::new();
+    for (c, name) in contenders {
+        if claimed.contains_key(name) {
+            continue;
+        }
+        match oldest.get(name.as_str()) {
+            // `contenders` is sorted oldest-first, so the entry already here
+            // is the one to beat: equal to it (both dated the same second, or
+            // both undated) and neither can claim the name.
+            Some(best) if *best == c.created => {
+                untieable.insert(name.clone());
+            }
+            Some(_) => {}
+            None => {
+                oldest.insert(name.as_str(), c.created);
+            }
+        }
+    }
+    untieable
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn ps_line(id: &str, name: &str, labels: &str) -> String {
+        let created = "2026-08-31 12:00:00 +0000 UTC";
         format!(
-            r#"{{"ID":"{id}","Names":"{name}","Labels":"{labels}","Image":"x","State":"running"}}"#
+            r#"{{"ID":"{id}","Names":"{name}","Labels":"{labels}","Image":"x","CreatedAt":"{created}","State":"running"}}"#
         )
     }
 
@@ -269,6 +379,18 @@ mod tests {
         );
         let containers = parse_ps(&stdout);
         assert_eq!(containers[0].agent_name, Some("worker1".to_string()));
+    }
+
+    #[test]
+    fn parse_ps_reads_the_creation_time() {
+        let stdout = ps_line("abc123", "job1", "dev.hermon.agent=1");
+        assert_eq!(parse_ps(&stdout)[0].created, Some(1_788_177_600));
+        // A docker that words the field differently, or omits it, costs the
+        // tiebreak — never the container.
+        let undated = r#"{"ID":"abc123","Names":"job1","Labels":"dev.hermon.agent=1"}"#;
+        let containers = parse_ps(undated);
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].created, None);
     }
 
     #[test]
@@ -312,6 +434,15 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             agent_name: agent_name.map(str::to_string),
+            created: None,
+        }
+    }
+
+    /// The same container with docker's reported creation time on it.
+    fn born(id: &str, name: &str, agent_name: Option<&str>, created: i64) -> Container {
+        Container {
+            created: Some(created),
+            ..container(id, name, agent_name)
         }
     }
 
@@ -396,15 +527,215 @@ mod tests {
     }
 
     #[test]
-    fn two_containers_racing_for_the_same_label_only_spawn_the_first() {
+    fn two_undated_containers_racing_for_the_same_label_are_both_refused() {
+        // Nothing tells these two apart but `docker ps`'s listing order, and
+        // that is the attacker's to choose. Neither is followed.
         let containers = vec![
             container("id1", "job1", Some("worker")),
             container("id2", "job2", Some("worker")),
         ];
         let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert!(sync.spawn.is_empty(), "{:?}", sync.spawn);
+        assert!(next.is_empty());
+        for name in ["\"job1\"", "\"job2\""] {
+            assert!(
+                sync.warnings
+                    .iter()
+                    .any(|w| w.contains(name) && w.contains("refusing both")),
+                "{name} was not logged as refused: {:?}",
+                sync.warnings
+            );
+        }
+    }
+
+    /// Docker's `CreatedAt` is second-granular, so two containers started
+    /// inside the same second carry the same timestamp and the tiebreak has
+    /// nothing to work with — the case an impostor reaches by starting
+    /// alongside its victim rather than after it.
+    #[test]
+    fn two_containers_created_in_the_same_second_are_both_refused() {
+        let containers = vec![
+            born("spoof", "evil", Some("job1"), 1_000),
+            born("id1", "job1", None, 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert!(sync.spawn.is_empty(), "{:?}", sync.spawn);
+        assert!(next.is_empty());
+        assert!(
+            sync.warnings
+                .iter()
+                .filter(|w| w.contains("refusing both"))
+                .count()
+                == 2,
+            "both contenders are warned about: {:?}",
+            sync.warnings
+        );
+    }
+
+    /// A third, younger container doesn't inherit a name whose two oldest
+    /// claimants deadlocked — the ambiguity is about who the name belongs to,
+    /// not about which of the losers is next in line.
+    #[test]
+    fn a_tie_at_the_top_refuses_the_whole_contested_name() {
+        let containers = vec![
+            born("id3", "job3", Some("worker"), 3_000),
+            born("id1", "job1", Some("worker"), 1_000),
+            born("id2", "job2", Some("worker"), 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert!(sync.spawn.is_empty(), "{:?}", sync.spawn);
+        assert!(next.is_empty());
+    }
+
+    /// A tie among the losers is not a tie for the name: the unique oldest
+    /// still wins it.
+    #[test]
+    fn a_tie_below_the_oldest_container_does_not_refuse_the_name() {
+        let containers = vec![
+            born("spoof1", "evil1", Some("job1"), 2_000),
+            born("spoof2", "evil2", Some("job1"), 2_000),
+            born("id1", "job1", None, 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert_eq!(sync.spawn.len(), 1, "{:?}", sync.spawn);
+        assert_eq!(sync.spawn[0].id, "id1");
+        assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+    }
+
+    /// Incumbency outranks the tiebreak entirely. A container already being
+    /// followed keeps its name against a newcomer of any age — including one
+    /// planted with an *older* creation time, which is otherwise the winning
+    /// move, and one that ties it.
+    #[test]
+    fn an_incumbent_beats_a_newcomer_of_any_age() {
+        let managed = HashMap::from([("id1".to_string(), "job1".to_string())]);
+        for spoof_created in [None, Some(1), Some(1_000), Some(9_999)] {
+            let containers = vec![
+                Container {
+                    created: spoof_created,
+                    ..container("spoof", "evil", Some("job1"))
+                },
+                born("id1", "job1", None, 1_000),
+            ];
+            let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+            assert!(sync.spawn.is_empty(), "{spoof_created:?}: {:?}", sync.spawn);
+            assert!(
+                sync.remove.is_empty(),
+                "{spoof_created:?}: {:?}",
+                sync.remove
+            );
+            assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+            assert!(!next.contains_key("spoof"));
+        }
+    }
+
+    /// The pre-planted case: an impostor already running, undated, when its
+    /// victim first appears. It faces no incumbent — so the tie is all that
+    /// stands between it and owning the name from the very first tick, and
+    /// staying incumbent forever after.
+    #[test]
+    fn a_pre_planted_undated_impostor_never_becomes_the_incumbent() {
+        let containers = vec![
+            container("id1", "job1", None),
+            container("spoof", "evil", Some("job1")),
+        ];
+        let mut managed = HashMap::new();
+        for tick in 0..3 {
+            let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+            assert!(sync.spawn.is_empty(), "tick {tick}: {:?}", sync.spawn);
+            assert!(next.is_empty(), "tick {tick}: {next:?}");
+            managed = next;
+        }
+    }
+
+    #[test]
+    fn a_later_container_cannot_steal_an_incumbents_name() {
+        // `docker ps` lists newest first, so the spoofer — started after the
+        // victim, carrying the victim's dev.hermon.agent.name — is the first
+        // container this loop sees. It must still lose.
+        let containers = vec![
+            container("spoof", "evil", Some("job1")),
+            container("id1", "job1", None),
+        ];
+        let managed = HashMap::from([("id1".to_string(), "job1".to_string())]);
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+        assert!(sync.spawn.is_empty(), "the impostor never spawns");
+        assert!(
+            sync.remove.is_empty(),
+            "and the incumbent is not torn down: {:?}",
+            sync.remove
+        );
+        assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+        assert!(!next.contains_key("spoof"));
+        let warning = sync.warnings.first().expect("the newcomer is warned about");
+        assert!(warning.contains("\"evil\""), "{warning}");
+        assert!(warning.contains("label spoofing"), "{warning}");
+    }
+
+    /// The incumbent seeding only helps a container that was already
+    /// `managed`. When the impostor starts in the same discovery tick as its
+    /// victim, neither is — and `docker ps`'s newest-first listing hands the
+    /// name to the newcomer. Creation time is the tiebreak.
+    #[test]
+    fn a_same_tick_impostor_loses_the_name_to_the_older_container() {
+        // Newest first, as `docker ps` lists it: the spoofer, started a
+        // minute ago carrying the victim's name, comes first.
+        let containers = vec![
+            born("spoof", "evil", Some("job1"), 2_000),
+            born("id1", "job1", None, 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert_eq!(sync.spawn.len(), 1, "{:?}", sync.spawn);
+        assert_eq!(sync.spawn[0].id, "id1", "the older container is followed");
+        assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+        assert!(!next.contains_key("spoof"));
+        let warning = sync.warnings.first().expect("the newcomer is warned about");
+        assert!(warning.contains("\"evil\""), "{warning}");
+        assert!(warning.contains("label spoofing"), "{warning}");
+    }
+
+    #[test]
+    fn a_container_with_no_creation_time_cannot_outrank_a_dated_one() {
+        // An unknown age sorts last, so it never displaces a container whose
+        // age docker did report.
+        let containers = vec![
+            container("spoof", "evil", Some("job1")),
+            born("id1", "job1", None, 9_999),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
         assert_eq!(sync.spawn.len(), 1);
         assert_eq!(sync.spawn[0].id, "id1");
-        assert_eq!(next.len(), 1);
+        assert!(!next.contains_key("spoof"));
+    }
+
+    #[test]
+    fn an_incumbent_keeps_its_name_even_when_it_is_listed_last() {
+        // Same shape, but the incumbent's name comes from its own label
+        // rather than the container name — the label is the part a hostile
+        // image gets to choose, so both spellings have to hold.
+        let containers = vec![
+            container("spoof", "evil", Some("worker1")),
+            container("id1", "job1", Some("worker1")),
+        ];
+        let managed = HashMap::from([("id1".to_string(), "worker1".to_string())]);
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+        assert!(sync.spawn.is_empty());
+        assert!(sync.remove.is_empty());
+        assert_eq!(next.get("id1"), Some(&"worker1".to_string()));
+    }
+
+    #[test]
+    fn an_explicit_remotes_cleaned_name_is_the_one_a_label_collides_with() {
+        // `--remote docker:job1:a/b` runs under "a-b", not "a/b", so that is
+        // the string the explicit set carries and the string a spoofed label
+        // has to be refused against.
+        let spec = crate::remote::spec::parse_spec("docker:job1:a/b").expect("parses");
+        assert_eq!(spec.name, "a-b");
+        let explicit = HashSet::from([spec.name]);
+        let containers = vec![container("spoof", "evil", Some("a-b"))];
+        let (sync, next) = reconcile(&containers, &explicit, &HashMap::new());
+        assert!(sync.spawn.is_empty(), "explicit --remote wins");
+        assert!(next.is_empty());
         assert!(
             sync.warnings.iter().any(|w| w.contains("collides")),
             "{:?}",
