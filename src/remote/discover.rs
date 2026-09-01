@@ -37,6 +37,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use chrono::DateTime;
+
 use crate::remote::spec::validate_name;
 use crate::render::{clip, sanitize};
 
@@ -66,6 +68,8 @@ struct PsEntry {
     names: String,
     #[serde(rename = "Labels", default)]
     labels: String,
+    #[serde(rename = "CreatedAt", default)]
+    created_at: String,
 }
 
 /// One running, labeled container as `docker ps` reported it, before any
@@ -81,6 +85,10 @@ pub struct Container {
     /// The raw `dev.hermon.agent.name` label value, if the container set
     /// one — not yet validated or sanitized.
     pub agent_name: Option<String>,
+    /// When docker says the container was created, as epoch seconds; `None`
+    /// when `docker ps` reported no parseable `CreatedAt`. The tiebreak for
+    /// a contested name — see [`reconcile`].
+    pub created: Option<i64>,
 }
 
 /// Parses `docker ps --format {{json .}}` output: one JSON object per
@@ -106,8 +114,23 @@ pub fn parse_ps(stdout: &str) -> Vec<Container> {
             // `validate_name`-clean token.
             name: e.names.split(',').next().unwrap_or_default().to_string(),
             agent_name: label_value(&e.labels, AGENT_NAME_LABEL),
+            created: parse_created(&e.created_at),
         })
         .collect()
+}
+
+/// `docker ps`'s `CreatedAt` — `2026-08-31 12:00:00 +0000 UTC` — as epoch
+/// seconds. The trailing zone *name* is dropped before parsing (chrono reads
+/// the numeric offset, which is the part that carries meaning) and anything
+/// this doesn't recognise is `None` rather than an error: a `docker ps` build
+/// that words the field differently costs discovery its tiebreak, not its
+/// containers.
+fn parse_created(raw: &str) -> Option<i64> {
+    let mut parts = raw.split_whitespace();
+    let stamp = format!("{} {} {}", parts.next()?, parts.next()?, parts.next()?);
+    DateTime::parse_from_str(&stamp, "%Y-%m-%d %H:%M:%S %z")
+        .ok()
+        .map(|dt| dt.timestamp())
 }
 
 /// Whether `docker ps`'s comma-joined `key=value,…` `Labels` field carries
@@ -186,7 +209,18 @@ pub fn reconcile(
         .map(|(id, name)| (name.clone(), id.clone()))
         .collect();
 
-    for c in containers {
+    // `managed` only protects a name its holder already held, so an impostor
+    // that starts in the *same* tick as its victim faces no incumbent at all
+    // and wins on `docker ps`'s newest-first ordering alone. Creation time is
+    // the one ordering it cannot forge — a container cannot be older than one
+    // it did not outlive — so contested names go to the older container.
+    // Unknown timestamps sort last, and the sort is stable, so a `docker ps`
+    // that reports no `CreatedAt` keeps today's listing order rather than
+    // handing the name to whoever sorts first.
+    let mut ordered: Vec<&Container> = containers.iter().collect();
+    ordered.sort_by_key(|c| c.created.unwrap_or(i64::MAX));
+
+    for c in ordered {
         if let Err(e) = validate_name(&c.name) {
             sync.warnings.push(format!(
                 "docker-auto: container {} has an invalid name {:?} ({e}), skipping",
@@ -257,8 +291,9 @@ mod tests {
     use super::*;
 
     fn ps_line(id: &str, name: &str, labels: &str) -> String {
+        let created = "2026-08-31 12:00:00 +0000 UTC";
         format!(
-            r#"{{"ID":"{id}","Names":"{name}","Labels":"{labels}","Image":"x","State":"running"}}"#
+            r#"{{"ID":"{id}","Names":"{name}","Labels":"{labels}","Image":"x","CreatedAt":"{created}","State":"running"}}"#
         )
     }
 
@@ -283,6 +318,18 @@ mod tests {
         );
         let containers = parse_ps(&stdout);
         assert_eq!(containers[0].agent_name, Some("worker1".to_string()));
+    }
+
+    #[test]
+    fn parse_ps_reads_the_creation_time() {
+        let stdout = ps_line("abc123", "job1", "dev.hermon.agent=1");
+        assert_eq!(parse_ps(&stdout)[0].created, Some(1_788_177_600));
+        // A docker that words the field differently, or omits it, costs the
+        // tiebreak — never the container.
+        let undated = r#"{"ID":"abc123","Names":"job1","Labels":"dev.hermon.agent=1"}"#;
+        let containers = parse_ps(undated);
+        assert_eq!(containers.len(), 1);
+        assert_eq!(containers[0].created, None);
     }
 
     #[test]
@@ -326,6 +373,15 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             agent_name: agent_name.map(str::to_string),
+            created: None,
+        }
+    }
+
+    /// The same container with docker's reported creation time on it.
+    fn born(id: &str, name: &str, agent_name: Option<&str>, created: i64) -> Container {
+        Container {
+            created: Some(created),
+            ..container(id, name, agent_name)
         }
     }
 
@@ -448,6 +504,42 @@ mod tests {
         let warning = sync.warnings.first().expect("the newcomer is warned about");
         assert!(warning.contains("\"evil\""), "{warning}");
         assert!(warning.contains("label spoofing"), "{warning}");
+    }
+
+    /// The incumbent seeding only helps a container that was already
+    /// `managed`. When the impostor starts in the same discovery tick as its
+    /// victim, neither is — and `docker ps`'s newest-first listing hands the
+    /// name to the newcomer. Creation time is the tiebreak.
+    #[test]
+    fn a_same_tick_impostor_loses_the_name_to_the_older_container() {
+        // Newest first, as `docker ps` lists it: the spoofer, started a
+        // minute ago carrying the victim's name, comes first.
+        let containers = vec![
+            born("spoof", "evil", Some("job1"), 2_000),
+            born("id1", "job1", None, 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert_eq!(sync.spawn.len(), 1, "{:?}", sync.spawn);
+        assert_eq!(sync.spawn[0].id, "id1", "the older container is followed");
+        assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+        assert!(!next.contains_key("spoof"));
+        let warning = sync.warnings.first().expect("the newcomer is warned about");
+        assert!(warning.contains("\"evil\""), "{warning}");
+        assert!(warning.contains("label spoofing"), "{warning}");
+    }
+
+    #[test]
+    fn a_container_with_no_creation_time_cannot_outrank_a_dated_one() {
+        // An unknown age sorts last, so it never displaces a container whose
+        // age docker did report.
+        let containers = vec![
+            container("spoof", "evil", Some("job1")),
+            born("id1", "job1", None, 9_999),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert_eq!(sync.spawn.len(), 1);
+        assert_eq!(sync.spawn[0].id, "id1");
+        assert!(!next.contains_key("spoof"));
     }
 
     #[test]

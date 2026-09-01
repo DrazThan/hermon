@@ -392,7 +392,13 @@ fn key_cmp(a: &RosterRow, b: &RosterRow, key: SortKey) -> Ordering {
     match key {
         SortKey::Model => a.model.cmp(&b.model),
         SortKey::Tool => a.last_tool.cmp(&b.last_tool),
-        SortKey::InOut => (a.in_tok + a.out_tok).cmp(&(b.in_tok + b.out_tok)),
+        // Saturating: both counts come off a remote's wire, where nothing
+        // stops an agent reporting u64::MAX and panicking a debug build's
+        // sort out from under the roster.
+        SortKey::InOut => a
+            .in_tok
+            .saturating_add(a.out_tok)
+            .cmp(&b.in_tok.saturating_add(b.out_tok)),
         // A missing cost sorts before any known cost.
         SortKey::Cost => match (a.cost, b.cost) {
             (None, None) => Ordering::Equal,
@@ -501,6 +507,19 @@ mod tests {
                 "{key:?}"
             );
         }
+    }
+
+    /// The token counts are a remote agent's to choose, so their sum is not
+    /// an arithmetic the sort may overflow on.
+    #[test]
+    fn in_out_sort_survives_wire_controlled_token_counts() {
+        let mut rows = [row("a", 1), row("b", 2), row("c", 3)];
+        rows[1].in_tok = u64::MAX;
+        rows[1].out_tok = u64::MAX;
+        rows[2].in_tok = u64::MAX;
+        rows[2].out_tok = 1;
+        assert_eq!(sorted(&rows, SortKey::InOut, SortDir::Asc)[0], "a");
+        assert_eq!(sorted(&rows, SortKey::InOut, SortDir::Desc)[2], "a");
     }
 
     #[test]

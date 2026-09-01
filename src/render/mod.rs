@@ -109,6 +109,11 @@ pub struct Seg {
     pub text: String,
 }
 
+/// What one [`Seg`] costs before a byte of its text: the struct itself,
+/// stored inline in the line's `Vec`. Measured rather than guessed — a
+/// [`Sem`] tag plus a `String` header is 32 bytes on a 64-bit target.
+pub const SEG_OVERHEAD: usize = size_of::<Seg>();
+
 impl Seg {
     pub fn new(sem: Sem, text: impl Into<String>) -> Self {
         Seg {
@@ -129,11 +134,14 @@ impl StyledLine {
         self.0.iter().map(|seg| seg.text.as_str()).collect()
     }
 
-    /// How much memory the line's text costs. Retention caps count this
-    /// alongside line counts: one wire line can carry a megabyte, so a cap
-    /// in lines alone bounds nothing.
+    /// How much memory the line costs: its segments *and* their text.
+    /// Retention caps count this alongside line counts, and both halves have
+    /// to be in it — one wire line can carry a megabyte of text, and it can
+    /// equally carry a million empty segments, since `{"sem":"Ok","text":""}`
+    /// is 23 bytes on the wire that buys a [`SEG_OVERHEAD`]-byte `Seg` a
+    /// text-only measure scores as free.
     pub fn byte_len(&self) -> usize {
-        self.0.iter().map(|seg| seg.text.len()).sum()
+        self.0.len() * SEG_OVERHEAD + self.0.iter().map(|seg| seg.text.len()).sum::<usize>()
     }
 
     /// The line as 24-bit ANSI, for `hermon ls` on a color terminal
@@ -224,6 +232,26 @@ mod tests {
     #[test]
     fn empty_line_is_empty_string() {
         assert_eq!(StyledLine::default().to_plain(), "");
+    }
+
+    /// A line of empty segments carries no text and still costs real memory.
+    /// The retention caps measure `byte_len`, so a text-only measure made
+    /// segment storms free: 45k of them per line, gigabytes of host RSS, and
+    /// every cap reading zero.
+    #[test]
+    fn byte_len_counts_segment_overhead_not_only_text() {
+        let empty = StyledLine(vec![Seg::new(Sem::Ok, ""); 1_000]);
+        assert_eq!(empty.to_plain(), "", "no text at all");
+        assert_eq!(empty.byte_len(), 1_000 * SEG_OVERHEAD);
+        assert!(
+            empty.byte_len() >= 16_000,
+            "empty segments must not be free: {}",
+            empty.byte_len()
+        );
+
+        let texted = StyledLine(vec![Seg::new(Sem::Plain, "abcde")]);
+        assert_eq!(texted.byte_len(), SEG_OVERHEAD + 5, "text still counts");
+        assert_eq!(StyledLine::default().byte_len(), 0);
     }
 
     #[test]
