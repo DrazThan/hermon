@@ -214,40 +214,31 @@ pub fn reconcile(
     // and wins on `docker ps`'s newest-first ordering alone. Creation time is
     // the one ordering it cannot forge — a container cannot be older than one
     // it did not outlive — so contested names go to the older container.
-    // Unknown timestamps sort last, and the sort is stable, so a `docker ps`
-    // that reports no `CreatedAt` keeps today's listing order rather than
-    // handing the name to whoever sorts first.
+    // Unknown timestamps sort last, so a container docker did date always
+    // outranks one it didn't.
     let mut ordered: Vec<&Container> = containers.iter().collect();
     ordered.sort_by_key(|c| c.created.unwrap_or(i64::MAX));
 
-    for c in ordered {
-        if let Err(e) = validate_name(&c.name) {
-            sync.warnings.push(format!(
-                "docker-auto: container {} has an invalid name {:?} ({e}), skipping",
-                c.id, c.name
-            ));
-            continue;
-        }
+    let contenders: Vec<(&Container, String)> = ordered
+        .into_iter()
+        .filter_map(|c| resolve_name(c, &mut sync.warnings).map(|name| (c, name)))
+        .collect();
+    let untieable = untieable_names(&contenders, &claimed);
 
-        let name = match &c.agent_name {
-            Some(raw) => match validate_name(raw) {
-                Ok(()) => clip(&sanitize(raw), MAX_LABEL_NAME_LEN),
-                Err(e) => {
-                    sync.warnings.push(format!(
-                        "docker-auto: container {:?} has an invalid {AGENT_NAME_LABEL} label \
-                         {raw:?} ({e}), falling back to the container name",
-                        c.name
-                    ));
-                    c.name.clone()
-                }
-            },
-            None => c.name.clone(),
-        };
-
+    for (c, name) in contenders {
         if explicit.contains(&name) {
             sync.warnings.push(format!(
                 "docker-auto: container {:?} labeled name {name:?} collides with an explicit \
                  --remote, ignoring (possible label spoofing)",
+                c.name
+            ));
+            continue;
+        }
+        if untieable.contains(&name) {
+            sync.warnings.push(format!(
+                "docker-auto: container {:?} claims name {name:?} against a container it cannot \
+                 be ordered against (equal or unknown creation time), refusing both — docker's \
+                 listing order is not a tiebreak (possible label spoofing)",
                 c.name
             ));
             continue;
@@ -284,6 +275,76 @@ pub fn reconcile(
     }
 
     (sync, next)
+}
+
+/// The roster name one container would run under: its validated
+/// `dev.hermon.agent.name` label if it has a usable one, its own container
+/// name otherwise. `None` when the container name itself is unusable, since
+/// that name reaches argv. Anything skipped or fallen back on is warned about
+/// here, once, before any name is contested.
+fn resolve_name(c: &Container, warnings: &mut Vec<String>) -> Option<String> {
+    if let Err(e) = validate_name(&c.name) {
+        warnings.push(format!(
+            "docker-auto: container {} has an invalid name {:?} ({e}), skipping",
+            c.id, c.name
+        ));
+        return None;
+    }
+    let Some(raw) = &c.agent_name else {
+        return Some(c.name.clone());
+    };
+    match validate_name(raw) {
+        Ok(()) => Some(clip(&sanitize(raw), MAX_LABEL_NAME_LEN)),
+        Err(e) => {
+            warnings.push(format!(
+                "docker-auto: container {:?} has an invalid {AGENT_NAME_LABEL} label \
+                 {raw:?} ({e}), falling back to the container name",
+                c.name
+            ));
+            Some(c.name.clone())
+        }
+    }
+}
+
+/// The names no container may have this tick: those whose two oldest
+/// contenders cannot be told apart — the same second on docker's
+/// second-granular `CreatedAt`, or both undated.
+///
+/// Creation time is the only ordering an impostor cannot forge, and a tie
+/// takes it away. What is left underneath is `docker ps`'s own newest-first
+/// listing, which is precisely the ordering the attacker chooses by starting
+/// its container when it likes. So a tie refuses *both* contenders rather
+/// than letting the list decide: the victim loses its name for as long as the
+/// impostor keeps claiming it, visibly and with a warning, which beats the
+/// impostor silently being followed under it.
+///
+/// A name an incumbent already holds is never untieable — `claimed` was
+/// seeded from `managed`, and being followed already is a tiebreak of its
+/// own that no newcomer of any age gets to overturn.
+fn untieable_names(
+    contenders: &[(&Container, String)],
+    claimed: &HashMap<String, String>,
+) -> HashSet<String> {
+    let mut oldest: HashMap<&str, Option<i64>> = HashMap::new();
+    let mut untieable = HashSet::new();
+    for (c, name) in contenders {
+        if claimed.contains_key(name) {
+            continue;
+        }
+        match oldest.get(name.as_str()) {
+            // `contenders` is sorted oldest-first, so the entry already here
+            // is the one to beat: equal to it (both dated the same second, or
+            // both undated) and neither can claim the name.
+            Some(best) if *best == c.created => {
+                untieable.insert(name.clone());
+            }
+            Some(_) => {}
+            None => {
+                oldest.insert(name.as_str(), c.created);
+            }
+        }
+    }
+    untieable
 }
 
 #[cfg(test)]
@@ -466,20 +527,125 @@ mod tests {
     }
 
     #[test]
-    fn two_containers_racing_for_the_same_label_only_spawn_the_first() {
+    fn two_undated_containers_racing_for_the_same_label_are_both_refused() {
+        // Nothing tells these two apart but `docker ps`'s listing order, and
+        // that is the attacker's to choose. Neither is followed.
         let containers = vec![
             container("id1", "job1", Some("worker")),
             container("id2", "job2", Some("worker")),
         ];
         let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
-        assert_eq!(sync.spawn.len(), 1);
-        assert_eq!(sync.spawn[0].id, "id1");
-        assert_eq!(next.len(), 1);
+        assert!(sync.spawn.is_empty(), "{:?}", sync.spawn);
+        assert!(next.is_empty());
+        for name in ["\"job1\"", "\"job2\""] {
+            assert!(
+                sync.warnings
+                    .iter()
+                    .any(|w| w.contains(name) && w.contains("refusing both")),
+                "{name} was not logged as refused: {:?}",
+                sync.warnings
+            );
+        }
+    }
+
+    /// Docker's `CreatedAt` is second-granular, so two containers started
+    /// inside the same second carry the same timestamp and the tiebreak has
+    /// nothing to work with — the case an impostor reaches by starting
+    /// alongside its victim rather than after it.
+    #[test]
+    fn two_containers_created_in_the_same_second_are_both_refused() {
+        let containers = vec![
+            born("spoof", "evil", Some("job1"), 1_000),
+            born("id1", "job1", None, 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert!(sync.spawn.is_empty(), "{:?}", sync.spawn);
+        assert!(next.is_empty());
         assert!(
-            sync.warnings.iter().any(|w| w.contains("collides")),
-            "{:?}",
+            sync.warnings
+                .iter()
+                .filter(|w| w.contains("refusing both"))
+                .count()
+                == 2,
+            "both contenders are warned about: {:?}",
             sync.warnings
         );
+    }
+
+    /// A third, younger container doesn't inherit a name whose two oldest
+    /// claimants deadlocked — the ambiguity is about who the name belongs to,
+    /// not about which of the losers is next in line.
+    #[test]
+    fn a_tie_at_the_top_refuses_the_whole_contested_name() {
+        let containers = vec![
+            born("id3", "job3", Some("worker"), 3_000),
+            born("id1", "job1", Some("worker"), 1_000),
+            born("id2", "job2", Some("worker"), 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert!(sync.spawn.is_empty(), "{:?}", sync.spawn);
+        assert!(next.is_empty());
+    }
+
+    /// A tie among the losers is not a tie for the name: the unique oldest
+    /// still wins it.
+    #[test]
+    fn a_tie_below_the_oldest_container_does_not_refuse_the_name() {
+        let containers = vec![
+            born("spoof1", "evil1", Some("job1"), 2_000),
+            born("spoof2", "evil2", Some("job1"), 2_000),
+            born("id1", "job1", None, 1_000),
+        ];
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &HashMap::new());
+        assert_eq!(sync.spawn.len(), 1, "{:?}", sync.spawn);
+        assert_eq!(sync.spawn[0].id, "id1");
+        assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+    }
+
+    /// Incumbency outranks the tiebreak entirely. A container already being
+    /// followed keeps its name against a newcomer of any age — including one
+    /// planted with an *older* creation time, which is otherwise the winning
+    /// move, and one that ties it.
+    #[test]
+    fn an_incumbent_beats_a_newcomer_of_any_age() {
+        let managed = HashMap::from([("id1".to_string(), "job1".to_string())]);
+        for spoof_created in [None, Some(1), Some(1_000), Some(9_999)] {
+            let containers = vec![
+                Container {
+                    created: spoof_created,
+                    ..container("spoof", "evil", Some("job1"))
+                },
+                born("id1", "job1", None, 1_000),
+            ];
+            let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+            assert!(sync.spawn.is_empty(), "{spoof_created:?}: {:?}", sync.spawn);
+            assert!(
+                sync.remove.is_empty(),
+                "{spoof_created:?}: {:?}",
+                sync.remove
+            );
+            assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+            assert!(!next.contains_key("spoof"));
+        }
+    }
+
+    /// The pre-planted case: an impostor already running, undated, when its
+    /// victim first appears. It faces no incumbent — so the tie is all that
+    /// stands between it and owning the name from the very first tick, and
+    /// staying incumbent forever after.
+    #[test]
+    fn a_pre_planted_undated_impostor_never_becomes_the_incumbent() {
+        let containers = vec![
+            container("id1", "job1", None),
+            container("spoof", "evil", Some("job1")),
+        ];
+        let mut managed = HashMap::new();
+        for tick in 0..3 {
+            let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+            assert!(sync.spawn.is_empty(), "tick {tick}: {:?}", sync.spawn);
+            assert!(next.is_empty(), "tick {tick}: {next:?}");
+            managed = next;
+        }
     }
 
     #[test]

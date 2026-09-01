@@ -871,10 +871,18 @@ fn write_cmd(stdin: &mut ChildStdin, cmd: &HostCmd) -> bool {
 /// frame is skipped, an oversized one is counted, and EOF just ends the
 /// connection so the supervisor can respawn.
 ///
-/// `live` is this connection's own flag, checked once per frame: a reader
-/// abandoned by [`join_before`] may still be parked on a pipe a grandchild
-/// holds open, and its child's frames must not reach a state that has since
-/// moved on to a new connection.
+/// `live` is this connection's own flag, checked both before a frame is read
+/// and again once it arrives: a reader abandoned by [`join_before`] may still
+/// be parked on a pipe a grandchild holds open, and its child's frames must
+/// not reach a state that has since moved on to a new connection.
+///
+/// The second check is the one that matters. Checking only at the loop head
+/// leaves a whole blocked [`read_frame`] between the test and the write, so
+/// an orphan parked on that pipe when its connection was torn down still gets
+/// to fold exactly one attacker-chosen frame — a `Tail` into a live pane, a
+/// `Snap` replacing the roster, a `Hello` clearing the evidence of the last
+/// child's abuse — into the state of the connection that replaced it, once
+/// per reconnect.
 fn read_frames<R: BufRead>(
     mut reader: R,
     shared: &Arc<Mutex<Shared>>,
@@ -884,7 +892,11 @@ fn read_frames<R: BufRead>(
     let mut buf = Vec::new();
     let mut reopened = false;
     while live.load(Ordering::Relaxed) {
-        match read_frame(&mut reader, &mut buf) {
+        let frame = read_frame(&mut reader, &mut buf);
+        if !live.load(Ordering::Relaxed) {
+            return;
+        }
+        match frame {
             Frame::Eof => return,
             Frame::Oversized => {
                 lock(shared).oversized += 1;
@@ -1773,6 +1785,142 @@ mod tests {
             started.elapsed() < Duration::from_secs(5),
             "Drop waited {:?} on an orphan's pipe",
             started.elapsed()
+        );
+    }
+
+    /// Stands in for the pipe an abandoned reader is parked on: the read is
+    /// already blocked when the connection is torn down, so `live` goes false
+    /// *during* it and the frame only lands afterwards. That window is the
+    /// whole bug — a check at the loop head is on the wrong side of it.
+    struct TornDownMidRead<'a> {
+        live: &'a AtomicBool,
+        bytes: Cursor<Vec<u8>>,
+    }
+
+    impl Read for TornDownMidRead<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.live.store(false, Ordering::Relaxed);
+            self.bytes.read(buf)
+        }
+    }
+
+    impl BufRead for TornDownMidRead<'_> {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            self.live.store(false, Ordering::Relaxed);
+            self.bytes.fill_buf()
+        }
+
+        fn consume(&mut self, n: usize) {
+            self.bytes.consume(n);
+        }
+    }
+
+    fn framed(msg: &AgentMsg) -> Vec<u8> {
+        format!("{}\n", crate::remote::proto::encode_agent_msg(msg)).into_bytes()
+    }
+
+    fn ghost_tail() -> AgentMsg {
+        AgentMsg::Tail {
+            key: "C:1".into(),
+            lines: vec![StyledLine(vec![Seg {
+                sem: Sem::Plain,
+                text: "GHOST".into(),
+            }])],
+        }
+    }
+
+    /// A pane already open on the connection that replaced the dead one.
+    fn with_open_pane() -> Arc<Mutex<Shared>> {
+        let shared = Arc::new(Mutex::new(connected()));
+        lock(&shared)
+            .tails
+            .insert("C:1".into(), TailQueue::default());
+        shared
+    }
+
+    #[test]
+    fn an_orphan_reader_cannot_fold_one_last_frame_into_the_live_connection() {
+        let (cmds, _rx) = mpsc::sync_channel(CMD_QUEUE);
+
+        let shared = with_open_pane();
+        let live = AtomicBool::new(true);
+        let reader = TornDownMidRead {
+            live: &live,
+            bytes: Cursor::new(framed(&ghost_tail())),
+        };
+        read_frames(reader, &shared, &cmds, &live);
+        let ghosted = lock(&shared).tails["C:1"].lines.clone();
+        assert!(
+            ghosted.is_empty(),
+            "an orphan wrote into the new connection's pane: {ghosted:?}"
+        );
+
+        // Not a reader that silently drops everything: the same frame on a
+        // connection that is still live does land.
+        let shared = with_open_pane();
+        let live = AtomicBool::new(true);
+        read_frames(Cursor::new(framed(&ghost_tail())), &shared, &cmds, &live);
+        assert_eq!(lock(&shared).tails["C:1"].lines.len(), 1);
+    }
+
+    #[test]
+    fn an_orphans_oversized_frame_is_not_charged_to_the_live_connection() {
+        // The oversized counter is a state write too, and it happens before
+        // the `continue` that would have re-tested `live`.
+        let (cmds, _rx) = mpsc::sync_channel(CMD_QUEUE);
+        let shared = with_open_pane();
+        let live = AtomicBool::new(true);
+        let mut huge = vec![b'x'; MAX_FRAME_BYTES + 10];
+        huge.push(b'\n');
+        read_frames(
+            TornDownMidRead {
+                live: &live,
+                bytes: Cursor::new(huge),
+            },
+            &shared,
+            &cmds,
+            &live,
+        );
+        assert_eq!(lock(&shared).oversized, 0);
+    }
+
+    /// The same property through real processes: the `sh` exits at once, its
+    /// backgrounded subshell inherits stdout and writes a frame long after
+    /// the connection was torn down. The reader parked on that pipe is a
+    /// detached orphan by then, and what it reads must go nowhere.
+    #[test]
+    fn a_grandchild_writing_after_teardown_cannot_reach_the_hosts_state() {
+        let shared = with_open_pane();
+        let (cmds, rx) = mpsc::sync_channel(CMD_QUEUE);
+        let cmd_rx = Arc::new(Mutex::new(rx));
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let ghost = crate::remote::proto::encode_agent_msg(&ghost_tail());
+        let child = Command::new("sh")
+            .args([
+                "-c",
+                &format!("(sleep 1; printf '%s\\n' '{ghost}') & exit 0"),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sh spawns");
+
+        // The child never EOFs its stdout, so nothing but `stop` ends this
+        // connection — exactly the shape `Drop` and a quit take.
+        let quitter = Arc::clone(&stop);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            quitter.store(true, Ordering::Relaxed);
+        });
+        run_connection(child, &shared, &cmd_rx, &cmds, &stop);
+
+        thread::sleep(Duration::from_millis(1500)); // past the grandchild's write
+        let ghosted = lock(&shared).tails["C:1"].lines.clone();
+        assert!(
+            ghosted.is_empty(),
+            "a dead child's grandchild reached live state: {ghosted:?}"
         );
     }
 
