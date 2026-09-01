@@ -298,17 +298,16 @@ impl App {
     }
 
     /// Appends a fast tick's lines to a pane's buffer, dropping the oldest
-    /// past [`pane::SCROLLBACK`]. Lines for any other key are stale — in
-    /// flight when the pane closed — and discarded.
+    /// past [`pane::SCROLLBACK`] or [`pane::SCROLLBACK_BYTES`], whichever
+    /// trips first. Lines for any other key are stale — in flight when the
+    /// pane closed — and discarded.
     fn buffer_pane(&mut self, key: &str, lines: Vec<StyledLine>) {
         if !self.open_panes.iter().any(|open| open == key) {
             return;
         }
         let buffer = self.panes.entry(key.to_string()).or_default();
         buffer.extend(lines);
-        while buffer.len() > pane::SCROLLBACK {
-            buffer.pop_front();
-        }
+        pane::trim_scrollback(buffer);
     }
 
     /// The sessions the engine should be tailing: in list mode the selected
@@ -989,6 +988,25 @@ mod tests {
         assert_eq!(buffer.len(), pane::SCROLLBACK);
         assert_eq!(buffer.front().unwrap().to_plain(), "line 1000");
         assert_eq!(buffer.back().unwrap().to_plain(), "line 5999");
+    }
+
+    /// A line count caps nothing when a remote picks how long its lines are:
+    /// 2000 lines of 64 KiB is 130 MB in a buffer 40% full by line count.
+    #[test]
+    fn the_pane_buffer_is_capped_in_bytes_as_well_as_lines() {
+        let mut app = App::default();
+        app.apply_event(Event::Roster(vec![row("a")]));
+        let big = pane_line(&"x".repeat(64 * 1024));
+        for _ in 0..200 {
+            app.apply_event(Event::PaneLines {
+                key: "a".to_string(),
+                lines: vec![big.clone(); 10],
+            });
+        }
+        let buffer = &app.panes["a"];
+        let bytes: usize = buffer.iter().map(StyledLine::byte_len).sum();
+        assert!(buffer.len() < pane::SCROLLBACK, "the line cap never trips");
+        assert!(bytes <= pane::SCROLLBACK_BYTES, "{bytes} bytes held");
     }
 
     static HOOK_CALLS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());

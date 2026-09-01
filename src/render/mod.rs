@@ -129,6 +129,13 @@ impl StyledLine {
         self.0.iter().map(|seg| seg.text.as_str()).collect()
     }
 
+    /// How much memory the line's text costs. Retention caps count this
+    /// alongside line counts: one wire line can carry a megabyte, so a cap
+    /// in lines alone bounds nothing.
+    pub fn byte_len(&self) -> usize {
+        self.0.iter().map(|seg| seg.text.len()).sum()
+    }
+
     /// The line as 24-bit ANSI, for `hermon ls` on a color terminal
     /// (`hermon.py:70 c()`). Callers decide whether color is wanted —
     /// `NO_COLOR` and a non-tty stdout both mean [`to_plain`](Self::to_plain).

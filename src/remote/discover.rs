@@ -171,9 +171,20 @@ pub fn reconcile(
 ) -> (Sync, HashMap<String, String>) {
     let mut sync = Sync::default();
     let mut next: HashMap<String, String> = HashMap::new();
-    // Names claimed by a container already processed this tick, so two
-    // containers racing for the same label don't both spawn.
-    let mut claimed: HashSet<String> = HashSet::new();
+    // Name -> the container id holding it, so two containers racing for the
+    // same label don't both spawn. Seeded from `managed`: the incumbent owns
+    // its name before the loop starts, so whoever `docker ps` happens to
+    // list first cannot take it. That ordering is attacker-chosen — `docker
+    // ps` lists newest-first, so a container started *after* a legitimate
+    // one and carrying its `dev.hermon.agent.name` would otherwise be
+    // processed first, win the name, and get the victim torn down under it.
+    // A departed container's name stays claimed for the one tick it takes
+    // its removal to land, which costs a newcomer a tick and costs an
+    // impostor the hijack.
+    let mut claimed: HashMap<String, String> = managed
+        .iter()
+        .map(|(id, name)| (name.clone(), id.clone()))
+        .collect();
 
     for c in containers {
         if let Err(e) = validate_name(&c.name) {
@@ -207,14 +218,17 @@ pub fn reconcile(
             ));
             continue;
         }
-        if !claimed.insert(name.clone()) {
+        if let Some(holder) = claimed.get(&name)
+            && holder != &c.id
+        {
             sync.warnings.push(format!(
-                "docker-auto: container {:?} labeled name {name:?} collides with another \
-                 discovered container this tick, ignoring",
+                "docker-auto: container {:?} labeled name {name:?} collides with container \
+                 {holder}, which already holds it, ignoring (possible label spoofing)",
                 c.name
             ));
             continue;
         }
+        claimed.insert(name.clone(), c.id.clone());
 
         if managed.get(&c.id) != Some(&name) {
             if let Some(old) = managed.get(&c.id) {
@@ -405,6 +419,65 @@ mod tests {
         assert_eq!(sync.spawn.len(), 1);
         assert_eq!(sync.spawn[0].id, "id1");
         assert_eq!(next.len(), 1);
+        assert!(
+            sync.warnings.iter().any(|w| w.contains("collides")),
+            "{:?}",
+            sync.warnings
+        );
+    }
+
+    #[test]
+    fn a_later_container_cannot_steal_an_incumbents_name() {
+        // `docker ps` lists newest first, so the spoofer — started after the
+        // victim, carrying the victim's dev.hermon.agent.name — is the first
+        // container this loop sees. It must still lose.
+        let containers = vec![
+            container("spoof", "evil", Some("job1")),
+            container("id1", "job1", None),
+        ];
+        let managed = HashMap::from([("id1".to_string(), "job1".to_string())]);
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+        assert!(sync.spawn.is_empty(), "the impostor never spawns");
+        assert!(
+            sync.remove.is_empty(),
+            "and the incumbent is not torn down: {:?}",
+            sync.remove
+        );
+        assert_eq!(next.get("id1"), Some(&"job1".to_string()));
+        assert!(!next.contains_key("spoof"));
+        let warning = sync.warnings.first().expect("the newcomer is warned about");
+        assert!(warning.contains("\"evil\""), "{warning}");
+        assert!(warning.contains("label spoofing"), "{warning}");
+    }
+
+    #[test]
+    fn an_incumbent_keeps_its_name_even_when_it_is_listed_last() {
+        // Same shape, but the incumbent's name comes from its own label
+        // rather than the container name — the label is the part a hostile
+        // image gets to choose, so both spellings have to hold.
+        let containers = vec![
+            container("spoof", "evil", Some("worker1")),
+            container("id1", "job1", Some("worker1")),
+        ];
+        let managed = HashMap::from([("id1".to_string(), "worker1".to_string())]);
+        let (sync, next) = reconcile(&containers, &HashSet::new(), &managed);
+        assert!(sync.spawn.is_empty());
+        assert!(sync.remove.is_empty());
+        assert_eq!(next.get("id1"), Some(&"worker1".to_string()));
+    }
+
+    #[test]
+    fn an_explicit_remotes_cleaned_name_is_the_one_a_label_collides_with() {
+        // `--remote docker:job1:a/b` runs under "a-b", not "a/b", so that is
+        // the string the explicit set carries and the string a spoofed label
+        // has to be refused against.
+        let spec = crate::remote::spec::parse_spec("docker:job1:a/b").expect("parses");
+        assert_eq!(spec.name, "a-b");
+        let explicit = HashSet::from([spec.name]);
+        let containers = vec![container("spoof", "evil", Some("a-b"))];
+        let (sync, next) = reconcile(&containers, &explicit, &HashMap::new());
+        assert!(sync.spawn.is_empty(), "explicit --remote wins");
+        assert!(next.is_empty());
         assert!(
             sync.warnings.iter().any(|w| w.contains("collides")),
             "{:?}",

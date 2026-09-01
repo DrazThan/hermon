@@ -24,10 +24,10 @@
 //! trusted.
 
 use std::collections::{HashMap, VecDeque};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, Command, Stdio};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -54,6 +54,23 @@ pub const MAX_SNAP_SESSIONS: usize = 10_000;
 /// screenful; a flood is the agent's problem, not the host's memory.
 const MAX_TAIL_LINES: usize = 4_096;
 
+/// Bytes held per open tail, evicted oldest-first alongside
+/// [`MAX_TAIL_LINES`] — whichever cap trips first. A line count alone bounds
+/// nothing: one wire line can carry most of a [`MAX_FRAME_BYTES`] frame, so
+/// 4096 of them is gigabytes, not megabytes.
+const MAX_TAIL_BYTES: usize = 4 * 1024 * 1024;
+
+/// Longest single tail line the host keeps, clipped at ingest. A pane draws
+/// a screenful; the rest is a hostile agent spending our memory a megabyte
+/// per frame.
+const MAX_TAIL_LINE_BYTES: usize = 64 * 1024;
+
+/// Host commands queued for a child before new ones are dropped. Bounded
+/// because the agent influences how many get queued — every `Hello` asks for
+/// one `OpenTail` per open pane — and because the one thread draining it can
+/// be blocked indefinitely by a child that never reads its stdin.
+const CMD_QUEUE: usize = 64;
+
 /// Reconnect backoff floor and ceiling, doubling in between.
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
@@ -70,6 +87,12 @@ const MAX_STDERR_BYTES: usize = 4096;
 /// Instant exits in a row before respawns are pinned at [`BACKOFF_MAX`] for
 /// good: a remote that can't start must not become a respawn storm.
 const INSTANT_EXIT_STRIKES: u32 = 3;
+
+/// How long teardown lets the writer thread get its `Shutdown` out before
+/// the child is killed anyway. Never a wait on the thread itself: a child
+/// that stopped reading its stdin leaves that write blocked until the kill
+/// breaks the pipe.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(200);
 
 /// A connection that lasted this long counts as healthy, so the next
 /// failure starts the backoff over rather than resuming where it left off.
@@ -115,6 +138,8 @@ struct TailQueue {
     /// going permanently blank when the agent restarts under it.
     replay: Replay,
     lines: VecDeque<StyledLine>,
+    /// Running total of `lines`' text, so the byte cap costs no rescan.
+    bytes: usize,
 }
 
 /// Everything the reader thread writes and the roster reads.
@@ -128,6 +153,9 @@ struct Shared {
     tails: HashMap<String, TailQueue>,
     /// Frames refused for exceeding [`MAX_FRAME_BYTES`], this connection.
     oversized: u64,
+    /// Stderr bytes read past [`MAX_STDERR_BYTES`] and thrown away — a child
+    /// shouting into fd 2 to grow host memory, in the numbers that says so.
+    stderr_dropped: u64,
     /// The newest `Snap` was truncated at [`MAX_SNAP_SESSIONS`].
     truncated: bool,
     /// Seconds the remote clock runs ahead of ours, warned once per
@@ -152,7 +180,7 @@ struct Shared {
 pub struct RemoteSource {
     name: String,
     shared: Arc<Mutex<Shared>>,
-    cmds: Sender<HostCmd>,
+    cmds: SyncSender<HostCmd>,
     stop: Arc<AtomicBool>,
     supervisor: Option<JoinHandle<()>>,
 }
@@ -165,7 +193,11 @@ impl RemoteSource {
         let name = clean_name(&name.into());
         let shared = Arc::new(Mutex::new(Shared::default()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (cmds, cmd_rx) = mpsc::channel();
+        // Bounded, and the receiver is shared rather than owned by the
+        // supervisor: each connection hands it to a writer thread that can
+        // outlive the connection's own teardown (see `write_cmds`).
+        let (cmds, cmd_rx) = mpsc::sync_channel(CMD_QUEUE);
+        let cmd_rx = Arc::new(Mutex::new(cmd_rx));
 
         let supervisor = {
             let shared = Arc::clone(&shared);
@@ -241,12 +273,16 @@ impl Source for RemoteSource {
             session_id.to_string(),
             TailQueue {
                 replay,
-                lines: VecDeque::new(),
+                ..TailQueue::default()
             },
         );
         drop(shared);
 
-        let _ = self.cmds.send(HostCmd::OpenTail {
+        // Dropped rather than queued when the channel is full: a command the
+        // host cannot get out to a child that has stopped reading its stdin
+        // is a command that child was never going to act on, and the
+        // supervisor is about to notice and respawn it.
+        let _ = self.cmds.try_send(HostCmd::OpenTail {
             key: session_id.to_string(),
             replay,
         });
@@ -272,7 +308,7 @@ impl Drop for RemoteSource {
 pub struct RemoteTailer {
     key: String,
     shared: Arc<Mutex<Shared>>,
-    cmds: Sender<HostCmd>,
+    cmds: SyncSender<HostCmd>,
     down_notified: bool,
 }
 
@@ -283,7 +319,10 @@ impl Tailer for RemoteTailer {
         let mut out: Vec<StyledLine> = shared
             .tails
             .get_mut(&self.key)
-            .map(|q| q.lines.drain(..).collect())
+            .map(|q| {
+                q.bytes = 0;
+                q.lines.drain(..).collect()
+            })
             .unwrap_or_default();
         drop(shared);
 
@@ -303,7 +342,7 @@ impl Tailer for RemoteTailer {
 impl Drop for RemoteTailer {
     fn drop(&mut self) {
         lock(&self.shared).tails.remove(&self.key);
-        let _ = self.cmds.send(HostCmd::CloseTail {
+        let _ = self.cmds.try_send(HostCmd::CloseTail {
             key: self.key.clone(),
         });
     }
@@ -358,7 +397,12 @@ impl Backoff {
 
 /// `/` separates a remote's name from the source key it prefixes, so it
 /// cannot appear inside the name itself; control bytes can't either.
-fn clean_name(name: &str) -> String {
+///
+/// `pub(crate)` because [`crate::remote::spec`] has to apply the identical
+/// cleaning to a `:name` suffix: the name in a `RemoteSpec` is only useful
+/// as a collision key if it is already the name the `RemoteSource` will run
+/// under.
+pub(crate) fn clean_name(name: &str) -> String {
     sanitize(name).replace('/', "-")
 }
 
@@ -386,15 +430,37 @@ fn sanitize_meta(mut s: SessionMeta) -> SessionMeta {
     s
 }
 
-/// `Seg::new` is the sanitizing constructor, so rebuilding the line through
-/// it is the laundering — the wire's own segments are never stored as-is.
+/// Rebuilding the line through [`sanitize`] is the laundering — the wire's
+/// own segments are never stored as-is — and the result is clipped to
+/// [`MAX_TAIL_LINE_BYTES`]. The clip goes here, on the sanitized text,
+/// because sanitizing *grows* a hostile line: every control byte becomes a
+/// three-byte U+FFFD, so a cap applied to what arrived would not bound what
+/// we keep.
 fn sanitize_line(line: StyledLine) -> StyledLine {
-    StyledLine(
-        line.0
-            .into_iter()
-            .map(|s| Seg::new(s.sem, s.text))
-            .collect(),
-    )
+    let mut budget = MAX_TAIL_LINE_BYTES;
+    let mut segs = Vec::with_capacity(line.0.len());
+    for seg in line.0 {
+        if budget == 0 {
+            break;
+        }
+        let text = clip_bytes(sanitize(&seg.text), budget);
+        budget -= text.len();
+        segs.push(Seg { sem: seg.sem, text });
+    }
+    StyledLine(segs)
+}
+
+/// Truncates to at most `budget` bytes, backing up to the nearest char
+/// boundary — a byte cap on text that is still UTF-8 afterwards.
+fn clip_bytes(mut text: String, budget: usize) -> String {
+    if text.len() > budget {
+        let mut end = budget;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
 }
 
 /// The remote's own roster lines: link state first, then whatever the
@@ -434,6 +500,12 @@ fn notices(name: &str, shared: &Shared) -> Vec<String> {
             "⚠ {name} — dropped {} frame(s) over {} MiB",
             shared.oversized,
             MAX_FRAME_BYTES / (1024 * 1024)
+        ));
+    }
+    if shared.stderr_dropped > 0 {
+        out.push(format!(
+            "⚠ {name} — dropped {} stderr byte(s) over {MAX_STDERR_BYTES}",
+            shared.stderr_dropped
         ));
     }
     if let Some(skew) = shared.skew {
@@ -482,6 +554,7 @@ fn apply_frame(shared: &mut Shared, msg: AgentMsg, now: f64) -> Applied {
             // A fresh Hello resets everything that described the *previous*
             // connection; the snapshot stays, so the deck doesn't blink.
             shared.oversized = 0;
+            shared.stderr_dropped = 0;
             shared.truncated = false;
             shared.skew = None;
             shared.spawn_error = None;
@@ -514,10 +587,18 @@ fn apply_frame(shared: &mut Shared, msg: AgentMsg, now: f64) -> Applied {
             // everything and the host nothing.
             if let Some(queue) = shared.tails.get_mut(&key) {
                 for line in lines {
-                    if queue.lines.len() >= MAX_TAIL_LINES {
-                        queue.lines.pop_front();
+                    let line = sanitize_line(line);
+                    queue.bytes += line.byte_len();
+                    queue.lines.push_back(line);
+                    // Both caps, oldest-first, whichever trips: 4096 lines is
+                    // a bound on nothing when the agent chooses how long a
+                    // line is.
+                    while queue.lines.len() > MAX_TAIL_LINES || queue.bytes > MAX_TAIL_BYTES {
+                        let Some(dropped) = queue.lines.pop_front() else {
+                            break;
+                        };
+                        queue.bytes -= dropped.byte_len();
                     }
-                    queue.lines.push_back(sanitize_line(line));
                 }
             }
             Applied::Nothing
@@ -587,8 +668,8 @@ fn lock(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
 fn supervise(
     mut transport: Command,
     shared: &Arc<Mutex<Shared>>,
-    cmd_rx: &Receiver<HostCmd>,
-    cmds: &Sender<HostCmd>,
+    cmd_rx: &Arc<Mutex<Receiver<HostCmd>>>,
+    cmds: &SyncSender<HostCmd>,
     stop: &Arc<AtomicBool>,
 ) {
     let mut backoff = Backoff::new();
@@ -634,15 +715,19 @@ fn supervise(
     }
 }
 
-/// Drives one child: a reader thread on its stdout, another draining its
-/// stderr for the "binary missing" diagnosis, host commands onto its stdin,
-/// until either end goes away. Returns whatever the child wrote to stderr
-/// (capped, may be empty) so the caller can classify why it died.
+/// Drives one child: a reader thread on its stdout, one draining its stderr
+/// for the "binary missing" diagnosis, one writing host commands onto its
+/// stdin, until either end goes away. Returns whatever the child wrote to
+/// stderr (capped, may be empty) so the caller can classify why it died.
+///
+/// This thread itself only ever waits on flags and sleeps — it must stay
+/// promptly interruptible, because it is the thread [`RemoteSource::drop`]
+/// joins, and an agent must not be able to make quitting hermon impossible.
 fn run_connection(
     mut child: Child,
     shared: &Arc<Mutex<Shared>>,
-    cmd_rx: &Receiver<HostCmd>,
-    cmds: &Sender<HostCmd>,
+    cmd_rx: &Arc<Mutex<Receiver<HostCmd>>>,
+    cmds: &SyncSender<HostCmd>,
     stop: &Arc<AtomicBool>,
 ) -> String {
     let reading = Arc::new(AtomicBool::new(true));
@@ -662,34 +747,38 @@ fn run_connection(
         thread::spawn(move || read_stderr(BufReader::new(stderr), &buf))
     });
 
-    let mut stdin = child.stdin.take();
+    let writer = child.stdin.take().map(|stdin| {
+        let cmd_rx = Arc::clone(cmd_rx);
+        let reading = Arc::clone(&reading);
+        let stop = Arc::clone(stop);
+        thread::spawn(move || write_cmds(stdin, &cmd_rx, &reading, &stop))
+    });
+
     while reading.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) {
-        let cmd = match cmd_rx.recv_timeout(CMD_TICK) {
-            Ok(cmd) => cmd,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => break,
-        };
-        let Some(writer) = stdin.as_mut() else { break };
-        let line = encode_host_cmd(&cmd);
-        if writeln!(writer, "{line}").is_err() || writer.flush().is_err() {
-            break; // the child stopped listening; the reader will notice too
-        }
+        thread::sleep(CMD_TICK);
     }
 
-    // Ask the agent to leave, then make sure it did: dropping stdin is the
-    // EOF it exits on, and the kill covers an agent that ignores both.
-    if let Some(writer) = stdin.as_mut() {
-        let _ = writeln!(writer, "{}", encode_host_cmd(&HostCmd::Shutdown));
-        let _ = writer.flush();
+    // Give the writer its moment to say `Shutdown` and close stdin — the EOF
+    // a well-behaved agent exits on — but bounded, and never as a join: a
+    // child that stopped reading its stdin has that write blocked until the
+    // kill below breaks the pipe. The kill covers an agent that ignores both.
+    let grace = Instant::now() + SHUTDOWN_GRACE;
+    while writer.as_ref().is_some_and(|w| !w.is_finished()) && Instant::now() < grace {
+        thread::sleep(CMD_TICK.min(grace.saturating_duration_since(Instant::now())));
     }
-    drop(stdin);
     let _ = child.kill();
     let _ = child.wait();
     if let Some(reader) = reader {
         let _ = reader.join();
     }
-    if let Some(reader) = stderr_reader {
-        let _ = reader.join();
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    if let Some(reader) = stderr_reader
+        && let Ok(dropped) = reader.join()
+        && dropped > 0
+    {
+        lock(shared).stderr_dropped += dropped;
     }
     stderr_buf
         .lock()
@@ -697,11 +786,52 @@ fn run_connection(
         .clone()
 }
 
+/// Host commands onto one child's stdin, on a thread of their own.
+///
+/// The write is blocking and cannot be made otherwise without a syscall this
+/// crate doesn't take a dependency for, so the answer is *where* it blocks:
+/// a child that never reads its stdin fills the pipe and parks this thread
+/// forever, and [`run_connection`] deliberately does not wait on it before
+/// killing the child. The kill breaks the pipe, the write fails, this thread
+/// ends. Nothing an agent does can stall the supervisor or [`Drop`].
+fn write_cmds(
+    mut stdin: ChildStdin,
+    cmd_rx: &Mutex<Receiver<HostCmd>>,
+    reading: &AtomicBool,
+    stop: &AtomicBool,
+) {
+    while reading.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) {
+        let cmd = {
+            let rx = cmd_rx
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match rx.recv_timeout(CMD_TICK) {
+                Ok(cmd) => cmd,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        };
+        // Re-checked after the wait: shutting down must not spend even one
+        // write on a child that may never drain it.
+        if stop.load(Ordering::Relaxed) || !write_cmd(&mut stdin, &cmd) {
+            return; // the child stopped listening; the reader will notice too
+        }
+    }
+    let _ = write_cmd(&mut stdin, &HostCmd::Shutdown);
+}
+
+/// One command onto the child's stdin; `false` once the pipe is gone.
+fn write_cmd(stdin: &mut ChildStdin, cmd: &HostCmd) -> bool {
+    let line = encode_host_cmd(cmd);
+    writeln!(stdin, "{line}").is_ok() && stdin.flush().is_ok()
+}
+
 /// The reader thread: frames in, shared state out. Never fails — a bad
 /// frame is skipped, an oversized one is counted, and EOF just ends the
 /// connection so the supervisor can respawn.
-fn read_frames<R: BufRead>(mut reader: R, shared: &Arc<Mutex<Shared>>, cmds: &Sender<HostCmd>) {
+fn read_frames<R: BufRead>(mut reader: R, shared: &Arc<Mutex<Shared>>, cmds: &SyncSender<HostCmd>) {
     let mut buf = Vec::new();
+    let mut reopened = false;
     loop {
         match read_frame(&mut reader, &mut buf) {
             Frame::Eof => return,
@@ -719,32 +849,42 @@ fn read_frames<R: BufRead>(mut reader: R, shared: &Arc<Mutex<Shared>>, cmds: &Se
         match applied {
             Applied::Nothing => {}
             Applied::Stop => return,
-            Applied::Reopen(tails) => {
+            // Once per connection, however many times the agent says hello:
+            // the tails were reopened on the first `Hello` and are still
+            // open on this same child, and a pane opened since sent its own
+            // `OpenTail`. Without this an agent spamming `Hello` queues one
+            // command per open pane per greeting.
+            Applied::Reopen(tails) if !reopened => {
+                reopened = true;
                 for (key, replay) in tails {
-                    let _ = cmds.send(HostCmd::OpenTail { key, replay });
+                    let _ = cmds.try_send(HostCmd::OpenTail { key, replay });
                 }
             }
+            Applied::Reopen(_) => {}
         }
     }
 }
 
-/// Drains a child's stderr into `buf`, capped at [`MAX_STDERR_BYTES`] — the
-/// stream is read to EOF either way (so the child never blocks on a full
-/// pipe), but bytes past the cap are dropped rather than grown into.
-fn read_stderr<R: BufRead>(mut reader: R, buf: &Mutex<String>) {
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) | Err(_) => return,
-            Ok(_) => {
-                let mut guard = buf.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                if guard.len() < MAX_STDERR_BYTES {
-                    guard.push_str(&line);
-                }
-            }
-        }
+/// Drains a child's stderr into `buf`, capped at [`MAX_STDERR_BYTES`], and
+/// returns how many bytes past the cap were thrown away.
+///
+/// The cap is enforced by [`Read::take`] *before* the read, not by checking
+/// the buffer afterwards: stderr drains from the moment the child is spawned,
+/// ahead of the `Hello` gate and every protocol cap, so a child writing to
+/// fd 2 with no newline in sight (`yes A | tr -d '\n' >&2`) would otherwise
+/// grow one `String` at pipe speed until the host is out of memory. The rest
+/// of the stream is still drained to EOF, into a sink, so the child never
+/// blocks on a full pipe and its exit stays the thing that ends this thread.
+fn read_stderr<R: BufRead>(mut reader: R, buf: &Mutex<String>) -> u64 {
+    let mut kept = Vec::new();
+    let _ = (&mut reader)
+        .take(MAX_STDERR_BYTES as u64)
+        .read_to_end(&mut kept);
+    {
+        let mut guard = buf.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.push_str(&String::from_utf8_lossy(&kept));
     }
+    io::copy(&mut reader, &mut io::sink()).unwrap_or(0)
 }
 
 /// Whether a child's stderr reads as the shell's or `exec(2)`'s own "no such
@@ -978,7 +1118,7 @@ mod tests {
             "C:1".into(),
             TailQueue {
                 replay: Replay { bytes: 7, rows: 3 },
-                lines: VecDeque::new(),
+                ..TailQueue::default()
             },
         );
         assert_eq!(
@@ -1054,12 +1194,165 @@ mod tests {
         );
     }
 
+    /// The line cap alone is a cap on nothing: the agent picks how long a
+    /// line is, so 4096 of them is gigabytes. Both caps, whichever trips.
+    #[test]
+    fn tail_frames_are_bounded_in_bytes_not_just_in_lines() {
+        let mut shared = connected();
+        shared.tails.insert("C:1".into(), TailQueue::default());
+        let big = "x".repeat(MAX_TAIL_LINE_BYTES);
+        for _ in 0..500 {
+            apply_frame(
+                &mut shared,
+                AgentMsg::Tail {
+                    key: "C:1".into(),
+                    lines: vec![StyledLine(vec![Seg::new(Sem::Plain, big.clone())]); 4],
+                },
+                0.0,
+            );
+        }
+        let queue = &shared.tails["C:1"];
+        let held: usize = queue.lines.iter().map(StyledLine::byte_len).sum();
+        assert!(
+            queue.lines.len() < MAX_TAIL_LINES,
+            "the line cap never trips: {} lines",
+            queue.lines.len()
+        );
+        assert!(held <= MAX_TAIL_BYTES, "{held} bytes held");
+        assert_eq!(queue.bytes, held, "the running total tracks the queue");
+    }
+
+    /// One frame's worth of line — a megabyte the frame cap does allow —
+    /// is clipped at ingest, so no single retained line is unbounded.
+    #[test]
+    fn one_enormous_tail_line_is_clipped_at_ingest() {
+        let mut shared = connected();
+        shared.tails.insert("C:1".into(), TailQueue::default());
+        apply_frame(
+            &mut shared,
+            AgentMsg::Tail {
+                key: "C:1".into(),
+                lines: vec![StyledLine(vec![
+                    Seg::new(Sem::Plain, "y".repeat(MAX_FRAME_BYTES / 2)),
+                    Seg::new(Sem::Plain, "z".repeat(MAX_FRAME_BYTES / 2)),
+                ])],
+            },
+            0.0,
+        );
+        let line = &shared.tails["C:1"].lines[0];
+        assert_eq!(line.byte_len(), MAX_TAIL_LINE_BYTES);
+        assert!(
+            line.to_plain().starts_with("yyy"),
+            "the head is what's kept"
+        );
+    }
+
+    /// Sanitizing *grows* hostile text — one ESC byte becomes a three-byte
+    /// U+FFFD — so the cap has to be measured after it, not before.
+    #[test]
+    fn a_line_of_control_bytes_cannot_expand_past_the_clip() {
+        let escapes = "\x1b".repeat(MAX_TAIL_LINE_BYTES);
+        let line = sanitize_line(StyledLine(vec![Seg {
+            sem: Sem::Plain,
+            text: escapes,
+        }]));
+        assert!(line.byte_len() <= MAX_TAIL_LINE_BYTES);
+        assert!(line.to_plain().chars().all(|c| c == '\u{FFFD}'));
+    }
+
+    #[test]
+    fn draining_a_tail_queue_resets_its_byte_total() {
+        let shared = Arc::new(Mutex::new(connected()));
+        lock(&shared)
+            .tails
+            .insert("C:1".into(), TailQueue::default());
+        apply_frame(
+            &mut lock(&shared),
+            AgentMsg::Tail {
+                key: "C:1".into(),
+                lines: vec![StyledLine(vec![Seg::new(Sem::Plain, "hello")])],
+            },
+            0.0,
+        );
+        assert_eq!(lock(&shared).tails["C:1"].bytes, 5);
+
+        let (cmds, _rx) = mpsc::sync_channel(CMD_QUEUE);
+        let mut tailer = RemoteTailer {
+            key: "C:1".into(),
+            shared: Arc::clone(&shared),
+            cmds,
+            down_notified: false,
+        };
+        assert_eq!(tailer.poll().len(), 1);
+        assert_eq!(lock(&shared).tails["C:1"].bytes, 0);
+    }
+
     #[test]
     fn bye_ends_the_connection() {
         let mut shared = connected();
         assert_eq!(
             apply_frame(&mut shared, AgentMsg::Bye { reason: "x".into() }, 0.0),
             Applied::Stop
+        );
+    }
+
+    // ------------------------------------------------------- host commands
+
+    #[test]
+    fn an_agent_spamming_hello_cannot_queue_a_command_per_greeting() {
+        // Every `Hello` asks for one `OpenTail` per open pane. Ten thousand
+        // greetings with three panes open is thirty thousand commands the
+        // host would otherwise queue for a child that need never read one.
+        let shared = Arc::new(Mutex::new(connected()));
+        for key in ["C:1", "C:2", "C:3"] {
+            lock(&shared)
+                .tails
+                .insert(key.to_string(), TailQueue::default());
+        }
+        let (cmds, rx) = mpsc::sync_channel(CMD_QUEUE);
+        let line = crate::remote::proto::encode_agent_msg(&hello(PROTO_VERSION));
+        let stream = format!("{line}\n").repeat(10_000);
+
+        read_frames(Cursor::new(stream.into_bytes()), &shared, &cmds);
+
+        assert_eq!(
+            rx.try_iter().count(),
+            3,
+            "one reopen per open tail, for the whole connection"
+        );
+    }
+
+    /// The command channel is bounded and teardown never waits on the child:
+    /// a transport that never reads its stdin and never exits is exactly what
+    /// a hostile container is, and hermon still has to be able to quit.
+    #[test]
+    fn a_child_that_never_reads_its_stdin_can_neither_grow_nor_wedge_the_host() {
+        let mut transport = Command::new("sh");
+        transport.args(["-c", "exec sleep 30"]);
+        let remote = RemoteSource::new("job1", transport);
+
+        let sent = (0..10_000)
+            .filter(|i| {
+                remote
+                    .cmds
+                    .try_send(HostCmd::OpenTail {
+                        key: format!("C:{i}"),
+                        replay: Replay::default(),
+                    })
+                    .is_ok()
+            })
+            .count();
+        assert!(
+            sent < 10_000,
+            "the queue is bounded: a flood is refused, not buffered ({sent} accepted)"
+        );
+
+        let started = Instant::now();
+        drop(remote);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "Drop joined a thread parked on a write nobody was reading: {:?}",
+            started.elapsed()
         );
     }
 
@@ -1235,6 +1528,47 @@ mod tests {
         ] {
             assert!(looks_like_missing_binary(stderr), "{stderr:?}");
         }
+    }
+
+    #[test]
+    fn a_short_stderr_diagnostic_is_kept_whole() {
+        let buf = Mutex::new(String::new());
+        let dropped = read_stderr(Cursor::new(b"sh: 1: hermon: not found\n".to_vec()), &buf);
+        assert_eq!(dropped, 0);
+        assert_eq!(
+            buf.into_inner().unwrap(),
+            "sh: 1: hermon: not found\n",
+            "the diagnosis this reader exists for still arrives"
+        );
+    }
+
+    /// stderr drains from the moment the child is spawned — ahead of `Hello`
+    /// and every protocol cap — so a child writing to fd 2 with no newline in
+    /// sight (`yes A | tr -d '\n' >&2`) is the earliest unbounded allocation
+    /// a hostile container can reach. The cap has to be on the read itself.
+    #[test]
+    fn stderr_with_no_newline_in_it_is_read_under_the_cap_not_after() {
+        let flood = vec![b'A'; MAX_STDERR_BYTES * 16];
+        let buf = Mutex::new(String::new());
+        let dropped = read_stderr(Cursor::new(flood), &buf);
+        assert_eq!(buf.into_inner().unwrap().len(), MAX_STDERR_BYTES);
+        assert_eq!(dropped, (MAX_STDERR_BYTES * 15) as u64);
+    }
+
+    #[test]
+    fn dropped_stderr_is_counted_for_the_deck() {
+        let mut shared = connected();
+        shared.stderr_dropped = 99;
+        assert!(
+            notices("job1", &shared)
+                .iter()
+                .any(|n| n.contains("dropped 99 stderr byte(s)")),
+            "{:?}",
+            notices("job1", &shared)
+        );
+        // …and a fresh connection starts the count over.
+        apply_frame(&mut shared, hello(PROTO_VERSION), 0.0);
+        assert_eq!(notices("job1", &shared), Vec::<String>::new());
     }
 
     #[test]

@@ -29,6 +29,8 @@
 use std::fmt;
 use std::process::Command;
 
+use crate::remote::source::clean_name;
+
 /// `hermon agent`'s argv0 at the far end of a `docker:`/`ssh:` transport —
 /// found on the remote's `PATH`, never a path the host resolves itself.
 ///
@@ -79,7 +81,8 @@ pub fn parse_spec(spec: &str) -> Result<RemoteSpec, SpecError> {
             let (container, name) = split_name_suffix(rest);
             validate_name(container).map_err(|e| SpecError(format!("--remote {spec:?}: {e}")))?;
             Ok(RemoteSpec {
-                name: name.unwrap_or(container).to_string(),
+                name: display_name(name, container)
+                    .map_err(|e| SpecError(format!("--remote {spec:?}: {e}")))?,
                 kind: Kind::Docker {
                     container: container.to_string(),
                 },
@@ -89,7 +92,8 @@ pub fn parse_spec(spec: &str) -> Result<RemoteSpec, SpecError> {
             let (host, name) = split_name_suffix(rest);
             validate_name(host).map_err(|e| SpecError(format!("--remote {spec:?}: {e}")))?;
             Ok(RemoteSpec {
-                name: name.unwrap_or(host).to_string(),
+                name: display_name(name, host)
+                    .map_err(|e| SpecError(format!("--remote {spec:?}: {e}")))?,
                 kind: Kind::Ssh {
                     host: host.to_string(),
                 },
@@ -103,7 +107,7 @@ pub fn parse_spec(spec: &str) -> Result<RemoteSpec, SpecError> {
                     "--remote {spec:?}: cmd: needs at least one word"
                 )));
             };
-            let name = first.rsplit('/').next().unwrap_or(first).to_string();
+            let name = clean_name(first.rsplit('/').next().unwrap_or(first));
             Ok(RemoteSpec {
                 name,
                 kind: Kind::Cmd { argv },
@@ -133,6 +137,27 @@ pub fn parse_specs(specs: &[String]) -> Result<Vec<RemoteSpec>, SpecError> {
         out.push(parsed);
     }
     Ok(out)
+}
+
+/// The roster prefix a spec ends up with: the `:name` suffix if there is
+/// one, cleaned exactly as [`RemoteSource::new`] would clean it and then
+/// validated, otherwise the container/host itself.
+///
+/// The cleaning is the point. `RemoteSource::new` runs [`clean_name`] over
+/// whatever name it is handed, so a suffix taken verbatim here would leave
+/// `RemoteSpec::name` naming a remote that does not exist — and the
+/// explicit-wins collision check in [`crate::engine`] keys off exactly that
+/// string, so a `dev.hermon.agent.name` label matching the *cleaned* name
+/// would slip past it and spawn a second remote under the user's own prefix.
+///
+/// [`RemoteSource::new`]: crate::remote::source::RemoteSource::new
+fn display_name(suffix: Option<&str>, default: &str) -> Result<String, SpecError> {
+    let Some(raw) = suffix else {
+        return Ok(default.to_string());
+    };
+    let name = clean_name(raw);
+    validate_name(&name)?;
+    Ok(name)
 }
 
 /// Splits `container[:name]` / `host[:name]` on the first colon: everything
@@ -442,17 +467,46 @@ mod tests {
 
     #[test]
     fn a_colon_in_the_ssh_host_position_becomes_a_name_suffix_not_a_second_host() {
-        // The name suffix never reaches argv (only `host` does), so even a
-        // hostile-looking suffix here is inert — it can only ever change
-        // the roster's display prefix.
-        let spec = parse_spec("ssh:buildbox:-oProxyCommand=evil").expect("parses");
-        assert_eq!(spec.name, "-oProxyCommand=evil");
+        // The name suffix never reaches argv (only `host` does): it can only
+        // ever change the roster's display prefix.
+        let spec = parse_spec("ssh:buildbox:ci-1").expect("parses");
+        assert_eq!(spec.name, "ci-1");
         let cmd = to_command(&spec, &[]);
         assert_eq!(
             args_of(&cmd),
             vec!["-o", "BatchMode=yes", "buildbox", "hermon", "agent"],
             "the name suffix never reaches the child's argv"
         );
+    }
+
+    #[test]
+    fn an_option_looking_name_suffix_is_rejected() {
+        // Inert in argv, but it is still the string the explicit-wins
+        // collision check keys on, so it is held to the same charset.
+        let err = parse_spec("ssh:buildbox:-oProxyCommand=evil").unwrap_err();
+        assert!(err.to_string().contains("cannot start with '-'"), "{err}");
+    }
+
+    #[test]
+    fn a_name_suffix_is_the_name_the_remote_will_actually_run_under() {
+        let spec = parse_spec("docker:job1:a/b").expect("parses");
+        assert_eq!(spec.name, "a-b", "cleaned here, not silently at spawn");
+        assert_eq!(
+            clean_name(&spec.name),
+            spec.name,
+            "RemoteSource::new cleans the name it is handed; a spec whose \
+             name survives that is a name some remote actually has"
+        );
+        assert_eq!(
+            args_of(&to_command(&spec, &[])),
+            vec!["exec", "-i", "job1", "hermon", "agent"]
+        );
+    }
+
+    #[test]
+    fn a_name_suffix_with_control_bytes_is_rejected() {
+        let err = parse_spec("docker:job1:a\x1bb").unwrap_err();
+        assert!(err.to_string().contains("disallowed character"), "{err}");
     }
 
     #[test]

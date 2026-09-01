@@ -28,6 +28,26 @@ use crate::ui::palette;
 /// in either.
 pub const SCROLLBACK: usize = 5_000;
 
+/// Transcript *bytes* kept for an open pane, evicted oldest-first alongside
+/// [`SCROLLBACK`] — whichever cap trips first. A line count bounds nothing on
+/// its own: a remote's lines are as long as the remote makes them, so 5000 of
+/// them can be gigabytes. Roughly 800 bytes a line at the line cap, which is
+/// far more than a drawn line ever is.
+pub const SCROLLBACK_BYTES: usize = 4 * 1024 * 1024;
+
+/// Evicts oldest-first until a pane buffer is inside both scrollback caps.
+/// One function for both front ends: the buffer is the same shape and the
+/// input is the same hostile input in either.
+pub fn trim_scrollback(buffer: &mut VecDeque<StyledLine>) {
+    let mut bytes: usize = buffer.iter().map(StyledLine::byte_len).sum();
+    while buffer.len() > SCROLLBACK || bytes > SCROLLBACK_BYTES {
+        let Some(dropped) = buffer.pop_front() else {
+            break;
+        };
+        bytes -= dropped.byte_len();
+    }
+}
+
 /// A session's pane: what to draw and how far back it is scrolled.
 pub struct Pane<'a> {
     pub key: &'a str,
