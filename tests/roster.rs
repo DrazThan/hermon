@@ -190,6 +190,9 @@ impl Fixtures {
             self.claude_dir.to_str().unwrap(),
             self.hermes_db.to_str().unwrap(),
             self.opencode_db.to_str().unwrap(),
+            "/nonexistent/codex",
+            "/nonexistent/grok",
+            "/nonexistent/gemini",
         )
     }
 }
@@ -283,6 +286,9 @@ fn a_tool_call_gone_quiet_needs_attention() {
         dir.path().to_str().unwrap(),
         "/nonexistent/state.db",
         "/nonexistent/opencode.db",
+        "/nonexistent/codex",
+        "/nonexistent/grok",
+        "/nonexistent/gemini",
     );
     let rows = build_roster(&mut sources, NOW, FRESH, IDLE);
     assert_eq!(rows[0].state, Liveness::Attention(Attn::PermWait));
@@ -329,6 +335,9 @@ fn missing_stores_yield_an_empty_roster() {
         "/nonexistent/claude/projects",
         "/nonexistent/state.db",
         "/nonexistent/opencode.db",
+        "/nonexistent/codex",
+        "/nonexistent/grok",
+        "/nonexistent/gemini",
     );
     let rows = build_roster(&mut sources, NOW, FRESH, IDLE);
     assert_eq!(rows, Vec::new());
@@ -378,6 +387,12 @@ fn store_args(fx: &Fixtures, log: &Path) -> Vec<String> {
         fx.claude_dir.display().to_string(),
         "--hermes-db".into(),
         fx.hermes_db.display().to_string(),
+        "--codex-dir".into(),
+        "/nonexistent/x".into(),
+        "--grok-dir".into(),
+        "/nonexistent/g".into(),
+        "--gemini-dir".into(),
+        "/nonexistent/gm".into(),
         "--opencode-db".into(),
         fx.opencode_db.display().to_string(),
         "--hermes-log".into(),
@@ -393,6 +408,12 @@ fn ls_with_no_stores_prints_an_empty_roster() {
             "/nonexistent/projects",
             "--hermes-db",
             "/nonexistent/state.db",
+            "--codex-dir",
+            "/nonexistent/x",
+            "--grok-dir",
+            "/nonexistent/g",
+            "--gemini-dir",
+            "/nonexistent/gm",
             "--opencode-db",
             "/nonexistent/opencode.db",
             "--hermes-log",
@@ -499,4 +520,133 @@ fn render_replay_bytes_zero_skips_all_existing_transcript_content() {
         output.is_err(),
         "--replay-bytes 0 should skip the seeded transcript, got {output:?}"
     );
+}
+
+#[path = "common/new_stores.rs"]
+mod new_stores;
+
+#[test]
+fn six_store_union_preserves_metadata_and_opens_each_new_tailer() {
+    use hermon::source::Replay;
+    let now = wall_clock_now();
+    let old = fixtures_at(now);
+    let new = new_stores::Stores::new();
+    let mut sources = Sources::new(
+        old.claude_dir.to_str().unwrap(),
+        old.hermes_db.to_str().unwrap(),
+        old.opencode_db.to_str().unwrap(),
+        new.roots[0].to_str().unwrap(),
+        new.roots[1].to_str().unwrap(),
+        new.roots[2].to_str().unwrap(),
+    );
+    let output = Proc::new(env!("CARGO_BIN_EXE_hermon"))
+        .args([
+            "ls",
+            "--claude-dir",
+            old.claude_dir.to_str().unwrap(),
+            "--hermes-db",
+            old.hermes_db.to_str().unwrap(),
+            "--opencode-db",
+            old.opencode_db.to_str().unwrap(),
+            "--hermes-log",
+            "/nonexistent/log",
+        ])
+        .args(new.args())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    for prefix in ["X", "G", "Gm"] {
+        assert!(stdout.contains(&format!("{prefix}:123456")));
+    }
+    let rows = build_roster(&mut sources, now, FRESH, IDLE);
+    let prefixes: std::collections::BTreeSet<_> = rows
+        .iter()
+        .map(|r| r.key.split_once(':').unwrap().0)
+        .collect();
+    assert_eq!(
+        prefixes,
+        ["C", "H", "O", "X", "G", "Gm"].into_iter().collect()
+    );
+    assert!(rows.windows(2).all(|rs| rs[0].last_ts >= rs[1].last_ts));
+    let mut tails = Vec::new();
+    for (prefix, title) in [
+        ("X", "Codex title"),
+        ("G", "Grok title"),
+        ("Gm", "Gemini title"),
+    ] {
+        let row = find(&rows, &format!("{prefix}:123456"));
+        assert_eq!(row.id, new_stores::ID);
+        assert_eq!(row.title, title);
+        assert_eq!(row.state, Liveness::Live);
+        assert!(row.last_line.contains(title), "{row:?}");
+        let mut tail = sources
+            .open_tailer(&row.key, &row.id, Replay::DEFAULT)
+            .unwrap();
+        assert!(tail.poll().iter().any(|l| l.to_plain().contains(title)));
+        assert!(tail.poll().is_empty());
+        tails.push(tail);
+    }
+    assert_eq!(find(&rows, "X:123456").model, "codex-model");
+    assert_eq!(find(&rows, "G:123456").model, "grok-model");
+    assert_eq!(
+        (
+            find(&rows, "G:123456").in_tok,
+            find(&rows, "G:123456").out_tok
+        ),
+        (100, 20)
+    );
+    assert_eq!(build_roster(&mut sources, now, FRESH, IDLE), rows);
+    new.update();
+    for (tail, text) in tails
+        .iter_mut()
+        .zip(["unique-codex", "unique-grok", "unique-gemini"])
+    {
+        assert_eq!(
+            tail.poll()
+                .iter()
+                .map(|l| l.to_plain())
+                .collect::<String>()
+                .matches(text)
+                .count(),
+            1
+        );
+        assert!(tail.poll().is_empty());
+    }
+    assert_eq!(
+        find(
+            &build_roster(&mut sources, wall_clock_now(), FRESH, IDLE),
+            "X:123456"
+        )
+        .state,
+        Liveness::Done
+    );
+}
+
+#[test]
+fn unavailable_new_roots_preserve_old_roster_and_are_not_created() {
+    use std::os::unix::fs::PermissionsExt;
+    let old = fixtures_at(wall_clock_now());
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing");
+    let blocked = dir.path().join("unreadable");
+    fs::create_dir(&blocked).unwrap();
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
+    let file = dir.path().join("not-a-directory");
+    fs::write(&file, "unchanged").unwrap();
+    let mut sources = Sources::new(
+        old.claude_dir.to_str().unwrap(),
+        old.hermes_db.to_str().unwrap(),
+        old.opencode_db.to_str().unwrap(),
+        missing.to_str().unwrap(),
+        blocked.to_str().unwrap(),
+        file.to_str().unwrap(),
+    );
+    let now = wall_clock_now();
+    let rows = build_roster(&mut sources, now, FRESH, IDLE);
+    fs::set_permissions(&blocked, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(rows, build_roster(&mut old.sources(), now, FRESH, IDLE));
+    assert!(!missing.exists());
+    assert_eq!(fs::read_to_string(file).unwrap(), "unchanged");
+    assert_eq!(fs::read_dir(blocked).unwrap().count(), 0);
 }

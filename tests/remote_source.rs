@@ -100,7 +100,7 @@ fn agent_transport(claude: &Path, workdir: &Path) -> Proc {
             "#!/bin/sh\n\
              exec 3<&0\n\
              '{bin}' agent --interval 1 --claude-dir '{claude}' \
-             --hermes-db /nonexistent/state.db --opencode-db /nonexistent/opencode.db \
+             --hermes-db /nonexistent/state.db --codex-dir /nonexistent/codex --grok-dir /nonexistent/grok --gemini-dir /nonexistent/gemini --opencode-db /nonexistent/opencode.db \
              --hermes-log /nonexistent/agent.log <&3 &\n\
              echo $! > '{pid}'\n\
              wait $!\n",
@@ -157,6 +157,9 @@ fn local_sources() -> Sources {
         "/nonexistent/claude",
         "/nonexistent/state.db",
         "/nonexistent/opencode.db",
+        "/nonexistent/codex",
+        "/nonexistent/grok",
+        "/nonexistent/gemini",
     )
 }
 

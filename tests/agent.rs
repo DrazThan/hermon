@@ -79,6 +79,14 @@ fn spawn_agent(claude: &TempDir) -> std::process::Child {
         .arg(claude.path())
         .arg("--hermes-db")
         .arg("/nonexistent/state.db")
+        .args([
+            "--codex-dir",
+            "/nonexistent/codex",
+            "--grok-dir",
+            "/nonexistent/grok",
+            "--gemini-dir",
+            "/nonexistent/gemini",
+        ])
         .arg("--opencode-db")
         .arg("/nonexistent/opencode.db")
         .arg("--hermes-log")
@@ -125,7 +133,10 @@ fn agent_streams_hello_snap_tail_and_exits_promptly_on_stdin_eof() {
         .expect("Hello frame");
     match decode_agent_msg(&hello) {
         Decoded::Msg(AgentMsg::Hello { sources, .. }) => {
-            assert_eq!(sources, vec!["claude", "hermes", "opencode"]);
+            assert_eq!(
+                sources,
+                vec!["claude", "hermes", "opencode", "codex", "grok", "gemini"]
+            );
         }
         other => panic!("expected Hello, got {other:?}"),
     }

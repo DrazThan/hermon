@@ -104,6 +104,9 @@ pub fn run() -> anyhow::Result<()> {
                 claude_dir: args.claude_dir,
                 hermes_db: args.hermes_db,
                 opencode_db: args.opencode_db,
+                codex_dir: args.codex_dir,
+                grok_dir: args.grok_dir,
+                gemini_dir: args.gemini_dir,
                 hermes_log: args.hermes_log,
                 idle_timeout: args.idle_timeout,
                 fresh_window: 300.0,
@@ -130,6 +133,9 @@ pub fn run() -> anyhow::Result<()> {
                 claude_dir: args.claude_dir,
                 hermes_db: args.hermes_db,
                 opencode_db: args.opencode_db,
+                codex_dir: args.codex_dir,
+                grok_dir: args.grok_dir,
+                gemini_dir: args.gemini_dir,
                 hermes_log: args.hermes_log,
                 idle_timeout: args.idle_timeout,
                 fresh_window: 300.0,
@@ -180,6 +186,9 @@ pub fn run() -> anyhow::Result<()> {
                 claude_dir: args.source.claude_dir,
                 hermes_db: args.source.hermes_db,
                 opencode_db: args.source.opencode_db,
+                codex_dir: args.source.codex_dir,
+                grok_dir: args.source.grok_dir,
+                gemini_dir: args.source.gemini_dir,
                 hermes_log: args.source.hermes_log,
                 idle_timeout: args.source.idle_timeout,
                 fresh_window: 300.0,
@@ -199,6 +208,9 @@ pub fn run() -> anyhow::Result<()> {
                 claude_dir: args.claude_dir,
                 hermes_db: args.hermes_db,
                 opencode_db: args.opencode_db,
+                codex_dir: args.codex_dir,
+                grok_dir: args.grok_dir,
+                gemini_dir: args.gemini_dir,
                 idle_timeout: args.idle_timeout,
                 // `watch`/`gui`'s fixed 300s (`hermon.py:1463`) — agent mode
                 // has no fresh-window flag of its own, and the host does its
@@ -225,7 +237,14 @@ fn now_secs() -> f64 {
 /// session id; from there the tailer is the whole loop.
 fn render(args: &cli::RenderArgs) -> anyhow::Result<()> {
     let src = &args.source;
-    let mut sources = Sources::new(&src.claude_dir, &src.hermes_db, &src.opencode_db);
+    let mut sources = Sources::new(
+        &src.claude_dir,
+        &src.hermes_db,
+        &src.opencode_db,
+        &src.codex_dir,
+        &src.grok_dir,
+        &src.gemini_dir,
+    );
     let now = now_secs();
 
     let rows = build_roster(&mut sources, now, args.fresh_window, src.idle_timeout);
@@ -251,7 +270,7 @@ fn render(args: &cli::RenderArgs) -> anyhow::Result<()> {
     }
 }
 
-/// Print the roster once. The three on-disk sources never fail: each
+/// Print the roster once. The six on-disk sources never fail: each
 /// degrades to "no sessions" on a missing or unreadable store, so an empty
 /// deck prints an empty roster rather than an error (`hermon.py:1103
 /// cmd_summary`, once). `--remote`/`--remote-flags` are the one part of
@@ -261,7 +280,14 @@ fn ls(args: &LsArgs) -> anyhow::Result<()> {
     let src = &args.source;
     let (remotes, remote_flags) = resolve_remotes(src)?;
     let mut sources = attach_remotes(
-        Sources::new(&src.claude_dir, &src.hermes_db, &src.opencode_db),
+        Sources::new(
+            &src.claude_dir,
+            &src.hermes_db,
+            &src.opencode_db,
+            &src.codex_dir,
+            &src.grok_dir,
+            &src.gemini_dir,
+        ),
         &remotes,
         &remote_flags,
     );

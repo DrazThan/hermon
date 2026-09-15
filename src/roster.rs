@@ -19,6 +19,9 @@ use regex::Regex;
 use crate::remote::source::{Link, RemoteSource};
 use crate::render::{Seg, Sem, StyledLine, clip, fmt_elapsed, sanitize, short_id};
 use crate::source::claude::ClaudeSource;
+use crate::source::codex::CodexSource;
+use crate::source::gemini::GeminiSource;
+use crate::source::grok::GrokSource;
 use crate::source::hermes::HermesSource;
 use crate::source::opencode::OpenCodeSource;
 use crate::source::{Attn, Liveness, Replay, SessionMeta, Source, Tailer, classify};
@@ -30,7 +33,8 @@ pub struct RosterRow {
     /// this so the cursor stays on a session as rows reorder between ticks.
     pub id: String,
     /// Pane/roster label: `C:0f865f` (Claude), `H:b356d8` (Hermes),
-    /// `O:fiiDPP` (OpenCode).
+    /// `O:fiiDPP` (OpenCode), `X:123456` (Codex), `G:123456` (Grok),
+    /// `Gm:123456` (Gemini).
     pub key: String,
     pub state: Liveness,
     pub model: String,
@@ -56,12 +60,15 @@ pub struct RosterRow {
     pub attn_elapsed: Option<f64>,
 }
 
-/// The three on-disk stores hermon reads plus any remote agents, held
+/// The six on-disk stores hermon reads plus any remote agents, held
 /// together so the roster can union them in one pass (`hermon.py:1462
 /// build_sources`).
 pub struct Sources {
     pub claude: ClaudeSource,
     pub hermes: HermesSource,
+    pub codex: CodexSource,
+    pub grok: GrokSource,
+    pub gemini: GeminiSource,
     pub opencode: OpenCodeSource,
     /// Remote agents (#90), each contributing its sessions under a `name/`
     /// key prefix. Empty until a caller adds one with
@@ -71,11 +78,21 @@ pub struct Sources {
 }
 
 impl Sources {
-    pub fn new(claude_dir: &str, hermes_db: &str, opencode_db: &str) -> Self {
+    pub fn new(
+        claude_dir: &str,
+        hermes_db: &str,
+        opencode_db: &str,
+        codex_dir: &str,
+        grok_dir: &str,
+        gemini_dir: &str,
+    ) -> Self {
         Sources {
             claude: ClaudeSource::new(claude_dir),
             hermes: HermesSource::new(hermes_db),
             opencode: OpenCodeSource::new(opencode_db),
+            codex: CodexSource::new(expand_home(codex_dir)),
+            grok: GrokSource::new(expand_home(grok_dir)),
+            gemini: GeminiSource::new(expand_home(gemini_dir)),
             remotes: Vec::new(),
         }
     }
@@ -103,7 +120,7 @@ impl Sources {
     }
 
     /// Opens a tailer for one roster row, picking the source from the key's
-    /// prefix (`C:`/`H:`/`O:`, or `job1/` for a remote — whose own key sits
+    /// prefix (`C:`/`H:`/`O:`/`X:`/`G:`/`Gm:`, or `job1/` for a remote — whose own key sits
     /// behind the slash). Both halves of the row are needed: the key says
     /// which store to ask, and only [`RosterRow::id`] carries the full
     /// session id — the key's is shortened for display.
@@ -127,6 +144,9 @@ impl Sources {
             "C" => self.claude.open_tailer(session_id, replay),
             "H" => self.hermes.open_tailer(session_id, replay),
             "O" => self.opencode.open_tailer(session_id, replay),
+            "X" => self.codex.open_tailer(session_id, replay),
+            "G" => self.grok.open_tailer(session_id, replay),
+            "Gm" => self.gemini.open_tailer(session_id, replay),
             _ => None,
         }
     }
@@ -181,6 +201,18 @@ pub fn build_roster(
         let tool = sources.opencode.last_tool(&s.id);
         rows.extend(roster_row("O", &s, tool, now, fresh_window, idle_timeout));
     }
+    for s in Source::sessions(&mut sources.codex) {
+        let tool = s.last_tool.clone();
+        rows.extend(roster_row("X", &s, tool, now, fresh_window, idle_timeout));
+    }
+    for s in Source::sessions(&mut sources.grok) {
+        let tool = s.last_tool.clone();
+        rows.extend(roster_row("G", &s, tool, now, fresh_window, idle_timeout));
+    }
+    for s in Source::sessions(&mut sources.gemini) {
+        let tool = s.last_tool.clone();
+        rows.extend(roster_row("Gm", &s, tool, now, fresh_window, idle_timeout));
+    }
     for remote in &sources.remotes {
         for note in remote.notices() {
             rows.push(remote_note_row(remote.name(), &note, now));
@@ -214,6 +246,9 @@ fn remote_prefix(name: &str, id: &str) -> String {
         Some("C") => "C",
         Some("H") => "H",
         Some("O") => "O",
+        Some("X") => "X",
+        Some("G") => "G",
+        Some("Gm") => "Gm",
         _ => "?",
     };
     format!("{name}/{letter}")
@@ -254,9 +289,16 @@ fn roster_row(
     if state == Liveness::Done && now - s.last_ts > fresh_window {
         return None;
     }
+    // Remote IDs carry the full source prefix for routing. Only the raw
+    // ID is shortened for display, including when it is under six chars.
+    let display_id = if label_prefix.contains('/') {
+        s.id.split_once(':').map_or(s.id.as_str(), |(_, id)| id)
+    } else {
+        &s.id
+    };
     Some(RosterRow {
         id: s.id.clone(),
-        key: format!("{label_prefix}:{}", short_id(&s.id)),
+        key: format!("{label_prefix}:{}", short_id(display_id)),
         state,
         model: sanitize(&s.model),
         last_tool: sanitize(&last_tool),
@@ -551,6 +593,19 @@ pub(crate) fn fmt_cost(cost: Option<f64>) -> String {
     }
 }
 
+/// Expand only the conventional current-user home prefix, as the older stores do.
+fn expand_home(path: &str) -> std::path::PathBuf {
+    if path == "~" {
+        return dirs::home_dir().unwrap_or_else(|| path.into());
+    }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
+    }
+    path.into()
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -580,11 +635,58 @@ mod tests {
     }
 
     #[test]
+    fn short_remote_ids_keep_source_prefix_out_of_display_id() {
+        let s = SessionMeta {
+            id: "Gm:abc".into(),
+            started_at: NOW,
+            ended: false,
+            model: "unknown".into(),
+            title: "fixture".into(),
+            in_tok: 0,
+            out_tok: 0,
+            cost: None,
+            last_ts: NOW,
+            turn_done: false,
+            tool_pending: false,
+            force_live: false,
+            last_tool: "-".into(),
+            last_line: "hello".into(),
+            last_event: None,
+        };
+        let row = roster_row("job1/Gm", &s, "-".into(), NOW, 300.0, 180.0).unwrap();
+        assert_eq!(row.key, "job1/Gm:abc");
+        assert_eq!(row.id, "Gm:abc");
+    }
+
+    #[test]
+    fn home_roots_expand_without_changing_literal_paths() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(expand_home("~"), home);
+        for store in ["codex", "grok", "gemini"] {
+            assert_eq!(
+                expand_home(&format!("~/{store} home")),
+                home.join(format!("{store} home"))
+            );
+        }
+        assert_eq!(
+            expand_home("/fixture/space home"),
+            std::path::PathBuf::from("/fixture/space home")
+        );
+        assert_eq!(
+            expand_home("relative home"),
+            std::path::PathBuf::from("relative home")
+        );
+    }
+
+    #[test]
     fn remotes_summary_line_is_none_without_remotes() {
         let sources = Sources::new(
             "/nonexistent/claude",
             "/nonexistent/state.db",
             "/nonexistent/opencode.db",
+            "/nonexistent/codex",
+            "/nonexistent/grok",
+            "/nonexistent/gemini",
         );
         assert!(remotes_summary_line(&sources).is_none());
     }
@@ -598,6 +700,9 @@ mod tests {
             "/nonexistent/claude",
             "/nonexistent/state.db",
             "/nonexistent/opencode.db",
+            "/nonexistent/codex",
+            "/nonexistent/grok",
+            "/nonexistent/gemini",
         )
         .with_remote(RemoteSource::new(
             "job1",
@@ -652,6 +757,9 @@ mod tests {
             "/nonexistent/claude",
             "/nonexistent/h.db",
             "/nonexistent/o.db",
+            "/nonexistent/codex",
+            "/nonexistent/grok",
+            "/nonexistent/gemini",
         );
         for key in ["C:aaaaaa", "Z:dddddd", "nocolon"] {
             assert!(sources.open_tailer(key, "id", Replay::DEFAULT).is_none());
@@ -669,6 +777,9 @@ mod tests {
             "/nonexistent/claude",
             "/nonexistent/h.db",
             "/nonexistent/o.db",
+            "/nonexistent/codex",
+            "/nonexistent/grok",
+            "/nonexistent/gemini",
         );
         for key in ["job1/C:aaaaaa", "job1/H:bbbbbb", "/H:bbbbbb"] {
             assert!(sources.open_tailer(key, "C:id", Replay::DEFAULT).is_none());
@@ -676,13 +787,19 @@ mod tests {
     }
 
     /// The source letter in a remote row's key comes from the agent, which
-    /// is hostile ground: anything that isn't one of the three we know
+    /// is hostile ground: anything that isn't one of the six we know
     /// becomes `?`.
     #[test]
-    fn remote_prefix_trusts_only_the_three_known_source_letters() {
+    fn remote_prefix_trusts_only_the_six_known_source_prefixes() {
         assert_eq!(remote_prefix("job1", "C:abc"), "job1/C");
         assert_eq!(remote_prefix("job1", "H:abc"), "job1/H");
         assert_eq!(remote_prefix("job1", "O:abc"), "job1/O");
+        for prefix in ["X", "G", "Gm"] {
+            assert_eq!(
+                remote_prefix("job1", &format!("{prefix}:abc")),
+                format!("job1/{prefix}")
+            );
+        }
         assert_eq!(remote_prefix("job1", "Z:abc"), "job1/?");
         assert_eq!(remote_prefix("job1", "../../etc:abc"), "job1/?");
         assert_eq!(remote_prefix("job1", "no-colon"), "job1/?");

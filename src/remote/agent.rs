@@ -1,6 +1,6 @@
 //! `hermon agent`: the in-container half of the remote wire protocol.
 //!
-//! Deliberately dumb (#89): read the same three stores `watch`/`ls` read —
+//! Deliberately dumb (#89): read the same six stores `watch`/`ls` read —
 //! inside a container they're local files again, `lsof` liveness included
 //! — and print [`AgentMsg`] frames on stdout instead of drawing a UI. No
 //! notifications, no TUI, no roster classification (that's the host's job);
@@ -40,6 +40,9 @@ pub struct AgentConfig {
     pub claude_dir: String,
     pub hermes_db: String,
     pub opencode_db: String,
+    pub codex_dir: String,
+    pub grok_dir: String,
+    pub gemini_dir: String,
     pub idle_timeout: f64,
     pub fresh_window: f64,
     pub interval: Duration,
@@ -68,11 +71,25 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
         AgentMsg::Hello {
             proto_version: PROTO_VERSION,
             hostname: hostname(),
-            sources: vec!["claude".into(), "hermes".into(), "opencode".into()],
+            sources: vec![
+                "claude".into(),
+                "hermes".into(),
+                "opencode".into(),
+                "codex".into(),
+                "grok".into(),
+                "gemini".into(),
+            ],
         },
     );
 
-    let mut sources = Sources::new(&config.claude_dir, &config.hermes_db, &config.opencode_db);
+    let mut sources = Sources::new(
+        &config.claude_dir,
+        &config.hermes_db,
+        &config.opencode_db,
+        &config.codex_dir,
+        &config.grok_dir,
+        &config.gemini_dir,
+    );
     let mut tails: HashMap<String, Box<dyn Tailer>> = HashMap::new();
 
     let mut next_snap = Instant::now();
@@ -117,7 +134,7 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Every session across all three sources, each tagged with its source
+/// Every session across all six sources, each tagged with its source
 /// prefix so a later `HostCmd::OpenTail` can name it back. The wire
 /// `SessionMeta` (unlike `roster::RosterRow`) carries no separate key
 /// field, so the prefix `Sources::open_tailer` dispatches on rides in `id`
@@ -137,6 +154,15 @@ fn snapshot(sources: &mut Sources, now: f64, config: &AgentConfig) -> Vec<Sessio
     }
     for s in sources.opencode.sessions(now - config.fresh_window) {
         out.push(keyed("O", s));
+    }
+    for s in Source::sessions(&mut sources.codex) {
+        out.push(keyed("X", s));
+    }
+    for s in Source::sessions(&mut sources.grok) {
+        out.push(keyed("G", s));
+    }
+    for s in Source::sessions(&mut sources.gemini) {
+        out.push(keyed("Gm", s));
     }
     out
 }

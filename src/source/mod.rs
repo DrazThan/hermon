@@ -50,7 +50,7 @@ pub struct SessionMeta {
     pub force_live: bool,
     pub last_tool: String,
     pub last_line: String,
-    /// Claude, Codex, and Grok fill this; DB sources leave `None`.
+    /// Claude, Codex, Grok, and Gemini fill this; DB sources leave `None`.
     pub last_event: Option<LastEvent>,
 }
 
@@ -72,7 +72,7 @@ pub enum Attn {
 }
 
 /// A source of sessions from one tool's on-disk store (Hermes, OpenCode,
-/// Claude Code, Gemini CLI). Kept minimal — just what the roster needs —
+/// Claude Code, Codex, Grok Build, Gemini CLI). Kept minimal — just what the roster needs —
 /// since each backing store implements it differently.
 pub trait Source {
     /// Current sessions from this source; empty on any read error.

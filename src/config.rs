@@ -14,6 +14,9 @@ pub struct EngineConfig {
     pub claude_dir: String,
     pub hermes_db: String,
     pub opencode_db: String,
+    pub codex_dir: String,
+    pub grok_dir: String,
+    pub gemini_dir: String,
     /// Hermes `agent.log`, scanned each tick for the API-call ticker.
     pub hermes_log: String,
     /// Safety ceiling for a session stuck mid-turn with no activity.

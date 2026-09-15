@@ -4,7 +4,7 @@
 
 # hermon
 
-**Live monitor deck for Hermes, Claude Code, and OpenCode agent sessions.**
+**Live monitor deck for Claude Code, Hermes, OpenCode, Codex, Grok Build, and Gemini CLI sessions.**
 *Hermes + monitor — and the mountain.*
 
 </div>
@@ -12,8 +12,8 @@
 A terminal UI for devs working with [Hermes](https://github.com/NousResearch/hermes-agent):
 one window you drag onto a spare monitor, where every agent session running
 on your machine — Hermes TUI/CLI/gateway sessions, sub-agents, small one-shot
-calls, `claude -p` invocations, `opencode run` invocations, calls to any
-provider — shows up live, with its own tail pane.
+calls, `claude -p` invocations, `opencode run`, Codex interactive/exec,
+Grok Build and Gemini CLI sessions, calls to any provider — shows up live, with its own tail pane.
 
 hermon is read-only and needs zero changes to Hermes or your orchestration:
 it watches the on-disk stores those tools already write to, so nothing has to
@@ -45,19 +45,55 @@ the stores of tools Hermes shells out to, not just Hermes itself:
 | Claude Code | `C:` | `~/.claude/projects/**/*.jsonl` | every Claude Code session: interactive or `claude -p`, including ones Hermes spawns as subprocesses |
 | Hermes | `H:` | `~/.hermes/state.db` (`sessions` + `messages`, WAL SQLite) | every Hermes session: TUI, CLI, gateway, sub-agents — any provider. Model, tool calls, tokens, cost, live-written mid-session |
 | OpenCode | `O:` | `~/.local/share/opencode/opencode.db` (`session`/`message`/`part`, WAL SQLite) | every OpenCode CLI session: `opencode run` or interactive, including ones Hermes spawns as subprocesses |
+| Codex | `X:` | `~/.codex/sessions/**/*.jsonl` | interactive and exec rollouts, persisted turn state and live transcript text |
+| Grok Build | `G:` | `~/.grok/sessions/<encoded-cwd>/<uuid>/` | `summary.json`, `usage.json`, `chat_history.jsonl` |
+| Gemini CLI | `Gm:` | `~/.gemini/tmp/<project>/chats/session-*.jsonl` | exploratory patch-aware chat state, `.project_root`, optional project `logs.json` fallback |
 | API ticker | — | `~/.hermes/logs/agent.log` | per-API-call ticker in the roster (model, provider, tokens, latency) — catches small/auxiliary calls too |
 
 Each store path is overridable per subcommand: `--claude-dir`, `--hermes-db`,
-`--opencode-db`, `--hermes-log`. Both SQLite stores are opened read-only
+`--opencode-db`, `--hermes-log`, `--codex-dir`, `--grok-dir`, `--gemini-dir`.
+The new directory flags name tool **HOME roots**: the source appends `sessions/`
+(Codex/Grok) or `tmp/` (Gemini). `--claude-dir` instead names `projects/`
+itself. Explicit flags win; defaults use the invoking machine/user's home.
+Quoted `~/` paths expand to that home too. There is no additional environment
+or configuration inference. Missing/unreadable stores contribute no sessions;
+hermon does not create, write, or lock vendor stores. No vendor executable,
+credentials, subscription, or running session process is required.
+
+```bash
+hermon ls --codex-dir "/work/codex home" --grok-dir /work/grok --gemini-dir /work/gemini
+# Use the exact keys printed by ls, with the same roots:
+hermon render X:123456 --codex-dir "/work/codex home"
+hermon render G:abcdef --grok-dir /work/grok
+hermon render Gm:654321 --gemini-dir /work/gemini
+```
+
+Both SQLite stores are opened read-only
 (`file:…?mode=ro`), safe alongside the real tool running (WAL).
 
 ## Remote agents (containers, hosts)
 
 `hermon watch`/`gui`/`menubar` can also follow sessions running inside a
 container or on another host over `hermon agent`, a small stdio-piped mode
-that streams the same three sources' sessions out. Each remote's sessions
+that streams the same six sources' sessions out. Each remote's sessions
 show up under a `name/` roster prefix (`job1/C:0f865f`), tailed live like
 any local session.
+
+Local root overrides never become remote paths automatically. Remotes use
+their own user/home defaults unless supplied through `--remote-flags`.
+Quoted paths in that string remain literal argv entries, including spaces:
+
+```bash
+hermon watch --remote docker:job1 --remote ssh:buildbox --remote-flags "--codex-dir '/data/codex home' --grok-dir /data/grok --gemini-dir /data/gemini"
+hermon watch --docker-auto --remote-flags "--codex-dir '/data/codex home' --grok-dir /data/grok --gemini-dir /data/gemini"
+hermon watch --remote "cmd:podman exec -i job1 hermon agent --codex-dir '/data/codex home' --grok-dir /data/grok --gemini-dir /data/gemini"
+```
+
+`cmd:` supplies complete argv and intentionally ignores `--remote-flags`.
+Auto-discovery forwards the same parsed flags on initial discovery and
+re-addition. It uses the generic agent command: no source labels, filesystem
+probes, automatic mounts, or agent installation. A Gemini remote row looks
+like `job1/Gm:654321`; full source-qualified IDs remain in tail routing.
 
 ### Architecture
 
@@ -66,11 +102,12 @@ host: hermon watch/gui/menubar                remote: container or ssh host
   RemoteSource (one per --remote)
     spawns the transport child ──────▶  docker exec -i / ssh / plain argv
     writes HostCmd frames (stdin) ───▶  hermon agent
-      OpenTail / CloseTail / Shutdown       reads the same three on-disk
-    reads AgentMsg frames (stdout) ◀──      stores (Claude/Hermes/OpenCode)
+      OpenTail / CloseTail / Shutdown       reads the same six on-disk
+    reads AgentMsg frames (stdout) ◀──      stores (Claude/Hermes/OpenCode/
+                                           Codex/Grok/Gemini)
       Hello / Snap / Tail / Bye             locally, tails them like `ls`
     demuxes, sanitizes, caps sizes
-    shows up as a fourth Source,
+    joins the six local sources,
     `name/`-prefixed roster keys
 ```
 
@@ -85,7 +122,7 @@ Two ways to attach one:
   `ssh:` uses key-based auth only (`BatchMode=yes`, no password fallback).
   `--remote cmd:<argv…>` is an escape hatch for podman, `kubectl exec`, or
   anything else. `--remote-flags "..."` forwards extra flags (e.g.
-  `--claude-dir /work/.claude`) to every remote's own `hermon agent`
+  `--claude-dir /work/.claude/projects`) to every remote's own `hermon agent`
   invocation. This is the **paranoid mode**: nothing is followed that you
   didn't name yourself.
 - **`--docker-auto`** — follow every currently-running container labeled
@@ -162,6 +199,10 @@ image (or on the remote host) with one that speaks a compatible protocol
 does. In practice, keep the musl binary you `ADD`/`COPY` into images pinned
 to the same release tag as the host `hermon`, rather than tracking
 `latest` on one side only.
+
+An older agent can share the same protocol version yet lack the new sources
+or reject their root flags. Use matched releases containing all six source
+implementations on both sides.
 
 ### Clock skew
 
@@ -255,7 +296,7 @@ hermon render C:0f865f   # key from `hermon ls`
 ```
 
 `hermon watch` is the whole app: a ratatui screen with a roster and live tail
-panes, redrawn from an engine thread polling all three stores. There's no
+panes, redrawn from an engine thread polling all six stores. There's no
 tmux involved — that was the mechanism of the original Python implementation
 this replaces; see
 [Predecessor](packaging/RELEASE_NOTES.md#7-predecessor-the-python-implementation).
@@ -392,14 +433,24 @@ change and appends `◀ result`/`◀ ERROR` — both lines appear together if th
 tool finished between two polls. `text`/`reasoning`/`file`/`patch`/`step-*`
 parts render once, on first sight.
 
-None of the three schemas (Claude transcript, Hermes DB, OpenCode DB) is a
-stable public API, so all three parsers are defensive: malformed rows become
-a dim `· parse-skip` marker, unknown shapes a `· <type>` line — never a
-crash, never a raw JSON dump.
+Vendor storage schemas are not stable public APIs. Parsers defensively skip
+or annotate unsupported records; coverage depends on verified fixtures.
+
+- **Codex v1:** persisted model metadata is best-effort; runtime choices may
+  not be saved. Supported turn events drive completion, with no cost estimate.
+- **Grok Build v1:** completion is not verified, so quiet sessions age out by
+  timeout. `costUsdTicks` units are unverified and are not reported as dollars.
+- **Gemini CLI v1 (exploratory):** supported patches reconstruct chat state;
+  project logs are a fallback, not a second copy of a chat. No verified tool
+  calls or explicit completion signal; liveness falls back to timeout. Model
+  is `unknown`, tokens are `0`, and cost is unavailable in v1.
+
+Tool, completion and cost coverage varies across the six sources; an absent
+value does not establish that no work or spend occurred.
 
 A freshly opened pane seeds its scrollback from `--replay-bytes` (file-backed
-sources — Claude transcripts) or `--replay-lines` (DB-backed sources —
-Hermes, OpenCode); the other budget is ignored by whichever kind of store
+sources — Claude, Codex, Grok and Gemini transcripts) or `--replay-lines`
+(DB-backed sources — Hermes, OpenCode); the other budget is ignored by whichever kind of store
 backs that pane.
 
 ## Liveness & attention
@@ -487,7 +538,7 @@ this build, or `hermon --version` for the build version.
 
 ## Adding another source
 
-Hermes shells out to more than these three tools, and each one tends to keep
+Hermes can shell out to additional tools, and each one tends to keep
 its own session store the same way Claude Code and OpenCode do — hermon
 watches that store directly rather than going through Hermes. Two traits in
 [`src/source/mod.rs`](src/source/mod.rs) are the whole contract:
@@ -519,8 +570,8 @@ Adding a tool is:
    against).
 3. Add a field to `Sources` and a match arm in its `open_tailer`
    (`src/roster.rs`), and a loop over the new source in `build_roster` —
-   that's the entire touch-point list now, versus the Python predecessor's
-   five.
+   then wire root flags/config into every consumer, agent snapshot tagging
+   and the host remote-prefix allowlist. Keep full IDs in tail routing.
 
 If the tool has no turn-completion signal at all, it still works via the
 flat `now - last_ts <= idle_timeout` fallback (like Claude transcripts) —

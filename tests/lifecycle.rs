@@ -32,6 +32,9 @@ fn config(linger: f64, max_panes: usize) -> EngineConfig {
         claude_dir: "/nonexistent/claude/projects".to_string(),
         hermes_db: "/nonexistent/state.db".to_string(),
         opencode_db: "/nonexistent/opencode.db".to_string(),
+        codex_dir: "/nonexistent/codex".into(),
+        grok_dir: "/nonexistent/grok".into(),
+        gemini_dir: "/nonexistent/gemini".into(),
         hermes_log: "/nonexistent/agent.log".to_string(),
         idle_timeout: 180.0,
         // Wide enough that the roster's own fresh-window row-dropping never

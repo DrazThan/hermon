@@ -187,7 +187,7 @@ struct Shared {
     missing_binary_hits: u64,
 }
 
-/// A remote agent as the fourth [`Source`]. Constructing one starts the
+/// A remote agent as an additional [`Source`]. Constructing one starts the
 /// transport immediately and keeps it running — sessions appear once the
 /// agent's first `Snap` lands, and survive its restarts.
 pub struct RemoteSource {

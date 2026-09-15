@@ -286,7 +286,14 @@ impl Engine {
     /// to wait for it to exit.
     pub fn spawn(config: EngineConfig, tx: Sender<Event>, rx: Receiver<UiCmd>) -> JoinHandle<()> {
         thread::spawn(move || {
-            let mut deck = Sources::new(&config.claude_dir, &config.hermes_db, &config.opencode_db);
+            let mut deck = Sources::new(
+                &config.claude_dir,
+                &config.hermes_db,
+                &config.opencode_db,
+                &config.codex_dir,
+                &config.grok_dir,
+                &config.gemini_dir,
+            );
             for spec in &config.remotes {
                 let cmd = to_command(spec, &config.remote_flags);
                 deck = deck.with_remote(RemoteSource::new(spec.name.clone(), cmd));

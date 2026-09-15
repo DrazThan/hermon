@@ -293,7 +293,10 @@ pub fn to_command(spec: &RemoteSpec, agent_flags: &[String]) -> Command {
         Kind::Ssh { host } => {
             let mut cmd = Command::new("ssh");
             cmd.args(["-o", "BatchMode=yes", host, AGENT_BIN, "agent"]);
-            cmd.args(agent_flags);
+            // Unlike docker exec, SSH joins these arguments into command
+            // text interpreted by the remote shell. Preserve literal paths
+            // (and operator-supplied metacharacters) through that extra hop.
+            cmd.args(agent_flags.iter().map(|arg| shell_quote(arg)));
             cmd
         }
         Kind::Cmd { argv } => {
@@ -302,6 +305,10 @@ pub fn to_command(spec: &RemoteSpec, agent_flags: &[String]) -> Command {
             cmd
         }
     }
+}
+
+fn shell_quote(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', "'\"'\"'"))
 }
 
 #[cfg(test)]
@@ -315,6 +322,93 @@ mod tests {
     }
 
     // ------------------------------------------------------------- docker
+
+    #[test]
+    fn ssh_shell_preserves_hostile_arguments_without_evaluation() {
+        let flags: Vec<String> = [
+            "--codex-dir",
+            "/root/space and 'quote'",
+            "--grok-dir",
+            "$(printf injected); `printf bad`",
+            "--gemini-dir",
+            "/root/$HOME\n*?\\",
+            "",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        let cmd = to_command(&parse_spec("ssh:host").unwrap(), &flags);
+        let args = args_of(&cmd);
+        let script = format!("printf '%s\\0' {}", args[5..].join(" "));
+        let output = Command::new("sh").args(["-c", &script]).output().unwrap();
+        assert!(output.status.success());
+        let expected = flags
+            .iter()
+            .flat_map(|s| s.bytes().chain([0]))
+            .collect::<Vec<_>>();
+        assert_eq!(output.stdout, expected);
+    }
+
+    #[test]
+    fn new_root_flags_are_literal_argv_for_every_transport() {
+        let flags = split_argv("--codex-dir '/remote/codex home' --grok-dir '/remote/grok home' --gemini-dir '/remote/gemini home'").unwrap();
+        assert_eq!(flags.len(), 6);
+        let docker = to_command(&parse_spec("docker:job1").unwrap(), &flags);
+        assert_eq!(&args_of(&docker)[5..], flags);
+        let ssh = to_command(&parse_spec("ssh:host").unwrap(), &flags);
+        // SSH concatenates command arguments for a remote shell: quoting must
+        // round-trip each path as one argument.
+        let ssh_args = args_of(&ssh);
+        assert_eq!(split_argv(&ssh_args[5..].join(" ")).unwrap(), flags);
+        let spec = parse_spec("cmd:podman exec -i job1 hermon agent --codex-dir '/explicit/codex home' --grok-dir /explicit/grok --gemini-dir /explicit/gemini").unwrap();
+        let cmd = to_command(&spec, &flags);
+        assert_eq!(
+            args_of(&cmd),
+            vec![
+                "exec",
+                "-i",
+                "job1",
+                "hermon",
+                "agent",
+                "--codex-dir",
+                "/explicit/codex home",
+                "--grok-dir",
+                "/explicit/grok",
+                "--gemini-dir",
+                "/explicit/gemini"
+            ]
+        );
+    }
+
+    #[test]
+    fn discovered_and_readded_containers_keep_all_root_flags() {
+        use crate::remote::discover::{parse_ps, reconcile};
+        let containers = parse_ps(
+            r#"{"ID":"abc","Names":"job1","Labels":"dev.hermon.agent=1","CreatedAt":"2026-09-15 10:00:00 +0000 UTC"}"#,
+        );
+        let flags = split_argv(
+            "--codex-dir '/remote/codex home' --grok-dir /remote/grok --gemini-dir /remote/gemini",
+        )
+        .unwrap();
+        let explicit = Default::default();
+        let (initial, managed) = reconcile(&containers, &explicit, &Default::default());
+        let (removed, managed) = reconcile(&[], &explicit, &managed);
+        assert_eq!(removed.remove, vec!["job1"]);
+        let (readded, _) = reconcile(&containers, &explicit, &managed);
+        for sync in [initial, readded] {
+            assert_eq!(sync.spawn.len(), 1);
+            let d = &sync.spawn[0];
+            let cmd = to_command(&docker_spec(d.container.clone(), d.name.clone()), &flags);
+            assert_eq!(&args_of(&cmd)[5..], flags);
+        }
+        let (collision, _) = reconcile(
+            &containers,
+            &["job1".to_string()].into_iter().collect(),
+            &Default::default(),
+        );
+        assert!(collision.spawn.is_empty());
+        assert!(!collision.warnings.is_empty());
+    }
 
     #[test]
     fn docker_spec_builds_docker_exec_argv() {

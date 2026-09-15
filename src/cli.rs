@@ -7,7 +7,7 @@ use crate::arbitration::NotifyFlag;
 use crate::notify::NotifyCfg;
 use crate::source::Replay;
 
-/// Live terminal monitor deck for Hermes, Claude Code, and OpenCode sessions.
+/// Live terminal monitor deck for Claude Code, Hermes, OpenCode, Codex, Grok Build, and Gemini CLI sessions.
 #[derive(Debug, Parser)]
 #[command(name = "hermon", version, about)]
 pub struct Cli {
@@ -96,6 +96,18 @@ pub struct SourceArgs {
     #[arg(long, default_value_t = default_opencode_db())]
     pub opencode_db: String,
 
+    /// Codex tool HOME root (appends sessions/); explicit flag wins over this machine's home default.
+    #[arg(long, default_value_t = default_codex_dir())]
+    pub codex_dir: String,
+
+    /// Grok Build tool HOME root (appends sessions/); explicit flag wins over this machine's home default.
+    #[arg(long, default_value_t = default_grok_dir())]
+    pub grok_dir: String,
+
+    /// Gemini CLI tool HOME root (appends tmp/); explicit flag wins over this machine's home default.
+    #[arg(long, default_value_t = default_gemini_dir())]
+    pub gemini_dir: String,
+
     /// Hermes agent.log (roster API-call ticker).
     #[arg(long, default_value_t = default_hermes_log())]
     pub hermes_log: String,
@@ -155,7 +167,7 @@ pub struct SourceArgs {
     #[arg(long, default_value_t = Replay::DEFAULT.rows)]
     pub replay_lines: u32,
 
-    /// Attach a remote agent as a fourth source (#91), repeatable:
+    /// Attach a remote agent alongside local sources (#91), repeatable:
     /// `docker:<container>[:name]` runs `docker exec -i <container> hermon
     /// agent`; `ssh:<host>[:name]` runs `ssh -o BatchMode=yes <host> hermon
     /// agent` (key-based auth only — `BatchMode` never falls back to a
@@ -170,7 +182,7 @@ pub struct SourceArgs {
 
     /// Extra flags appended to every `--remote docker:`/`ssh:` agent's own
     /// `hermon agent` invocation, e.g. `--remote-flags "--claude-dir
-    /// /work/.claude"` when a remote's stores live somewhere other than the
+    /// /work/.claude/projects"` when a remote's stores live somewhere other than the
     /// image's defaults. Split the same shell-words-like way `cmd:` argv is
     /// (never a shell) and shared by every `--remote` on this invocation
     /// rather than set per remote — the simpler of the two syntaxes this
@@ -260,4 +272,91 @@ fn default_opencode_db() -> String {
         .join("opencode.db")
         .display()
         .to_string()
+}
+
+fn default_codex_dir() -> String {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".codex")
+        .display()
+        .to_string()
+}
+
+fn default_grok_dir() -> String {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".grok")
+        .display()
+        .to_string()
+}
+
+fn default_gemini_dir() -> String {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".gemini")
+        .display()
+        .to_string()
+}
+
+#[cfg(test)]
+mod source_root_tests {
+    use super::*;
+    fn source(cmd: Command) -> SourceArgs {
+        match cmd {
+            Command::Watch(s) | Command::Gui(s) | Command::Agent(s) => s,
+            Command::Ls(s) => s.source,
+            Command::Render(s) => s.source,
+            Command::Menubar(s) => s.source,
+        }
+    }
+    #[test]
+    fn all_entry_points_default_and_override_all_home_roots() {
+        for command in ["watch", "gui", "ls", "render", "menubar", "agent"] {
+            let mut argv = vec!["hermon", command];
+            if command == "render" {
+                argv.push("Gm:123456");
+            }
+            let defaults = source(Cli::try_parse_from(&argv).unwrap().cmd);
+            assert_eq!(
+                defaults.codex_dir,
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".codex")
+                    .display()
+                    .to_string()
+            );
+            assert_eq!(
+                defaults.grok_dir,
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".grok")
+                    .display()
+                    .to_string()
+            );
+            assert_eq!(
+                defaults.gemini_dir,
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".gemini")
+                    .display()
+                    .to_string()
+            );
+            argv.extend([
+                "--codex-dir",
+                "/local/codex home",
+                "--grok-dir",
+                "/local/grok home",
+                "--gemini-dir",
+                "~/gemini home",
+            ]);
+            let custom = source(Cli::try_parse_from(argv).unwrap().cmd);
+            assert_eq!(custom.codex_dir, "/local/codex home");
+            assert_eq!(custom.grok_dir, "/local/grok home");
+            assert_eq!(custom.gemini_dir, "~/gemini home");
+            assert!(
+                custom.remote_flags.is_empty(),
+                "local roots must not leak remotely"
+            );
+        }
+    }
 }
