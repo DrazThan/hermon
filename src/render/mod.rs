@@ -15,6 +15,7 @@
 //! This applies uniformly to all sources (local and future remote agents).
 
 pub mod claude;
+pub mod gemini;
 pub mod hermes;
 pub mod opencode;
 

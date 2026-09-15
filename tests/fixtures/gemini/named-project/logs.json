@@ -1,0 +1,5 @@
+[
+  {"sessionId":"aaaaaaaa-1111-4000-8000-aaaaaaaaaaaa","messageId":"user1","type":"user","message":"should not replace transcript","timestamp":"2026-09-15T18:00:02.000Z"},
+  {"sessionId":"aaaaaaaa-1111-4000-8000-aaaaaaaaaaaa","messageId":"log-only","type":"model","message":"fallback model text","timestamp":"2026-09-15T18:00:03.000Z"},
+  {"sessionId":"unrelated-session-id-000000000000","messageId":"99","type":"user","message":"other session","timestamp":"2026-09-15T18:59:00.000Z"}
+]

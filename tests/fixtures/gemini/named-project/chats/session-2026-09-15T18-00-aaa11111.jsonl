@@ -1,0 +1,4 @@
+{"sessionId":"aaaaaaaa-1111-4000-8000-aaaaaaaaaaaa","projectHash":"abc123","startTime":"2026-09-15T18:00:00.000Z","lastUpdated":"2026-09-15T18:00:00.000Z","kind":"main"}
+{"$set":{"messages":[{"id":"ctx1","timestamp":"2026-09-15T18:00:00.001Z","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\n</session_context>"}]}],"lastUpdated":"2026-09-15T18:00:00.001Z"}}
+{"id":"user1","timestamp":"2026-09-15T18:00:01.000Z","type":"user","content":[{"text":"list the files"}]}
+{"$set":{"lastUpdated":"2026-09-15T18:00:01.000Z"}}
