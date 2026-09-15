@@ -1,0 +1,8 @@
+{"timestamp":"2026-09-15T10:00:00Z","type":"session_meta","payload":{"id":"session-b","cwd":"/work/example","source":"exec"}}
+{"timestamp":"2026-09-15T10:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-b"}}
+{"timestamp":"2026-09-15T10:00:02Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"user-b","content":[{"type":"input_text","text":"Repeat a word"}]}}}
+{"timestamp":"2026-09-15T10:00:03Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"command-b","command":"echo example","aggregated_output":"example","exit_code":0}}}
+{"timestamp":"2026-09-15T10:00:04Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"answer-b","text":"example"}}}
+{"timestamp":"2026-09-15T10:00:04Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"answer-b","text":"example"}}}
+{"timestamp":"2026-09-15T10:00:05Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"Extension","text":"not a message"}}}
+{"timestamp":"2026-09-15T10:00:06Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-b","last_agent_message":"example"}}
