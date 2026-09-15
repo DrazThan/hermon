@@ -280,7 +280,7 @@ From a checkout instead:
 cargo install --path .
 ```
 
-Either way `hermon --version` should print `hermon 0.1.0`.
+Either way `hermon --version` should print the current release, e.g. `hermon 0.3.0`.
 
 ## Quickstart
 
@@ -293,6 +293,11 @@ hermon ls
 
 # tail one session's transcript to stdout until Ctrl-C
 hermon render C:0f865f   # key from `hermon ls`
+
+# follow agent sessions running inside a container (see Remote agents)
+hermon watch --remote docker:mycontainer
+# …or auto-follow every container labeled dev.hermon.agent
+hermon watch --docker-auto
 ```
 
 `hermon watch` is the whole app: a ratatui screen with a roster and live tail
@@ -502,11 +507,17 @@ transcript (`⏸ waiting on permission prompt · <elapsed>` /
 ## CLI reference
 
 ```
-hermon watch  [--claude-dir DIR] [--hermes-db PATH] [--opencode-db PATH]
-              [--hermes-log PATH] [--idle-timeout SEC] [--interval SEC]
-              [--max-panes N] [--linger SEC] [--replay-bytes N] [--replay-lines N]
-hermon ls     [...same source flags as watch...] [--fresh-window SEC]
+hermon watch    [--claude-dir DIR] [--hermes-db PATH] [--opencode-db PATH]
+                [--hermes-log PATH] [--idle-timeout SEC] [--interval SEC]
+                [--max-panes N] [--linger SEC] [--replay-bytes N] [--replay-lines N]
+                [--remote SPEC]… [--remote-flags FLAGS] [--docker-auto]
+hermon gui      [...same flags as watch...]
+hermon menubar  [...same flags as watch...] [--install-login-item] [--uninstall-login-item]
+hermon ls       [...same source flags as watch...] [--fresh-window SEC]
 hermon render KEY [...same source flags as watch...] [--fresh-window SEC]
+hermon agent    [...same source flags as watch...]
+                the in-container half of the remote wire protocol: stream session
+                frames over stdio for a host `hermon watch`/`gui`/`menubar` to consume
 ```
 
 Defaults make `hermon watch` correct with zero flags.
