@@ -1,7 +1,8 @@
 //! Session source abstractions: reading live session state from Claude Code,
-//! Hermes, and OpenCode's on-disk stores.
+//! Hermes, OpenCode, and Gemini CLI's on-disk stores.
 
 pub mod claude;
+pub mod gemini;
 pub mod hermes;
 pub mod opencode;
 
@@ -9,9 +10,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::render::StyledLine;
 
-/// The last event observed in a session's transcript. Only the Claude
-/// source can populate this; DB-backed sources (Hermes, OpenCode) leave
-/// `SessionMeta::last_event` as `None`.
+/// The last event observed in a session's transcript. Claude and Gemini
+/// populate this from supported conversational roles; DB-backed sources
+/// (Hermes, OpenCode) leave `SessionMeta::last_event` as `None`. Gemini v1
+/// only emits [`LastEvent::User`] / [`LastEvent::AssistantText`] — it has
+/// no verified tool-call fixture.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LastEvent {
     /// A tool call with no result yet; carries the tool name.
@@ -67,8 +70,8 @@ pub enum Attn {
 }
 
 /// A source of sessions from one tool's on-disk store (Hermes, OpenCode,
-/// Claude Code). Kept minimal — just what the roster needs — since each
-/// backing store implements it differently.
+/// Claude Code, Gemini CLI). Kept minimal — just what the roster needs —
+/// since each backing store implements it differently.
 pub trait Source {
     /// Current sessions from this source; empty on any read error.
     fn sessions(&mut self) -> Vec<SessionMeta>;
