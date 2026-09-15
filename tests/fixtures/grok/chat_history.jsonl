@@ -1,0 +1,5 @@
+{"type":"system","content":"Sanitized system text"}
+{"type":"user","content":"Build a demo"}
+{"type":"assistant","model_id":"grok-4.6-build","content":"Checking files","tool_calls":[{"id":"call-a","name":"read_file","arguments":{"path":"example.txt"}},{"id":"call-b","name":"list_files","arguments":"{}"}]}
+{"type":"tool_result","tool_call_id":"call-a","content":"Example content"}
+{"type":"reasoning","encrypted_content":"DO-NOT-RENDER"}

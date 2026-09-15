@@ -1,0 +1,1 @@
+{"sessionId":"nested-session","updatedAt":"2026-09-15T10:01:00Z","session":{"inputTokens":100,"outputTokens":30,"cachedReadTokens":20,"cacheCreationTokens":10,"reasoningTokens":5,"totalTokens":130,"modelCalls":2,"costUsdTicks":99999,"turnCount":1,"primaryModelId":"grok-4.6-build","modelUsage":{}},"turns":[{"inputTokens":100,"outputTokens":30}]}

@@ -2,6 +2,7 @@
 //! Hermes, and OpenCode's on-disk stores.
 
 pub mod claude;
+pub mod grok;
 pub mod hermes;
 pub mod opencode;
 
@@ -9,8 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::render::StyledLine;
 
-/// The last event observed in a session's transcript. Only the Claude
-/// source can populate this; DB-backed sources (Hermes, OpenCode) leave
+/// The last event observed in a session's transcript. File-backed sources populate this; DB-backed sources (Hermes, OpenCode) leave
 /// `SessionMeta::last_event` as `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LastEvent {
@@ -45,7 +45,7 @@ pub struct SessionMeta {
     pub force_live: bool,
     pub last_tool: String,
     pub last_line: String,
-    /// Claude fills this; DB sources leave `None`.
+    /// Claude and Grok fill this; DB sources leave `None`.
     pub last_event: Option<LastEvent>,
 }
 
