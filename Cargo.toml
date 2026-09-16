@@ -1,6 +1,6 @@
 [package]
 name = "hermon"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 
 [dependencies]
@@ -43,7 +43,7 @@ strip = "symbols"
 name = "Hermon"
 identifier = "dev.hermon.app"
 icon = ["assets/hermon.icns"]
-version = "0.4.0"
+version = "0.4.1"
 copyright = "Copyright (c) hermon contributors"
 category = "Developer Tool"
 short_description = "Live monitor deck for Hermes, Claude Code, Codex, Grok, Gemini CLI, and OpenCode agent sessions"
