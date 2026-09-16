@@ -1,7 +1,8 @@
-//! GeminiSource acceptance tests (#106): discovery, patch-aware message
-//! state, logs.json fallback, trait use, and Gm: protocol compatibility.
+//! GeminiSource acceptance tests (#106, #109): discovery, patch-aware message
+//! state and metadata, logs.json fallback, trait use, and Gm: protocol compatibility.
 
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -118,6 +119,165 @@ fn by_id<'a>(
         .iter()
         .find(|s| s.id == id)
         .unwrap_or_else(|| panic!("missing session {id}: {sessions:?}"))
+}
+
+// Sanitized Gemini CLI 0.46.0 direct-record shape supplied for #109.
+// Identifiers, timestamps, text, and counts are synthetic.
+const GEMINI_MESSAGE: &str = r#"{"id":"g1","timestamp":"2026-09-16T18:00:01.000Z","type":"gemini","content":"Hello from Gemini.","model":"gemini-3.5-flash","tokens":{"input":100,"output":20,"cached":30,"thoughts":5,"tool":7,"total":162}}"#;
+
+#[test]
+fn gemini_046_direct_record_metadata_and_assistant_role() {
+    let (_dir, home) = gemini_home();
+    write_session(
+        &home,
+        "demo",
+        "session-2026-09-16T18-00-aaa11111.jsonl",
+        &jsonl(&[
+            &header("metadata-session", "2026-09-16T18:00:00.000Z"),
+            &user_msg("u1", "2026-09-16T18:00:00.000Z", "Say hello"),
+            GEMINI_MESSAGE,
+        ]),
+    );
+    let mut src = GeminiSource::new(&home);
+    let s = &src.sessions()[0];
+    assert_eq!(s.model, "gemini-3.5-flash");
+    assert_eq!((s.in_tok, s.out_tok), (100, 20));
+    assert_eq!(s.last_event, Some(LastEvent::AssistantText));
+    assert_eq!(s.last_line, "Hello from Gemini.");
+    assert_eq!(s.title, "Say hello");
+    assert_eq!(s.cost, None);
+
+    let mut tailer = src
+        .open_tailer(
+            "metadata-session",
+            Replay {
+                bytes: 4096,
+                rows: 0,
+            },
+        )
+        .unwrap();
+    let lines = tailer.poll();
+    assert!(lines.iter().any(|l| l.to_plain() == "Hello from Gemini."));
+    assert!(tailer.poll().is_empty());
+}
+
+#[test]
+fn gemini_metadata_upserts_and_snapshots_replace_accounting() {
+    let (_dir, home) = gemini_home();
+    let path = write_session(
+        &home,
+        "demo",
+        "session-2026-09-16T18-00-aaa11111.jsonl",
+        &jsonl(&[GEMINI_MESSAGE, GEMINI_MESSAGE]),
+    );
+    let mut src = GeminiSource::new(&home);
+    let mut updated: serde_json::Value = serde_json::from_str(GEMINI_MESSAGE).unwrap();
+    updated["model"] = serde_json::json!("gemini-updated");
+    updated["tokens"]["input"] = serde_json::json!(110);
+    updated["tokens"]["output"] = serde_json::json!(25);
+    let earlier = serde_json::json!({
+        "id": "g0", "timestamp": "2026-09-16T18:00:00.000Z", "type": "assistant",
+        "content": [{"text": "Earlier reply"}], "model": "gemini-earlier",
+        "tokens": {"input": 3, "output": 4}
+    });
+    let snapshot = serde_json::json!({"$set": {"messages": [updated, earlier, updated]}});
+    for (record, model, counts) in [
+        (None, "gemini-3.5-flash", (100, 20)),
+        (Some(updated.to_string()), "gemini-updated", (110, 25)),
+        (Some(earlier.to_string()), "gemini-updated", (113, 29)),
+        (Some(snapshot.to_string()), "gemini-updated", (113, 29)),
+        (Some(snapshot.to_string()), "gemini-updated", (113, 29)),
+        (
+            Some(serde_json::json!({"$set": {"messages": [earlier]}}).to_string()),
+            "gemini-earlier",
+            (3, 4),
+        ),
+        (
+            Some(r#"{"$set":{"messages":[]}}"#.into()),
+            "unknown",
+            (0, 0),
+        ),
+    ] {
+        if let Some(record) = record {
+            let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(f, "{record}").unwrap();
+        }
+        for _ in 0..2 {
+            let s = &src.sessions()[0];
+            assert_eq!(s.model, model);
+            assert_eq!((s.in_tok, s.out_tok), counts);
+        }
+    }
+}
+
+#[test]
+fn gemini_metadata_ignores_malformed_fields() {
+    let (_dir, home) = gemini_home();
+    let path = write_session(
+        &home,
+        "demo",
+        "session-2026-09-16T18-00-aaa11111.jsonl",
+        &jsonl(&[GEMINI_MESSAGE]),
+    );
+    let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    for (i, (model, tokens)) in [
+        (serde_json::json!(null), serde_json::json!(null)),
+        (serde_json::json!(123), serde_json::json!("bad")),
+        (serde_json::json!([]), serde_json::json!([])),
+        (
+            serde_json::json!({}),
+            serde_json::json!({"input": -1, "output": 1.5}),
+        ),
+        (
+            serde_json::json!(""),
+            serde_json::json!({"input": "12", "output": true}),
+        ),
+        (
+            serde_json::json!("  \t"),
+            serde_json::json!({"input": 1e30, "output": {}}),
+        ),
+        (
+            serde_json::json!(false),
+            serde_json::json!({"input": 2, "output": -1}),
+        ),
+        (
+            serde_json::json!(null),
+            serde_json::json!({"input": false, "output": 3}),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        writeln!(f, "{}", serde_json::json!({
+            "id": format!("bad{i}"), "timestamp": "2026-09-16T18:00:02.000Z",
+            "type": "gemini", "content": "Still a valid message", "model": model, "tokens": tokens
+        })).unwrap();
+    }
+    drop(f);
+    let mut src = GeminiSource::new(&home);
+    let s = &src.sessions()[0];
+    assert_eq!(s.model, "gemini-3.5-flash");
+    assert_eq!((s.in_tok, s.out_tok), (102, 23));
+    assert_eq!(s.last_event, Some(LastEvent::AssistantText));
+    assert_eq!(s.last_line, "Still a valid message");
+}
+
+#[test]
+fn gemini_metadata_totals_saturate() {
+    let (_dir, home) = gemini_home();
+    let huge = serde_json::json!({
+        "id": "huge", "type": "model", "content": "",
+        "tokens": {"input": u64::MAX, "output": u64::MAX}
+    });
+    write_session(
+        &home,
+        "demo",
+        "session-2026-09-16T18-00-aaa11111.jsonl",
+        &jsonl(&[GEMINI_MESSAGE, &huge.to_string()]),
+    );
+    let mut src = GeminiSource::new(&home);
+    let s = &src.sessions()[0];
+    assert_eq!((s.in_tok, s.out_tok), (u64::MAX, u64::MAX));
 }
 
 #[test]
@@ -680,6 +840,8 @@ fn logs_cache_and_partial_replacement() {
     let mut src = GeminiSource::new(&home);
     let s = src.sessions();
     assert_eq!(s[0].title, "cached prompt");
+    assert_eq!(s[0].model, "unknown");
+    assert_eq!((s[0].in_tok, s[0].out_tok), (0, 0));
     let again = src.sessions();
     assert_eq!(again[0].title, "cached prompt");
 
