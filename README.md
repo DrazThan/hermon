@@ -448,7 +448,8 @@ or annotate unsupported records; coverage depends on verified fixtures.
 - **Gemini CLI v1 (exploratory):** supported patches reconstruct chat state;
   project logs are a fallback, not a second copy of a chat. No verified tool
   calls or explicit completion signal; liveness falls back to timeout. Model
-  is `unknown`, tokens are `0`, and cost is unavailable in v1.
+  and input/output tokens come from message metadata when present, with
+  `unknown` / zero fallbacks for older or log-only records. Cost is unavailable.
 
 Tool, completion and cost coverage varies across the six sources; an absent
 value does not establish that no work or spend occurred.

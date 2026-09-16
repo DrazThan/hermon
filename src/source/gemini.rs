@@ -6,13 +6,21 @@
 //! reconstructs a normalized per-session message list and tails *that*,
 //! not the raw patch stream.
 //!
-//! # Observed v1 shapes (local inspection, 2026-09-15)
+//! # Supported shapes (including Gemini CLI 0.46.0)
 //!
 //! - Header: `{sessionId, projectHash, startTime, lastUpdated, kind:"main"}`.
 //! - Messages patch: `{"$set":{"messages":[{id,timestamp,type,content}],"lastUpdated"}}`.
 //! - Metadata-only patch: `{"$set":{"lastUpdated"}}`.
-//! - Direct records: `{id,timestamp,type,content}` with `user` and `info`
-//!   types. `content` is either a string or `[{"text":"…"}]`.
+//! - Direct records: `{id,timestamp,type,content}` with `user`, `info`, and
+//!   `gemini` (assistant) types; `model` / `assistant` are also recognized.
+//!   `content` is either a string or `[{"text":"…"}]`.
+//! - Direct and `$set.messages` records may include `model` (e.g.
+//!   `"gemini-3.5-flash"`) and `tokens: {input,output,cached,thoughts,tool,total}`.
+//!   The latest non-empty model in normalized message order is reported;
+//!   unsigned integer input/output counts are summed with saturation across
+//!   current messages, so upserts and snapshots do not double-count. Other
+//!   token fields are ignored. Missing/malformed metadata and log-only
+//!   records retain `"unknown"` / zero fallbacks.
 //! - Optional `<project>/logs.json`: a JSON array of
 //!   `{sessionId,messageId,type:"user"|"model",message,timestamp}`. Project-wide;
 //!   must be filtered by `sessionId`. Observed local logs included user
@@ -24,10 +32,9 @@
 //! **not** map `LastEvent::ToolUse` / `LastEvent::ToolResult`, infer calls
 //! from prose, populate token/cost/model fields from config, or claim
 //! permission/stuck detection. `last_tool` is `"-"`, `tool_pending` /
-//! `turn_done` / `ended` / `force_live` are false, `model` is `"unknown"`,
-//! token counts are `0`, `cost` is `None`. A sanitized real multi-turn /
-//! tool-call fixture plus completion and accounting mapping is follow-up
-//! work.
+//! `turn_done` / `ended` / `force_live` are false, `cost` is `None`. A sanitized
+//! real tool-call fixture plus tool, completion, and cost mapping is
+//! follow-up work.
 //!
 //! # Replay
 //!
@@ -366,7 +373,7 @@ impl Role {
     fn from_type(t: &str) -> Self {
         match t {
             "user" => Role::User,
-            "model" | "assistant" => Role::Assistant,
+            "gemini" | "model" | "assistant" => Role::Assistant,
             "info" => Role::Info,
             "system" => Role::System,
             _ => Role::Other,
@@ -391,6 +398,9 @@ struct NormMsg {
     order: u64,
     role: Role,
     text: String,
+    model: Option<String>,
+    in_tok: u64,
+    out_tok: u64,
     scaffold: bool,
     from_logs: bool,
 }
@@ -667,6 +677,9 @@ impl SessionStore {
             self.messages[idx].ts = msg.ts;
             self.messages[idx].role = msg.role;
             self.messages[idx].text = msg.text;
+            self.messages[idx].model = msg.model;
+            self.messages[idx].in_tok = msg.in_tok;
+            self.messages[idx].out_tok = msg.out_tok;
             self.messages[idx].scaffold = msg.scaffold;
             self.messages[idx].from_logs = msg.from_logs;
             // Keep original `order` so equal timestamps stay stable.
@@ -715,6 +728,9 @@ impl SessionStore {
                 order: self.next_order,
                 role: e.role,
                 text: e.text.clone(),
+                model: None,
+                in_tok: 0,
+                out_tok: 0,
                 scaffold: is_session_context(&e.text),
                 from_logs: true,
             };
@@ -821,14 +837,32 @@ impl SessionStore {
             })
             .unwrap_or_default();
 
+        let model = self
+            .messages
+            .iter()
+            .rev()
+            .find_map(|m| m.model.as_deref())
+            .unwrap_or("unknown")
+            .to_string();
+        // Aggregate current normalized state, never the raw patch stream.
+        let (in_tok, out_tok) = self
+            .messages
+            .iter()
+            .fold((0u64, 0u64), |(input, output), m| {
+                (
+                    input.saturating_add(m.in_tok),
+                    output.saturating_add(m.out_tok),
+                )
+            });
+
         SessionMeta {
             id: self.public_id().to_string(),
             started_at,
             ended: false,
-            model: "unknown".to_string(),
+            model,
             title,
-            in_tok: 0,
-            out_tok: 0,
+            in_tok,
+            out_tok,
             cost: None,
             last_ts,
             turn_done: false,
@@ -972,6 +1006,21 @@ fn parse_message(obj: &serde_json::Map<String, Value>, order: u64) -> Option<Nor
         scaffold: is_session_context(&text),
         from_logs: false,
         text,
+        model: obj
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string),
+        in_tok: obj
+            .get("tokens")
+            .and_then(|t| t.get("input"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        out_tok: obj
+            .get("tokens")
+            .and_then(|t| t.get("output"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
     })
 }
 
