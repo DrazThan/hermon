@@ -3,9 +3,11 @@
 
 pub mod claude;
 pub mod codex;
+pub(crate) mod diagnostics;
 pub mod gemini;
 pub mod grok;
 pub mod hermes;
+pub mod hermes_profiles;
 pub mod opencode;
 
 use serde::{Deserialize, Serialize};

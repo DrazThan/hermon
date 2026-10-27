@@ -11,6 +11,7 @@ use tempfile::TempDir;
 /// to it, and returns the owning [`TempDir`] (keep it alive for as long as
 /// the database is needed — dropping it deletes the file) along with the
 /// database's path.
+#[allow(dead_code)]
 pub fn temp_db_from_schema(schema_path: &Path) -> (TempDir, PathBuf) {
     let schema = fs::read_to_string(schema_path)
         .unwrap_or_else(|e| panic!("failed to read schema fixture {schema_path:?}: {e}"));
@@ -32,3 +33,5 @@ pub fn fixture_path(name: &str) -> PathBuf {
         .join("fixtures")
         .join(name)
 }
+
+pub mod hermes_profiles;

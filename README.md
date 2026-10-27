@@ -43,7 +43,7 @@ the stores of tools Hermes shells out to, not just Hermes itself:
 | Source | Key prefix | Store | What it captures |
 |---|---|---|---|
 | Claude Code | `C:` | `~/.claude/projects/**/*.jsonl` | every Claude Code session: interactive or `claude -p`, including ones Hermes spawns as subprocesses |
-| Hermes | `H:` | `~/.hermes/state.db` (`sessions` + `messages`, WAL SQLite) | every Hermes session: TUI, CLI, gateway, sub-agents — any provider. Model, tool calls, tokens, cost, live-written mid-session |
+| Hermes | `H:` | `~/.hermes/state.db` and `~/.hermes/profiles/*/state.db` (`sessions` + `messages`, WAL SQLite) | every Hermes session: TUI, CLI, gateway, sub-agents — any provider. Model, tool calls, tokens, cost, live-written mid-session |
 | OpenCode | `O:` | `~/.local/share/opencode/opencode.db` (`session`/`message`/`part`, WAL SQLite) | every OpenCode CLI session: `opencode run` or interactive, including ones Hermes spawns as subprocesses |
 | Codex | `X:` | `~/.codex/sessions/**/*.jsonl` | interactive and exec rollouts, persisted turn state and live transcript text |
 | Grok Build | `G:` | `~/.grok/sessions/<encoded-cwd>/<uuid>/` | `summary.json`, `usage.json`, `chat_history.jsonl` |
@@ -68,8 +68,76 @@ hermon render G:abcdef --grok-dir /work/grok
 hermon render Gm:654321 --gemini-dir /work/gemini
 ```
 
-Both SQLite stores are opened read-only
-(`file:…?mode=ro`), safe alongside the real tool running (WAL).
+Both SQLite sources are opened read-only, safe alongside the real tool running
+(WAL). Hermes paths are passed to SQLite as literal paths, including `?` and `#`.
+
+## Hermes bots and profiles
+
+With no Hermes override, Hermon combines the main `~/.hermes/state.db` and
+immediate `~/.hermes/profiles/<slug>/state.db` stores. It uses the process home;
+it does not infer profiles from environment variables, config, titles, models,
+log session suffixes, or subprocess ancestry. Non-Hermes sessions have unknown
+ownership, even when Hermes launched them.
+
+- `--hermes-home PATH` replaces the discovery root.
+- `--hermes-db PATH` selects exactly one store and conflicts with `--hermes-home`,
+  even if PATH is the ordinary main DB path. Ownership is known only when its
+  canonical path matches the ordinary main/profile layout; arbitrary DBs stay unknown.
+- Discovery refreshes at startup and at most once per five seconds in the scan
+  loop. Only immediate profile entries are inspected: at most 4096 directory
+  entries and 128 unique stores, with visible incomplete-discovery notices on overflow.
+- Exact layout symlinks may point outside the root. Canonical paths deduplicate
+  stores: main wins, otherwise the first lexical profile alias wins and remains
+  the winner while present. Aliases appear in diagnostics, not as extra bots.
+  Retargeting changes store identity; an old route cannot redirect to the new store.
+- An absent store is not a bot. A healthy empty DB stays in the selector. A
+  previously discovered missing/unreadable/bad-schema store is unavailable, not idle;
+  scans retry and clear the warning on recovery. Hermon never creates vendor DBs.
+
+`--bot PATTERN` initializes a visible, clearable `bot=PATTERN` filter on `ls`,
+`render`, `watch`, `gui` and `menubar`. Match is whole-string, case-insensitive;
+`*` is the only wildcard. Bot terms AND with each other and other session terms,
+for example `bot=work* model=claude* cost>1`. Unknown ownership matches no bot
+term, including `bot=*` and `bot=default`; a real profile named `unknown` is still
+an ordinary known bot. `agent` accepts `--bot` but ignores it with a stderr notice:
+remote snapshots always include all sessions.
+
+The GUI selector and clickable overview choose one canonical store, including
+empty/unavailable bots; remote entries include their configured origin. All clears
+only the selector, leaving text terms active. Clear filters clears both. The TUI
+`b` overview uses `j`/`k`, Enter to choose, Escape to cancel; `f` edits shared bot
+terms and `c` clears filters and selector. Menubar shows its selected-view filter
+and a clear action. Display filters never suppress notification eligibility;
+error alerts still depend on which transcripts are actually tailed.
+
+The overview is labelled “All discovered bots; counts in current session window”,
+independent of filtering. Active, attention (inferred) and recent-finished are
+mutually exclusive session states, not process status. Last activity is the latest
+recorded timestamp from the last successful store scan, even after sessions age
+out of the window; unavailable stores show stale last-success activity. Selected
+view totals, the GUI live title and menubar counts use only matched sessions;
+warnings never count as sessions and remain visible under filters. Cost retains
+its existing unknown/partial semantics; this is not financial analytics.
+
+Short aliases such as `H:abcdef` are display labels, not durable identity. When
+aliases collide, `ls` prints `route=hr1:…` alternatives; `render` accepts the full
+route, or a globally unique alias. `--bot` does not disambiguate an alias. GUI rows
+show the full route on hover and offer “Copy full route” on right-click. Selection,
+pins, panes, lifecycle and notification cooldowns use the full qualified route.
+The exact format is `hr1:<hex-origin>:<source>:<hex-store>:<hex-full-vendor-id>`:
+lowercase lossless hex, empty local origin, and source C/H/O/X/G/Gm. A route is
+usable only after discovery admits it; decoding a path is never permission to open it.
+
+The local ticker reads each registered store's `logs/agent.log` independently of
+recent sessions, deduplicating canonical log paths and reading only each file's
+final 64 KiB. Bot terms and selector apply before the global four-entry limit;
+other session filters do not apply. “Recent log tails (file recency)” is approximate
+cross-file ordering: newest log mtime first, canonical store as tie-break, newest
+file-local entries selected and rendered in file-local order. Time-of-day logs do
+not establish a global event timeline. Explicit `--hermes-log PATH` reads only that
+file; ownership requires an exact registered canonical log-path match. Missing logs
+are quiet; unreadable existing logs warn. Remote ticker transport is not included.
+
 
 ## Remote agents (containers, hosts)
 
@@ -105,7 +173,7 @@ host: hermon watch/gui/menubar                remote: container or ssh host
       OpenTail / CloseTail / Shutdown       reads the same six on-disk
     reads AgentMsg frames (stdout) ◀──      stores (Claude/Hermes/OpenCode/
                                            Codex/Grok/Gemini)
-      Hello / Snap / Tail / Bye             locally, tails them like `ls`
+      Hello / BotContext / Snap / Tail / Bye             locally, tails them like `ls`
     demuxes, sanitizes, caps sizes
     joins the six local sources,
     `name/`-prefixed roster keys
@@ -200,9 +268,18 @@ does. In practice, keep the musl binary you `ADD`/`COPY` into images pinned
 to the same release tag as the host `hermon`, rather than tracking
 `latest` on one side only.
 
-An older agent can share the same protocol version yet lack the new sources
-or reject their root flags. Use matched releases containing all six source
-implementations on both sides.
+This build speaks protocol v2. Upgrade both the Hermon host and remote agent
+before using remotes; v1/v2 peers fail the strict Hello gate. Use matched releases
+containing all six source implementations and bot-context support on both sides.
+
+V2 sends optional `BotContext` immediately before each `Snap`, installed together;
+missing/rejected context means unknown ownership, never reused/default ownership.
+New agent IDs use `<source>:hr1::<source>:<hex-store>:<hex-full-vendor-id>` for all
+sources. Tail commands echo that exact admitted wire ID; the host's origin-qualified
+route never becomes a remote path. Legacy-shaped ownerless snapshots remain JSON
+decodable under a matched v2 Hello; this does not permit a v1 peer to connect.
+Ownership overflow drops attribution with a bounded notice, not otherwise valid
+sessions. Existing frame/session/tail/byte/segment/stderr caps remain in force.
 
 ### Clock skew
 
@@ -360,11 +437,12 @@ entry — it isn't a background/menu-bar-only (`LSUIElement`) process.
 | `j`/`↓`, `k`/`↑` | any | Select next / previous session |
 | `l` | any | Toggle list / grid |
 | `s` | any | Open the sort palette |
-| `f` | any | Open the filter palette |
+| `b` | any | Bot overview/selector; j/k and Enter choose, Escape cancels |
+| `f` | any | Open the filter palette (`bot=slug*` supported) |
 | `a` | any | Toggle attention-first grouping |
 | `p` | any | Pin / unpin the selected session (held panes survive `--max-panes` eviction) |
 | `m` | any | Mute / unmute desktop notifications (🔕) |
-| `c` | any | Clear sort + filter |
+| `c` | any | Clear sort, filter terms and bot selector |
 | `?` | any | Toggle the help overlay |
 | `Tab` | grid | Next page of tiles |
 | `Enter`, `z` | grid | Zoom the selected pane |
@@ -508,7 +586,7 @@ transcript (`⏸ waiting on permission prompt · <elapsed>` /
 ## CLI reference
 
 ```
-hermon watch    [--claude-dir DIR] [--hermes-db PATH] [--opencode-db PATH]
+hermon watch    [--claude-dir DIR] [--hermes-home PATH | --hermes-db PATH] [--bot PATTERN] [--opencode-db PATH]
                 [--hermes-log PATH] [--idle-timeout SEC] [--interval SEC]
                 [--max-panes N] [--linger SEC] [--replay-bytes N] [--replay-lines N]
                 [--remote SPEC]… [--remote-flags FLAGS] [--docker-auto]
@@ -526,9 +604,11 @@ Defaults make `hermon watch` correct with zero flags.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--claude-dir` | `~/.claude/projects` | Claude Code transcript root |
-| `--hermes-db` | `~/.hermes/state.db` | Hermes state.db path |
+| `--hermes-home` | process home + `.hermes` | combined main and immediate profile discovery root; conflicts with explicit `--hermes-db` |
+| `--hermes-db` | absent | explicit single Hermes state.db override |
+| `--bot` | absent (All) | shared visible bot slug/glob filter; ignored by agent |
 | `--opencode-db` | `~/.local/share/opencode/opencode.db` | OpenCode opencode.db path |
-| `--hermes-log` | `~/.hermes/logs/agent.log` | Hermes agent.log (roster API-call ticker) |
+| `--hermes-log` | registered main/profile logs | exclusive ticker file override; unknown owner unless its canonical path matches a registered log |
 | `--idle-timeout` | `180` | safety ceiling for a session stuck mid-turn with no activity |
 | `--interval` | `1` | roster scan interval, seconds |
 | `--max-panes` | `8` | pane cap (grid mode); finished panes are evicted first, the roster always lists everything |

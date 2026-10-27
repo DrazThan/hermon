@@ -138,9 +138,12 @@ impl OpenCodeSource {
     }
 
     fn warn(&mut self) {
-        if !self.warned {
+        if super::diagnostics::capturing() || !self.warned {
             self.warned = true;
-            eprintln!("· opencode db unavailable: {}", self.db_path.display());
+            super::diagnostics::report(&format!(
+                "· opencode db unavailable: {}",
+                self.db_path.display()
+            ));
         }
     }
 }

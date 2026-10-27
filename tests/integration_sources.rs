@@ -1,3 +1,4 @@
+mod common;
 #[path = "common/new_stores.rs"]
 mod new_stores;
 use hermon::{
@@ -61,8 +62,9 @@ fn built_agent_routes_full_ids_and_live_updates_without_cross_delivery() {
     ] {
         let row = rows
             .iter()
-            .find(|r| r.id == format!("{prefix}:{ID}"))
-            .unwrap();
+            .find(|r| r.key == format!("job1/{prefix}:123456"))
+            .unwrap_or_else(|| panic!("no display alias job1/{prefix}:123456 in {rows:?}"));
+        common::hermes_profiles::require_hr1(&row.id, b"job1", prefix, ID.as_bytes());
         assert_eq!(row.key, format!("job1/{prefix}:123456"));
         tails.push((
             word,
@@ -116,7 +118,18 @@ fn built_agent_routes_full_ids_and_live_updates_without_cross_delivery() {
         );
     }
     let sessions = sources.remotes[0].sessions();
-    let codex = sessions.iter().find(|s| s.id == format!("X:{ID}")).unwrap();
+    let codex = sessions
+        .iter()
+        .find(|s| {
+            common::hermes_profiles::decode_wire_id(&s.id)
+                .is_ok_and(|w| w.outer_source == "X" && w.route.vendor_id == ID.as_bytes())
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "no canonical X wire session in {:?}",
+                sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>()
+            )
+        });
     assert!(codex.turn_done);
     assert_eq!(codex.last_event, Some(LastEvent::AssistantText));
     for s in &sessions {

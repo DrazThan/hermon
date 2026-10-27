@@ -25,6 +25,7 @@ pub const W_GLYPH: usize = 2;
 /// The pin column: 📌 (or its `*` fallback) plus a pad space.
 pub const W_PIN: usize = 2;
 const W_KEY: usize = 10;
+const W_OWNER: usize = 16;
 const W_META: usize = 26;
 const W_COST: usize = 9;
 
@@ -52,7 +53,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .enumerate()
         .map(|(i, row)| {
             let pinned = app.view.is_pinned(&row.id);
-            let line = row_line(row, pinned, area.width as usize);
+            let line = row_line(
+                row,
+                pinned,
+                area.width as usize,
+                &app.context.owner_label(&row.id),
+            );
             if i == selected {
                 line.patch_style(palette::selection_bg())
             } else {
@@ -69,12 +75,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 /// One session as a padded, full-width row. Padding matters: the selected
 /// row's background is only visible where the line has cells.
-fn row_line(row: &RosterRow, pinned: bool, width: usize) -> Line<'static> {
+fn row_line(row: &RosterRow, pinned: bool, width: usize, owner: &str) -> Line<'static> {
     let (glyph, glyph_style) = palette::glyph_for_liveness(row.state);
     let sems = row_sems(row.state);
     let meta = format!("{} · {}", row.model, fmt_elapsed(row.elapsed));
     let cost = fmt_cost(row.cost);
-    let w_summary = width.saturating_sub(W_GLYPH + W_PIN + W_KEY + W_META + W_COST);
+    let w_meta = W_META.min(width.saturating_sub(W_GLYPH + W_PIN + W_KEY + W_OWNER + W_COST + 6));
+    let w_summary = width.saturating_sub(W_GLYPH + W_PIN + W_KEY + W_OWNER + w_meta + W_COST);
 
     // An unpinned row leaves the column blank in the row's own text color, so
     // a finished row still goes dim end to end; a pinned one always pops
@@ -93,7 +100,11 @@ fn row_line(row: &RosterRow, pinned: bool, width: usize) -> Line<'static> {
             palette::style(sems.text),
         ),
         Span::styled(
-            format!("{:<W_META$}", clip(&meta, W_META - 1)),
+            format!("{:<W_OWNER$}", clip(owner, W_OWNER - 1)),
+            palette::style(Sem::Dim),
+        ),
+        Span::styled(
+            format!("{:<w_meta$}", clip(&meta, w_meta.saturating_sub(1))),
             palette::style(sems.meta),
         ),
     ];

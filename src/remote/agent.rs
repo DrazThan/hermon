@@ -17,11 +17,12 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::bots::MonitorOptions;
 use crate::remote::proto::{
     AgentMsg, Decoded, HostCmd, PROTO_VERSION, decode_host_cmd, encode_agent_msg,
 };
 use crate::roster::Sources;
-use crate::source::{Replay, SessionMeta, Source, Tailer};
+use crate::source::{Replay, SessionMeta, Tailer};
 
 /// How often open tails are polled for new lines — the same cadence
 /// `engine::PANE_TICK` polls TUI panes at, since a tailed session should
@@ -62,6 +63,10 @@ enum Cmd {
 /// only a genuinely unrecoverable setup failure would, and there isn't one
 /// here.
 pub fn run(config: AgentConfig) -> anyhow::Result<()> {
+    run_options(config, None)
+}
+
+pub fn run_options(config: AgentConfig, options: Option<MonitorOptions>) -> anyhow::Result<()> {
     let (writer_tx, writer) = spawn_writer();
     let (cmd_tx, cmd_rx) = mpsc::channel();
     thread::spawn(move || read_stdin(cmd_tx));
@@ -90,13 +95,42 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
         &config.grok_dir,
         &config.gemini_dir,
     );
+    if let Some(options) = options {
+        sources = sources.with_options(options);
+    }
+    let mut admitted = HashMap::new();
     let mut tails: HashMap<String, Box<dyn Tailer>> = HashMap::new();
 
     let mut next_snap = Instant::now();
     let mut next_tail_tick = Instant::now();
     let reason = loop {
         if Instant::now() >= next_snap {
-            let sessions = snapshot(&mut sources, now_secs(), &config);
+            let (sessions, routes) = snapshot(&mut sources, now_secs(), &config);
+            admitted = routes;
+            let owners = admitted
+                .iter()
+                .filter_map(|(wire, route)| {
+                    sources
+                        .context
+                        .owners
+                        .get(route)
+                        .cloned()
+                        .map(|o| (wire.clone(), o))
+                })
+                .collect();
+            let mut context = AgentMsg::BotContext {
+                owners,
+                bots: sources.context.bots.clone(),
+                warnings: sources.context.warnings.clone(),
+            };
+            if encode_agent_msg(&context).len() > crate::remote::source::MAX_FRAME_BYTES {
+                context = AgentMsg::BotContext {
+                    owners: HashMap::new(),
+                    bots: Vec::new(),
+                    warnings: vec!["ownership metadata omitted: frame limit".into()],
+                };
+            }
+            send(&writer_tx, context);
             send(&writer_tx, AgentMsg::Snap { sessions });
             next_snap = Instant::now() + config.interval;
         }
@@ -109,8 +143,9 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
         match cmd_rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(Cmd::Shutdown) => break "shutdown",
             Ok(Cmd::OpenTail { key, replay }) => {
-                let session_id = key.split_once(':').map_or(key.as_str(), |(_, id)| id);
-                if let Some(tailer) = sources.open_tailer(&key, session_id, replay) {
+                if let Some(route) = admitted.get(&key)
+                    && let Some(tailer) = sources.open_tailer(route, route, replay)
+                {
                     tails.insert(key, tailer);
                     next_tail_tick = Instant::now(); // surface the replay promptly
                 }
@@ -134,42 +169,30 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Every session across all six sources, each tagged with its source
-/// prefix so a later `HostCmd::OpenTail` can name it back. The wire
-/// `SessionMeta` (unlike `roster::RosterRow`) carries no separate key
-/// field, so the prefix `Sources::open_tailer` dispatches on rides in `id`
-/// itself as `"C:<real id>"` rather than beside it — the id round-trips
-/// through the host unchanged and `run`'s `OpenTail` arm splits it back
-/// apart the same way it was built here.
-///
-/// Unfiltered and unclassified, deliberately: this is a full snapshot, not
-/// a diff, and liveness classification is the host's job, not the agent's.
-fn snapshot(sources: &mut Sources, now: f64, config: &AgentConfig) -> Vec<SessionMeta> {
+/// Every session across all six sources, with a separate admitted wire-to-local
+/// route map. Source metadata IDs are never rewritten in the readers. The wire
+/// copy uses one source discriminator followed by the printable local hr1 route;
+/// OpenTail must echo that entire advertised ID, not merely decode its syntax.
+/// Snapshots remain unfiltered and unclassified: liveness is the host's job.
+fn snapshot(
+    sources: &mut Sources,
+    now: f64,
+    config: &AgentConfig,
+) -> (Vec<SessionMeta>, HashMap<String, String>) {
+    let mut routes = HashMap::new();
     let mut out = Vec::new();
-    for s in sources.claude.sessions(now, config.idle_timeout) {
-        out.push(keyed("C", s));
+    for scanned in sources
+        .scan_local(now, config.fresh_window, config.idle_timeout)
+        .into_iter()
+        .take(crate::remote::source::MAX_SNAP_SESSIONS)
+    {
+        let mut meta = scanned.meta;
+        let wire = format!("{}:{}", scanned.source, scanned.route);
+        routes.insert(wire.clone(), scanned.route);
+        meta.id = wire;
+        out.push(meta);
     }
-    for s in sources.hermes.sessions() {
-        out.push(keyed("H", s));
-    }
-    for s in sources.opencode.sessions(now - config.fresh_window) {
-        out.push(keyed("O", s));
-    }
-    for s in Source::sessions(&mut sources.codex) {
-        out.push(keyed("X", s));
-    }
-    for s in Source::sessions(&mut sources.grok) {
-        out.push(keyed("G", s));
-    }
-    for s in Source::sessions(&mut sources.gemini) {
-        out.push(keyed("Gm", s));
-    }
-    out
-}
-
-fn keyed(prefix: &str, mut s: SessionMeta) -> SessionMeta {
-    s.id = format!("{prefix}:{}", s.id);
-    s
+    (out, routes)
 }
 
 /// Polls every open tail and forwards new lines as `Tail` frames, dropping

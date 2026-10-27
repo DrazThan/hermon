@@ -23,6 +23,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::bots::{MonitorOptions, RosterContext, routing_key};
 use crate::config::EngineConfig;
 use crate::notify::{self, Alert, AlertHistory, DoneCause, LifecycleTransition, Notifier};
 use crate::remote::discover::{self, Discovered};
@@ -41,6 +42,7 @@ pub const PANE_TICK: Duration = Duration::from_millis(300);
 /// diff — the UI is expected to redraw from it wholesale.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
+    Context(RosterContext),
     Roster(Vec<RosterRow>),
     /// The newest Hermes API calls, refreshed with the roster.
     Ticker(Vec<StyledLine>),
@@ -125,6 +127,13 @@ pub enum UiCmd {
 /// implementation; tests substitute a fake so the loop can be driven with
 /// no real store on disk.
 pub trait Deck {
+    /// Legacy decks keep their single-file ticker API; options-aware sources supply structured entries.
+    fn structured_ticker(&self) -> bool {
+        false
+    }
+    fn context(&self) -> RosterContext {
+        RosterContext::default()
+    }
     fn roster(&mut self, now: f64, fresh_window: f64, idle_timeout: f64) -> Vec<RosterRow>;
     fn open_tailer(
         &mut self,
@@ -148,6 +157,12 @@ pub trait Deck {
 }
 
 impl Deck for Sources {
+    fn structured_ticker(&self) -> bool {
+        self.has_options()
+    }
+    fn context(&self) -> RosterContext {
+        self.context.clone()
+    }
     fn roster(&mut self, now: f64, fresh_window: f64, idle_timeout: f64) -> Vec<RosterRow> {
         build_roster(self, now, fresh_window, idle_timeout)
     }
@@ -259,7 +274,9 @@ fn sync_docker_auto(config: &EngineConfig, deck: &mut dyn Deck, state: &mut Dock
     let stdout = match run_docker_ps() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("hermon: --docker-auto: {e}, disabling for this run");
+            crate::source::diagnostics::report(&format!(
+                "hermon: --docker-auto: {e}, disabling for this run"
+            ));
             state.disabled = true;
             return;
         }
@@ -269,7 +286,7 @@ fn sync_docker_auto(config: &EngineConfig, deck: &mut dyn Deck, state: &mut Dock
     let (sync, next) = discover::reconcile(&containers, &explicit, &state.managed);
     for warning in &sync.warnings {
         if state.warned.insert(warning.clone()) {
-            eprintln!("hermon: {warning}");
+            crate::source::diagnostics::report(&format!("hermon: {warning}"));
         }
     }
     state.managed = next;
@@ -285,7 +302,17 @@ impl Engine {
     /// handle after sending [`UiCmd::Shutdown`] (or dropping `rx`'s sender)
     /// to wait for it to exit.
     pub fn spawn(config: EngineConfig, tx: Sender<Event>, rx: Receiver<UiCmd>) -> JoinHandle<()> {
+        Self::spawn_options(config, None, tx, rx)
+    }
+
+    pub fn spawn_options(
+        config: EngineConfig,
+        options: Option<MonitorOptions>,
+        tx: Sender<Event>,
+        rx: Receiver<UiCmd>,
+    ) -> JoinHandle<()> {
         thread::spawn(move || {
+            let _diagnostics = crate::source::diagnostics::capture();
             let mut deck = Sources::new(
                 &config.claude_dir,
                 &config.hermes_db,
@@ -294,6 +321,9 @@ impl Engine {
                 &config.grok_dir,
                 &config.gemini_dir,
             );
+            if let Some(options) = options {
+                deck = deck.with_options(options);
+            }
             for spec in &config.remotes {
                 let cmd = to_command(spec, &config.remote_flags);
                 deck = deck.with_remote(RemoteSource::new(spec.name.clone(), cmd));
@@ -324,7 +354,10 @@ impl Engine {
         tx: Sender<Event>,
         rx: Receiver<UiCmd>,
     ) -> JoinHandle<()> {
-        thread::spawn(move || run(&config, &mut deck, &clock, &tx, &rx))
+        thread::spawn(move || {
+            let _diagnostics = crate::source::diagnostics::capture();
+            run(&config, &mut deck, &clock, &tx, &rx)
+        })
     }
 }
 
@@ -485,14 +518,24 @@ fn scan(
     attach_attn_elapsed(tracked, &mut rows, now);
     linger_expire(tracked, panes, config.linger, now);
     forget(tracked, panes, &rows);
-    *ids = rows.iter().map(|r| (r.key.clone(), r.id.clone())).collect();
+    *ids = rows
+        .iter()
+        .map(|r| (routing_key(r).to_owned(), r.id.clone()))
+        .collect();
 
     // Decide and fire this tick's alerts, once liveness/attn-elapsed are
     // final. A vanished session (finished with no row surviving this tick)
     // gets no transition — there is no roster data left to describe it —
     // so it can only ever raise TurnDone/Stuck/PermWait while its row is
     // still on the deck.
-    let transitions = build_transitions(&prev_liveness, &rows, now, errors);
+    let mut context = deck.context();
+    let mut transitions = build_transitions(&prev_liveness, &rows, now, errors);
+    let labels: HashMap<_, _> = rows.iter().map(|r| (routing_key(r), r)).collect();
+    for transition in &mut transitions {
+        if let Some(row) = labels.get(transition.key.as_str()) {
+            transition.label = context.label(row);
+        }
+    }
     for alert in notify::decide_alerts(&transitions, now, &config.notify, hist) {
         notify::deliver(notifier, "hermon", &alert.label, &alert.detail);
         events.push(Event::Alert(alert));
@@ -521,8 +564,20 @@ fn scan(
         }
     }
 
-    let ticker = api_call_ticker(Path::new(&config.hermes_log), TICKER_LIMIT);
+    let ticker = if deck.structured_ticker() {
+        Vec::new()
+    } else {
+        api_call_ticker(Path::new(&config.hermes_log), TICKER_LIMIT)
+    };
 
+    let mut warnings = crate::source::diagnostics::take();
+    for warning in context.warnings {
+        if warnings.len() < 128 && !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
+    }
+    context.warnings = warnings;
+    tx.send(Event::Context(context)).map_err(|_| ())?;
     tx.send(Event::Roster(rows)).map_err(|_| ())?;
     tx.send(Event::Ticker(ticker)).map_err(|_| ())?;
     for event in events {
@@ -578,7 +633,7 @@ fn build_transitions(
 ) -> Vec<LifecycleTransition> {
     rows.iter()
         .map(|row| {
-            let from = prev.get(&row.key).copied().unwrap_or(row.state);
+            let from = prev.get(routing_key(row)).copied().unwrap_or(row.state);
             let done_cause =
                 (row.state == Liveness::Done && from != Liveness::Done).then(
                     || match finish_cause(from) {
@@ -587,7 +642,7 @@ fn build_transitions(
                     },
                 );
             LifecycleTransition {
-                key: row.key.clone(),
+                key: routing_key(row).to_owned(),
                 label: row.key.clone(),
                 from,
                 to: row.state,
@@ -596,7 +651,7 @@ fn build_transitions(
                 state_since: now - row.attn_elapsed.unwrap_or(0.0),
                 cost: row.cost,
                 last_tool: row.last_tool.clone(),
-                error_line: errors.remove(&row.key),
+                error_line: errors.remove(routing_key(row)),
             }
         })
         .collect()
@@ -607,7 +662,7 @@ fn build_transitions(
 fn lifecycle_events(prev: &HashMap<String, Liveness>, rows: &[RosterRow]) -> Vec<Event> {
     rows.iter()
         .filter_map(|row| {
-            let change = match prev.get(&row.key) {
+            let change = match prev.get(routing_key(row)) {
                 None => Lifecycle::Started,
                 Some(Liveness::Done) if row.state != Liveness::Done => Lifecycle::Resumed,
                 Some(prev_state)
@@ -618,7 +673,7 @@ fn lifecycle_events(prev: &HashMap<String, Liveness>, rows: &[RosterRow]) -> Vec
                 _ => return None,
             };
             Some(Event::Lifecycle {
-                key: row.key.clone(),
+                key: routing_key(row).to_owned(),
                 change,
             })
         })
@@ -646,7 +701,7 @@ fn finish_cause(prev_state: Liveness) -> Cause {
 fn attention_events(prev: &HashMap<String, Liveness>, rows: &[RosterRow]) -> Vec<Event> {
     rows.iter()
         .filter_map(|row| {
-            let prev_state = prev.get(&row.key).copied();
+            let prev_state = prev.get(routing_key(row)).copied();
             let change = match row.state {
                 Liveness::Attention(attn) if prev_state != Some(row.state) => {
                     Lifecycle::Attention(attn)
@@ -657,7 +712,7 @@ fn attention_events(prev: &HashMap<String, Liveness>, rows: &[RosterRow]) -> Vec
                 _ => return None,
             };
             Some(Event::Lifecycle {
-                key: row.key.clone(),
+                key: routing_key(row).to_owned(),
                 change,
             })
         })
@@ -673,7 +728,7 @@ fn vanished_events(tracked: &HashMap<String, Tracked>, rows: &[RosterRow]) -> Ve
     tracked
         .iter()
         .filter(|(_, t)| t.liveness != Liveness::Done)
-        .filter(|(key, _)| !rows.iter().any(|r| &r.key == *key))
+        .filter(|(key, _)| !rows.iter().any(|r| routing_key(r) == key.as_str()))
         .map(|(key, t)| Event::Lifecycle {
             key: key.clone(),
             change: Lifecycle::Finished(finish_cause(t.liveness)),
@@ -702,7 +757,7 @@ fn apply_lifecycle(
             Lifecycle::Started => {
                 let liveness = rows
                     .iter()
-                    .find(|r| &r.key == key)
+                    .find(|r| routing_key(r) == key.as_str())
                     .map_or(Liveness::Done, |r| r.state);
                 tracked.insert(
                     key.clone(),
@@ -736,7 +791,7 @@ fn apply_lifecycle(
             Lifecycle::Resumed => {
                 let liveness = rows
                     .iter()
-                    .find(|r| &r.key == key)
+                    .find(|r| routing_key(r) == key.as_str())
                     .map_or(Liveness::Live, |r| r.state);
                 match tracked.get_mut(key) {
                     Some(t) => {
@@ -792,7 +847,7 @@ fn apply_lifecycle(
 /// land here so later ticks compare against the truth, not a stale value.
 fn refresh_liveness(tracked: &mut HashMap<String, Tracked>, rows: &[RosterRow]) {
     for row in rows {
-        if let Some(t) = tracked.get_mut(&row.key) {
+        if let Some(t) = tracked.get_mut(routing_key(row)) {
             t.liveness = row.state;
         }
     }
@@ -806,7 +861,7 @@ fn refresh_liveness(tracked: &mut HashMap<String, Tracked>, rows: &[RosterRow]) 
 fn attach_attn_elapsed(tracked: &HashMap<String, Tracked>, rows: &mut [RosterRow], now: f64) {
     for row in rows.iter_mut() {
         row.attn_elapsed = tracked
-            .get(&row.key)
+            .get(routing_key(row))
             .and_then(|t| t.attn_since)
             .map(|since| now - since);
     }
@@ -846,7 +901,7 @@ fn forget(
     panes: &mut HashMap<String, Box<dyn Tailer>>,
     rows: &[RosterRow],
 ) {
-    let present: HashSet<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+    let present: HashSet<&str> = rows.iter().map(routing_key).collect();
     tracked.retain(|key, t| !(t.killed && !present.contains(key.as_str())));
     panes.retain(|key, _| tracked.contains_key(key));
 }

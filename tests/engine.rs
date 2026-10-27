@@ -97,22 +97,20 @@ fn engine_emits_roster_then_a_lifecycle_finished_on_turn_done() {
 
     // Roster arrives within a couple of ticks and carries the live session.
     let mut saw_live = false;
+    let mut route_id = None;
     for _ in 0..5 {
-        match engine_rx.recv_timeout(RECV_TIMEOUT).expect("roster event") {
-            Event::Roster(rows) => {
-                if let Some(row) = rows.iter().find(|r| r.key == "H:ngine1") {
-                    assert_eq!(row.state, hermon::source::Liveness::Live);
-                    saw_live = true;
-                    break;
-                }
-            }
-            Event::Ticker(_)
-            | Event::Lifecycle { .. }
-            | Event::PaneLines { .. }
-            | Event::Alert(_) => {}
+        if let Event::Roster(rows) = engine_rx.recv_timeout(RECV_TIMEOUT).expect("roster event")
+            && let Some(row) = rows.iter().find(|r| r.key == "H:ngine1")
+        {
+            assert_eq!(row.state, hermon::source::Liveness::Live);
+            common::hermes_profiles::require_hr1(&row.id, b"", "H", b"sess_engine1");
+            route_id = Some(row.id.clone());
+            saw_live = true;
+            break;
         }
     }
     assert!(saw_live, "engine never reported the live session");
+    let route_id = route_id.expect("live row did not capture a qualified id");
 
     // Flip turn_done mid-run; the next tick should see the session finish.
     {
@@ -129,7 +127,7 @@ fn engine_emits_roster_then_a_lifecycle_finished_on_turn_done() {
             Event::Lifecycle {
                 key,
                 change: Lifecycle::Finished(_),
-            } if key == "H:ngine1" => {
+            } if key == route_id => {
                 finished = true;
                 break;
             }
@@ -176,10 +174,24 @@ fn shutdown_joins_promptly_with_no_sessions() {
         rx,
     );
 
-    match engine_rx.recv_timeout(RECV_TIMEOUT).expect("roster event") {
-        Event::Roster(rows) => assert!(rows.is_empty()),
-        other => panic!("expected an empty Roster first, got {other:?}"),
+    let deadline = Instant::now() + RECV_TIMEOUT;
+    let mut saw_empty = false;
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match engine_rx.recv_timeout(remaining) {
+            Ok(Event::Roster(rows)) => {
+                assert!(rows.is_empty(), "expected an empty roster, got {rows:?}");
+                saw_empty = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
     }
+    assert!(saw_empty, "no empty Roster within the receive window");
 
     ui_tx.send(UiCmd::Shutdown).expect("send shutdown");
     let start = Instant::now();

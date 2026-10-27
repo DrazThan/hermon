@@ -7,9 +7,13 @@
 //! [`StyledLine`]s that `hermon ls` prints and (from M2) the list widget
 //! paints.
 
+use crate::bots::{BotOwner, MonitorOptions, RosterContext, Route, TickerEntry, path_bytes};
+use crate::source::hermes_profiles::HermesProfiles;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use anyhow::anyhow;
@@ -29,8 +33,7 @@ use crate::source::{Attn, Liveness, Replay, SessionMeta, Source, Tailer, classif
 /// One session as the roster displays it (`hermon.py:1025 RosterRow`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RosterRow {
-    /// The source's own session id, unchanged. The UI keys its selection on
-    /// this so the cursor stays on a session as rows reorder between ticks.
+    /// Qualified aggregate identity; direct source metadata keeps the raw vendor ID.
     pub id: String,
     /// Pane/roster label: `C:0f865f` (Claude), `H:b356d8` (Hermes),
     /// `O:fiiDPP` (OpenCode), `X:123456` (Codex), `G:123456` (Grok),
@@ -75,6 +78,26 @@ pub struct Sources {
     /// [`with_remote`](Sources::with_remote) — #91 is what builds the
     /// transport argv.
     pub remotes: Vec<RemoteSource>,
+    profiles: Option<HermesProfiles>,
+    roots: HashMap<String, PathBuf>,
+    routes: HashMap<String, Admitted>,
+    pub context: RosterContext,
+    options: Option<MonitorOptions>,
+    warned: HashSet<String>,
+}
+
+struct Admitted {
+    alias: String,
+    source: String,
+    store: PathBuf,
+    raw: String,
+    remote: Option<String>,
+}
+
+pub(crate) struct Scanned {
+    pub route: String,
+    pub source: String,
+    pub meta: SessionMeta,
 }
 
 impl Sources {
@@ -94,6 +117,209 @@ impl Sources {
             grok: GrokSource::new(expand_home(grok_dir)),
             gemini: GeminiSource::new(expand_home(gemini_dir)),
             remotes: Vec::new(),
+            profiles: None,
+            roots: [
+                ("C", claude_dir),
+                ("H", hermes_db),
+                ("O", opencode_db),
+                ("X", codex_dir),
+                ("G", grok_dir),
+                ("Gm", gemini_dir),
+            ]
+            .into_iter()
+            .map(|(s, p)| (s.into(), expand_home(p)))
+            .collect(),
+            routes: HashMap::new(),
+            context: RosterContext::default(),
+            options: None,
+            warned: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn has_options(&self) -> bool {
+        self.options.is_some()
+    }
+
+    pub fn with_options(mut self, options: MonitorOptions) -> Self {
+        self.profiles = Some(HermesProfiles::new(options.clone()));
+        self.options = Some(options);
+        self
+    }
+
+    /// Scan once, preserving source IDs and admitting routes only from observed sessions.
+    pub(crate) fn scan_local(
+        &mut self,
+        now: f64,
+        fresh_window: f64,
+        idle_timeout: f64,
+    ) -> Vec<Scanned> {
+        self.routes.clear();
+        self.context = RosterContext::default();
+        let mut raw: Vec<(String, PathBuf, Option<BotOwner>, SessionMeta)> = Vec::new();
+        let mut add = |prefix: &str, sessions: Vec<SessionMeta>| {
+            let path = self.roots[prefix].clone();
+            let path = std::fs::canonicalize(&path).unwrap_or(path);
+            raw.extend(
+                sessions
+                    .into_iter()
+                    .map(|s| (prefix.into(), path.clone(), None, s)),
+            );
+        };
+        add("C", self.claude.sessions(now, idle_timeout));
+        add(
+            "O",
+            self.opencode
+                .sessions(now - fresh_window)
+                .into_iter()
+                .map(|mut s| {
+                    s.last_tool = self.opencode.last_tool(&s.id);
+                    s
+                })
+                .collect(),
+        );
+        add("X", Source::sessions(&mut self.codex));
+        add("G", Source::sessions(&mut self.grok));
+        add("Gm", Source::sessions(&mut self.gemini));
+        if let Some(profiles) = &mut self.profiles {
+            raw.extend(
+                profiles
+                    .scan()
+                    .into_iter()
+                    .map(|(p, o, s)| ("H".into(), p, o, s)),
+            );
+            self.context.bots = profiles.bots();
+            self.context.warnings = profiles.warnings.clone();
+            crate::source::diagnostics::registry_health_reported();
+        } else {
+            add(
+                "H",
+                self.hermes
+                    .sessions()
+                    .into_iter()
+                    .map(|mut s| {
+                        s.last_tool = self.hermes.last_tool(&s.id);
+                        s
+                    })
+                    .collect(),
+            );
+        }
+        let mut out = Vec::new();
+        if raw.len() > 60_000 {
+            self.context
+                .warnings
+                .push("Session discovery incomplete: route limit (60000)".into());
+        }
+        for (source, store, owner, meta) in raw.into_iter().take(60_000) {
+            let route = Route {
+                origin: Vec::new(),
+                source: source.clone(),
+                store: path_bytes(&store),
+                vendor: meta.id.as_bytes().to_vec(),
+            }
+            .encode();
+            if Route::decode(&route).is_none() {
+                self.context
+                    .warnings
+                    .push("Session route omitted: invalid or oversized identity".into());
+                continue;
+            }
+            self.routes.insert(
+                route.clone(),
+                Admitted {
+                    alias: format!("{source}:{}", short_id(&meta.id)),
+                    source: source.clone(),
+                    store,
+                    raw: meta.id.clone(),
+                    remote: None,
+                },
+            );
+            if let Some(owner) = owner {
+                self.context.owners.insert(route.clone(), owner);
+            }
+            out.push(Scanned {
+                route,
+                source,
+                meta,
+            });
+        }
+        self.refresh_ticker();
+        self.context.warnings.truncate(128);
+        // Native workers already deliver these full-replacement warnings via
+        // Context. Only headless consumers need the deduplicated stderr copy.
+        for warning in &self.context.warnings {
+            if !crate::source::diagnostics::capturing() && !self.warned.contains(warning) {
+                crate::source::diagnostics::report(&format!("hermon: {warning}"));
+            }
+        }
+        self.warned = self.context.warnings.iter().cloned().collect();
+        out
+    }
+
+    fn refresh_ticker(&mut self) {
+        let Some(options) = &self.options else {
+            return;
+        };
+        let mut logs = self
+            .profiles
+            .as_ref()
+            .map_or_else(Vec::new, HermesProfiles::logs);
+        if let Some(explicit) = &options.hermes_log {
+            let canonical = std::fs::canonicalize(explicit).unwrap_or_else(|_| explicit.clone());
+            let owner = logs
+                .iter()
+                .find(|(p, _)| std::fs::canonicalize(p).ok().as_ref() == Some(&canonical))
+                .and_then(|(_, o)| o.clone());
+            logs = vec![(explicit.clone(), owner)];
+        }
+        let mut seen = HashSet::new();
+        let mut files = Vec::new();
+        for (path, owner) in logs {
+            let canonical = match std::fs::canonicalize(&path) {
+                Ok(p) => p,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    self.context.warnings.push(format!(
+                        "Hermes {}: log unavailable",
+                        owner
+                            .as_ref()
+                            .map_or_else(|| "owner unknown".into(), BotOwner::display)
+                    ));
+                    continue;
+                }
+            };
+            if !seen.insert(canonical.clone()) {
+                continue;
+            }
+            if File::open(&canonical).is_err() {
+                self.context.warnings.push(format!(
+                    "Hermes {}: log unreadable",
+                    owner
+                        .as_ref()
+                        .map_or_else(|| "owner unknown".into(), BotOwner::display)
+                ));
+                continue;
+            }
+            let modified = std::fs::metadata(&canonical)
+                .and_then(|m| m.modified())
+                .ok();
+            let tie = owner.as_ref().map_or_else(
+                || crate::bots::hex(&path_bytes(&canonical)),
+                |o| o.store.clone(),
+            );
+            files.push((modified, tie, canonical, owner));
+        }
+        files.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        for (_, _, path, owner) in files {
+            self.context
+                .ticker
+                .extend(
+                    api_call_ticker(&path, TICKER_LIMIT)
+                        .into_iter()
+                        .map(|line| TickerEntry {
+                            owner: owner.clone(),
+                            line,
+                        }),
+                );
         }
     }
 
@@ -133,6 +359,49 @@ impl Sources {
         session_id: &str,
         replay: Replay,
     ) -> Option<Box<dyn Tailer>> {
+        if session_id.starts_with("hr1:") || key.starts_with("hr1:") {
+            Route::decode(session_id)?;
+            let entry = self.routes.get(session_id)?;
+            if (key.starts_with("hr1:") && key != session_id)
+                || (!key.starts_with("hr1:") && key != entry.alias)
+            {
+                return None;
+            }
+            if let Some(name) = &entry.remote {
+                return self
+                    .remotes
+                    .iter()
+                    .find(|r| r.name() == name)?
+                    .open_tailer(&entry.raw, replay);
+            }
+            if entry.source == "H" {
+                if let Some(profiles) = &self.profiles {
+                    return profiles
+                        .source(&entry.store)?
+                        .open_tailer(&entry.raw, replay);
+                }
+                if std::fs::canonicalize(&self.roots["H"]).ok().as_ref() != Some(&entry.store) {
+                    return None;
+                }
+                return HermesSource::from_path(entry.store.clone())
+                    .open_tailer(&entry.raw, replay);
+            }
+            if std::fs::canonicalize(&self.roots[&entry.source])
+                .ok()
+                .as_ref()
+                != Some(&entry.store)
+            {
+                return None;
+            }
+            return match entry.source.as_str() {
+                "C" => self.claude.open_tailer(&entry.raw, replay),
+                "O" => self.opencode.open_tailer(&entry.raw, replay),
+                "X" => self.codex.open_tailer(&entry.raw, replay),
+                "G" => self.grok.open_tailer(&entry.raw, replay),
+                "Gm" => self.gemini.open_tailer(&entry.raw, replay),
+                _ => None,
+            };
+        }
         if let Some((remote, _)) = key.split_once('/') {
             return self
                 .remotes
@@ -156,7 +425,21 @@ impl Sources {
 /// keys that *are* on the deck, since they change from run to run and a
 /// mistyped one is otherwise a guessing game.
 pub fn resolve_key<'a>(rows: &'a [RosterRow], key: &str) -> anyhow::Result<&'a RosterRow> {
-    if let Some(row) = rows.iter().find(|r| r.key == key) {
+    if let Some(row) = rows.iter().find(|r| r.id == key && key.starts_with("hr1:")) {
+        return Ok(row);
+    }
+    let matches: Vec<_> = rows.iter().filter(|r| r.key == key).collect();
+    if matches.len() > 1 {
+        return Err(anyhow!(
+            "ambiguous session {key}: {}",
+            matches
+                .iter()
+                .map(|r| format!("route={}", r.id))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+    }
+    if let Some(row) = matches.first() {
         return Ok(row);
     }
     let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
@@ -165,6 +448,25 @@ pub fn resolve_key<'a>(rows: &'a [RosterRow], key: &str) -> anyhow::Result<&'a R
     } else {
         anyhow!("no session {key}: valid keys are {}", keys.join(" "))
     })
+}
+
+pub fn resolve_key_context<'a>(
+    rows: &'a [RosterRow],
+    key: &str,
+    context: &RosterContext,
+) -> anyhow::Result<&'a RosterRow> {
+    let matches: Vec<_> = rows.iter().filter(|r| r.key == key).collect();
+    if !key.starts_with("hr1:") && matches.len() > 1 {
+        return Err(anyhow!(
+            "ambiguous session {key}: {}",
+            matches
+                .iter()
+                .map(|r| format!("{} route={}", context.label(r), r.id))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    resolve_key(rows, key)
 }
 
 /// Every session from every source, newest activity first
@@ -188,49 +490,113 @@ pub fn build_roster(
     idle_timeout: f64,
 ) -> Vec<RosterRow> {
     let mut rows = Vec::new();
-
-    for s in sources.claude.sessions(now, idle_timeout) {
-        let tool = s.last_tool.clone();
-        rows.extend(roster_row("C", &s, tool, now, fresh_window, idle_timeout));
-    }
-    for s in sources.hermes.sessions() {
-        let tool = sources.hermes.last_tool(&s.id);
-        rows.extend(roster_row("H", &s, tool, now, fresh_window, idle_timeout));
-    }
-    for s in sources.opencode.sessions(now - fresh_window) {
-        let tool = sources.opencode.last_tool(&s.id);
-        rows.extend(roster_row("O", &s, tool, now, fresh_window, idle_timeout));
-    }
-    for s in Source::sessions(&mut sources.codex) {
-        let tool = s.last_tool.clone();
-        rows.extend(roster_row("X", &s, tool, now, fresh_window, idle_timeout));
-    }
-    for s in Source::sessions(&mut sources.grok) {
-        let tool = s.last_tool.clone();
-        rows.extend(roster_row("G", &s, tool, now, fresh_window, idle_timeout));
-    }
-    for s in Source::sessions(&mut sources.gemini) {
-        let tool = s.last_tool.clone();
-        rows.extend(roster_row("Gm", &s, tool, now, fresh_window, idle_timeout));
+    for scanned in sources.scan_local(now, fresh_window, idle_timeout) {
+        if let Some(mut row) = roster_row(
+            &scanned.source,
+            &scanned.meta,
+            scanned.meta.last_tool.clone(),
+            now,
+            fresh_window,
+            idle_timeout,
+        ) {
+            row.id = scanned.route;
+            rows.push(row);
+        }
     }
     for remote in &sources.remotes {
         for note in remote.notices() {
+            sources.context.warnings.push(note.clone());
             rows.push(remote_note_row(remote.name(), &note, now));
         }
-        for s in remote.sessions() {
-            let tool = s.last_tool.clone();
-            let prefix = remote_prefix(remote.name(), &s.id);
-            rows.extend(roster_row(
-                &prefix,
+        let (sessions, context) = remote.snapshot_context();
+        for mut bot in context.bots {
+            bot.owner.store = format!(
+                "remote:{}:{}",
+                crate::bots::hex(remote.name().as_bytes()),
+                bot.owner.store
+            );
+            bot.owner.origin = remote.name().into();
+            sources.context.bots.push(bot);
+        }
+        sources.context.warnings.extend(
+            context
+                .warnings
+                .into_iter()
+                .map(|w| format!("{}: {w}", remote.name())),
+        );
+        for s in sessions {
+            let Some((prefix, raw)) = s.id.split_once(':') else {
+                continue;
+            };
+            if !crate::bots::source_token(prefix) {
+                continue;
+            }
+            let mut route = if raw.starts_with("hr1:") {
+                let Some(route) = Route::wire(&s.id) else {
+                    continue;
+                };
+                route
+            } else {
+                Route {
+                    origin: Vec::new(),
+                    source: prefix.into(),
+                    store: format!("legacy:{prefix}").into_bytes(),
+                    vendor: raw.as_bytes().to_vec(),
+                }
+            };
+            route.origin = remote.name().as_bytes().to_vec();
+            let id = route.encode();
+            if Route::decode(&id).is_none() {
+                sources.context.warnings.push(format!(
+                    "{}: session route omitted: invalid or oversized identity",
+                    remote.name()
+                ));
+                continue;
+            }
+            let Ok(vendor) = String::from_utf8(route.vendor) else {
+                continue;
+            };
+            if let Some(mut row) = roster_row(
+                &remote_prefix(remote.name(), &s.id),
                 &s,
-                tool,
+                s.last_tool.clone(),
                 now,
                 fresh_window,
                 idle_timeout,
-            ));
+            ) {
+                row.id = id.clone();
+                row.key = format!(
+                    "{remote}/{prefix}:{short}",
+                    remote = remote.name(),
+                    short = short_id(&vendor)
+                );
+                sources.routes.insert(
+                    id.clone(),
+                    Admitted {
+                        alias: row.key.clone(),
+                        source: prefix.into(),
+                        store: PathBuf::new(),
+                        raw: s.id.clone(),
+                        remote: Some(remote.name().into()),
+                    },
+                );
+                if let Some(mut owner) = context.owners.get(&s.id).cloned() {
+                    owner.store = format!(
+                        "remote:{}:{}",
+                        crate::bots::hex(remote.name().as_bytes()),
+                        owner.store
+                    );
+                    owner.origin = remote.name().into();
+                    sources.context.owners.insert(id, owner);
+                }
+                rows.push(row);
+            }
         }
     }
 
+    sources.context.warnings.sort();
+    sources.context.warnings.dedup();
+    sources.context.warnings.truncate(128);
     rows.sort_by(|a, b| b.last_ts.total_cmp(&a.last_ts));
     rows
 }
@@ -405,7 +771,16 @@ pub fn roster_lines(rows: &[RosterRow], ticker: &[StyledLine], now: f64) -> Vec<
         )]),
     ];
 
-    lines.extend(rows.iter().map(row_line));
+    lines.extend(rows.iter().map(|r| {
+        let mut line = row_line(r);
+        // Ownerless remote snapshots must explicitly remain unknown. Local
+        // compatibility rendering keeps its historical columns; production
+        // callers use roster_lines_context for authoritative local labels.
+        if r.id.starts_with("hr1:") && r.key.contains('/') {
+            line.0.push(Seg::new(Sem::Dim, " · owner unknown"));
+        }
+        line
+    }));
     if rows.is_empty() {
         lines.push(StyledLine(vec![Seg::new(
             Sem::Dim,
@@ -421,6 +796,84 @@ pub fn roster_lines(rows: &[RosterRow], ticker: &[StyledLine], now: f64) -> Vec<
             "  recent hermes API calls:",
         )]));
         lines.extend(ticker.iter().cloned());
+    }
+    lines
+}
+
+/// Structured local ticker: bot terms and selector only, before the global cap.
+pub fn bot_ticker(
+    context: &RosterContext,
+    state: &crate::view::ViewState,
+    selected: Option<&str>,
+) -> Vec<StyledLine> {
+    let mut lines = Vec::new();
+    let mut at = 0;
+    while at < context.ticker.len() && lines.len() < TICKER_LIMIT {
+        let owner = &context.ticker[at].owner;
+        let end = at
+            + context.ticker[at..]
+                .iter()
+                .take_while(|e| &e.owner == owner)
+                .count();
+        if state.filter.matches_owner(owner.as_ref(), selected) {
+            let n = (TICKER_LIMIT - lines.len()).min(end - at);
+            for entry in &context.ticker[end - n..end] {
+                let label = entry
+                    .owner
+                    .as_ref()
+                    .map_or_else(|| "owner unknown".into(), BotOwner::display);
+                let mut line = entry.line.clone();
+                line.0.push(Seg::new(Sem::Dim, format!(" · {label}")));
+                lines.push(line);
+            }
+        }
+        at = end;
+    }
+    lines
+}
+
+pub fn roster_lines_context(
+    rows: &[RosterRow],
+    fleet: &[RosterRow],
+    context: &RosterContext,
+    state: &crate::view::ViewState,
+    selected: Option<&str>,
+    now: f64,
+) -> Vec<StyledLine> {
+    let sessions: Vec<_> = rows.iter().filter(|r| !r.id.is_empty()).cloned().collect();
+    let mut lines = roster_lines(&sessions, &[], now);
+    for (index, row) in sessions.iter().enumerate() {
+        let mut line = row_line(row);
+        line.0.push(Seg::new(
+            Sem::Dim,
+            format!(" · {}", context.owner_label(&row.id)),
+        ));
+        lines[index + 2] = line;
+    }
+    let dim = |s: String| StyledLine(vec![Seg::new(Sem::Dim, s)]);
+    lines.insert(
+        0,
+        dim(if state.filter.is_empty() {
+            "Selected view".into()
+        } else {
+            format!("Selected view · {}", state.filter.as_input())
+        }),
+    );
+    for row in &sessions {
+        if fleet.iter().filter(|r| r.key == row.key).count() > 1 {
+            lines.push(dim(format!(
+                "  {} · {} route={}",
+                row.key,
+                context.owner_label(&row.id),
+                row.id
+            )));
+        }
+    }
+    lines.extend(context.overview(fleet).into_iter().map(dim));
+    lines.extend(context.warnings.iter().map(|w| dim(format!("⚠ {w}"))));
+    if !context.ticker.is_empty() {
+        lines.push(dim("Local recent log tails (file recency); bot-filtered API calls; other session filters do not apply".into()));
+        lines.extend(bot_ticker(context, state, selected));
     }
     lines
 }

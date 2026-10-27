@@ -28,6 +28,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use ratatui::{Frame, Terminal};
 
+use crate::bots::{MonitorOptions, RosterContext, routing_key};
 use crate::config::EngineConfig;
 use crate::engine::{Engine, Event, Lifecycle, UiCmd};
 use crate::render::{Sem, StyledLine};
@@ -75,6 +76,11 @@ pub enum ViewMode {
 #[derive(Debug, Default)]
 pub struct App {
     pub roster: Vec<RosterRow>,
+    pub context: RosterContext,
+    pending_context: Option<RosterContext>,
+    pub selected_store: Option<String>,
+    context_received: bool,
+    bot_menu: Option<usize>,
     pub ticker: Vec<StyledLine>,
     /// The selected session's [`RosterRow::id`], not its row number: the
     /// roster is re-sorted by activity every tick, so an index would slide
@@ -138,15 +144,40 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+        if let Some(index) = &mut self.bot_menu {
+            match key.code {
+                KeyCode::Esc => self.bot_menu = None,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    *index = (*index + 1).min(self.context.bots.len())
+                }
+                KeyCode::Char('k') | KeyCode::Up => *index = index.saturating_sub(1),
+                KeyCode::Enter => {
+                    self.selected_store = index
+                        .checked_sub(1)
+                        .and_then(|i| self.context.bots.get(i))
+                        .map(|b| b.owner.store.clone());
+                    self.bot_menu = None;
+                    self.resync_selection();
+                    self.sync_panes();
+                }
+                _ => {}
+            }
+            return;
+        }
         if let Some(palette) = &mut self.palette {
+            let clearing = key.code == KeyCode::Char('c') && palette.focus == PaletteFocus::Sort;
             if palette.handle_key(key.code, &mut self.view) {
                 self.palette = None;
+            }
+            if clearing {
+                self.selected_store = None;
             }
             self.resync_selection();
             self.sync_panes();
             return;
         }
         match key.code {
+            KeyCode::Char('b') => self.bot_menu = Some(0),
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.quit = true;
@@ -172,6 +203,7 @@ impl App {
             KeyCode::Char('p') => self.toggle_pin(),
             KeyCode::Char('c') => {
                 self.view.clear();
+                self.selected_store = None;
                 self.resync_selection();
             }
             code if self.mode == ViewMode::Grid => self.handle_grid_key(code),
@@ -216,7 +248,7 @@ impl App {
     }
 
     fn selected_key(&self) -> Option<String> {
-        self.selected_row().map(|row| row.key.clone())
+        self.selected_row().map(|row| routing_key(row).to_owned())
     }
 
     /// `[p]`: pins or unpins the selected session, then tells the engine
@@ -235,7 +267,7 @@ impl App {
             .roster
             .iter()
             .filter(|row| self.view.is_pinned(&row.id))
-            .map(|row| row.key.clone())
+            .map(|row| routing_key(row).to_owned())
             .collect();
         self.cmds.push(UiCmd::Pinned(pinned_keys));
     }
@@ -250,10 +282,17 @@ impl App {
 
     pub fn apply_event(&mut self, event: Event) {
         match event {
+            Event::Context(context) => {
+                self.context_received = true;
+                self.pending_context = Some(context);
+            }
             Event::Roster(rows) => {
                 // Where the cursor sat, in case its session is gone: falling
                 // back to the same position beats jumping to the top.
                 let position = self.selected_index();
+                let mut context = self.pending_context.take().unwrap_or_default();
+                context.retain_open_owners(&self.context, &self.open_panes, &rows);
+                self.context = context;
                 self.roster = rows;
                 if self.selected_row().is_none() {
                     self.select_at(position);
@@ -347,26 +386,31 @@ impl App {
     /// each call rather than cached, since it is cheap and every mutation
     /// site would otherwise have to remember to invalidate it.
     pub fn visible_rows(&self) -> Vec<&RosterRow> {
-        view::apply(&self.roster, &self.view).rows
+        view::apply_context(
+            &self.roster,
+            &self.view,
+            &self.context,
+            self.selected_store.as_deref(),
+        )
+        .rows
     }
 
-    /// Sessions eligible for a grid slot: the filtered, sorted fleet — which
-    /// already sorts pinned rows first — plus any pinned session the active
-    /// filter hides from the rows entirely (pinning holds the slot even
-    /// though the row itself stays hidden), minus whatever's dismissed with
-    /// `[x]` or, since the M4 lifecycle ticket, evicted by the engine under
-    /// `--max-panes` (see [`Self::apply_lifecycle`]), which land in the same
-    /// `closed` set.
+    /// Production grids use exactly the matched rows. Legacy callers that feed
+    /// roster-only events retain their original hidden-pin slot semantics.
     fn grid_keys(&self) -> Vec<String> {
         let visible = self.visible_rows();
         let visible_ids: HashSet<&str> = visible.iter().map(|row| row.id.as_str()).collect();
         let hidden_pins = self
             .roster
             .iter()
-            .filter(|row| self.view.is_pinned(&row.id) && !visible_ids.contains(row.id.as_str()))
-            .map(|row| row.key.clone());
+            .filter(|row| {
+                !self.context_received
+                    && self.view.is_pinned(&row.id)
+                    && !visible_ids.contains(row.id.as_str())
+            })
+            .map(|row| routing_key(row).to_owned());
         hidden_pins
-            .chain(visible.iter().map(|row| row.key.clone()))
+            .chain(visible.iter().map(|row| routing_key(row).to_owned()))
             .filter(|key| !self.closed.contains(key))
             .collect()
     }
@@ -395,7 +439,7 @@ impl App {
             self.selected_id = self
                 .roster
                 .iter()
-                .find(|row| &row.key == key)
+                .find(|row| routing_key(row) == key.as_str())
                 .map(|row| row.id.clone());
         }
     }
@@ -421,8 +465,8 @@ impl App {
             key: &row.key,
             state: row.state,
             selected: self.selected_id.as_deref() == Some(row.id.as_str()),
-            lines: self.panes.get(&row.key).unwrap_or(&NO_LINES),
-            offset: self.scroll.get(&row.key).copied().unwrap_or(0),
+            lines: self.panes.get(routing_key(row)).unwrap_or(&NO_LINES),
+            offset: self.scroll.get(routing_key(row)).copied().unwrap_or(0),
             attn_elapsed: row.attn_elapsed,
             pinned: self.view.is_pinned(&row.id),
         }
@@ -519,10 +563,22 @@ fn install_panic_hook(restore: fn()) {
 }
 
 pub fn run_tui(config: EngineConfig) -> anyhow::Result<()> {
+    run_tui_options(config, None)
+}
+
+pub fn run_tui_options(
+    config: EngineConfig,
+    options: Option<MonitorOptions>,
+) -> anyhow::Result<()> {
     let (event_tx, event_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
-    let app = App::new(&config);
-    let engine = Engine::spawn(config, event_tx, cmd_rx);
+    let mut app = App::new(&config);
+    if let Some(bot) = options.as_ref().and_then(|o| o.bot.as_ref()) {
+        app.view
+            .set_filter(&format!("bot={bot}"))
+            .map_err(anyhow::Error::msg)?;
+    }
+    let engine = Engine::spawn_options(config, options, event_tx, cmd_rx);
 
     install_panic_hook(restore_terminal);
     let result = run_terminal(app, &event_rx, &cmd_tx);
@@ -577,8 +633,9 @@ fn run_terminal(mut app: App, rx: &Receiver<Event>, cmd_tx: &Sender<UiCmd>) -> a
 /// sort/filter overlay and the help overlay on top when either is open.
 pub fn draw(frame: &mut Frame, app: &App) {
     let header_height = u16::from(header_active(app));
-    let [header, body, footer] = Layout::vertical([
+    let [header, warnings, body, footer] = Layout::vertical([
         Constraint::Length(header_height),
+        Constraint::Length(app.context.warnings.len().min(3) as u16),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
@@ -586,6 +643,22 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if header_height > 0 {
         render_header(frame, header, app);
     }
+    let warning_lines = app
+        .context
+        .warnings
+        .iter()
+        .take(3)
+        .enumerate()
+        .map(|(i, w)| {
+            let text = if i == 2 && app.context.warnings.len() > 3 {
+                format!("{w} (+{} notices; [b]ots)", app.context.warnings.len() - 3)
+            } else {
+                w.clone()
+            };
+            Line::styled(text, palette::style(Sem::Error))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(warning_lines), warnings);
     match app.mode {
         ViewMode::List => list::render(frame, body, app),
         ViewMode::Grid => render_grid(frame, body, app),
@@ -593,10 +666,47 @@ pub fn draw(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(footer_line(app)), footer);
 
     if let Some(palette) = &app.palette {
-        let (matched, total) = overlay::draft_matches(&app.roster, &app.view, &palette.input);
+        let (matched, total) = overlay::draft_matches_context(
+            &app.roster,
+            &app.view,
+            &palette.input,
+            &app.context,
+            app.selected_store.as_deref(),
+        );
         overlay::render(frame, frame.area(), &app.view, palette, matched, total);
     }
 
+    if let Some(selected) = app.bot_menu {
+        let mut labels = vec!["All bots (clears selector only)".to_string()];
+        labels.extend(app.context.overview(&app.roster).into_iter().skip(1));
+        labels.extend(app.context.warnings.iter().map(|w| format!("⚠ {w}")));
+        let area = centered(
+            frame.area(),
+            frame.area().width.saturating_sub(4),
+            (labels.len() as u16).saturating_add(4),
+        );
+        let block =
+            Block::bordered().title("All discovered bots; counts in current session window");
+        let inner = block.inner(area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+        let offset = (selected + 1).saturating_sub(inner.height as usize);
+        let lines = labels
+            .into_iter()
+            .enumerate()
+            .map(|(i, line)| {
+                Line::styled(
+                    format!("{} {line}", if i == selected { ">" } else { " " }),
+                    if i == selected {
+                        palette::selection_bg()
+                    } else {
+                        palette::style(Sem::Plain)
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), inner);
+    }
     if app.show_help {
         let area = centered(frame.area(), 30, 14);
         frame.render_widget(Clear, area);
@@ -612,7 +722,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 /// `attention_first` alone (`[a]`) does not raise it — that toggle has no
 /// chip of its own, per the artboard.
 fn header_active(app: &App) -> bool {
-    app.view.sort_key.is_some() || !app.view.filter.is_empty() || pin_overflow(app) > 0
+    app.selected_store.is_some()
+        || app.view.sort_key.is_some()
+        || !app.view.filter.is_empty()
+        || pin_overflow(app) > 0
 }
 
 /// How many pinned sessions exceed `--max-panes`: pinning holds a grid slot
@@ -627,9 +740,26 @@ fn pin_overflow(app: &App) -> usize {
 /// filter term on the left, `N/M shown · [s]ort [f]ilter [c]lear`
 /// right-aligned.
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
-    let out = view::apply(&app.roster, &app.view);
+    let out = view::apply_context(
+        &app.roster,
+        &app.view,
+        &app.context,
+        app.selected_store.as_deref(),
+    );
 
     let mut left: Vec<Span> = Vec::new();
+    if let Some(store) = &app.selected_store {
+        let label = app
+            .context
+            .bots
+            .iter()
+            .find(|b| &b.owner.store == store)
+            .map_or_else(|| "unavailable".into(), |b| b.owner.display());
+        left.push(Span::styled(
+            format!("[bot selector: {label}] "),
+            palette::style(Sem::Ok),
+        ));
+    }
     let overflow = pin_overflow(app);
     if overflow > 0 {
         left.push(Span::styled(
@@ -675,10 +805,11 @@ fn footer_text(app: &App) -> &'static str {
 /// The footer's key hints, plus the mute indicator when `[m]` is on.
 fn footer_line(app: &App) -> String {
     let indicator = palette::mute_indicator(app.muted);
+    let bot_help = " [b]ots bot=slug*";
     if indicator.is_empty() {
-        footer_text(app).to_string()
+        format!("{}{bot_help}", footer_text(app))
     } else {
-        format!("{} {indicator}", footer_text(app))
+        format!("{} {indicator}{bot_help}", footer_text(app))
     }
 }
 
@@ -701,7 +832,7 @@ fn render_grid(frame: &mut Frame, area: Rect, app: &App) {
     }
     if app.zoom {
         if let Some(row) = app.selected_row() {
-            pane::render(frame, tiles, &app.pane_for(row));
+            pane::render_labeled(frame, tiles, &app.pane_for(row), &app.context.label(row));
         }
         return;
     }
@@ -719,8 +850,12 @@ fn render_tiles(frame: &mut Frame, area: Rect, app: &App) {
     let (rows, cols) = tiling(slots);
     let cells = tile_rects(area, rows, cols);
     for (cell, key) in cells.iter().zip(&visible) {
-        if let Some(row) = app.roster.iter().find(|row| &row.key == key) {
-            pane::render(frame, *cell, &app.pane_for(row));
+        if let Some(row) = app
+            .roster
+            .iter()
+            .find(|row| routing_key(row) == key.as_str())
+        {
+            pane::render_labeled(frame, *cell, &app.pane_for(row), &app.context.label(row));
         }
     }
     if hidden > 0

@@ -39,16 +39,37 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(to_lines(&stats)), stats_area);
 
     let selected = app.selected_row();
-    let title = selected.map_or("—", |r| r.key.as_str());
+    let title = selected.map_or_else(|| "—".into(), |r| app.context.label(r));
     let body = selected
         .map(|row| preview_lines(app, row))
         .unwrap_or_default();
-    render_preview(frame, preview_area, title, &body);
+    render_preview(frame, preview_area, &title, &body);
 }
 
 /// Fleet totals, plus the newest API call when the ticker has one.
 fn stats_lines(app: &App) -> Vec<StyledLine> {
-    let mut lines = vec![totals_line(&app.roster)];
+    let rows: Vec<_> = app
+        .visible_rows()
+        .into_iter()
+        .filter(|r| !r.id.is_empty())
+        .cloned()
+        .collect();
+    let mut total = totals_line(&rows);
+    if app.context_received {
+        total.0.insert(0, Seg::new(Sem::Dim, "Selected view · "));
+    }
+    let mut lines = vec![total];
+    if app.context_received {
+        if !app.context.ticker.is_empty() {
+            lines.push(StyledLine(vec![Seg::new(Sem::Dim, "Local recent log tails (file recency); bot-filtered API calls; other session filters do not apply")]));
+            lines.extend(crate::roster::bot_ticker(
+                &app.context,
+                &app.view,
+                app.selected_store.as_deref(),
+            ));
+        }
+        return lines;
+    }
     if let Some(last) = app.ticker.last() {
         lines.push(StyledLine(vec![Seg::new(
             Sem::Dim,
@@ -62,7 +83,7 @@ fn stats_lines(app: &App) -> Vec<StyledLine> {
 /// pane has produced lines, and roster metadata until then — a pane that
 /// was just opened, or a source whose tailer cannot read its store.
 pub fn preview_lines(app: &App, row: &RosterRow) -> Vec<StyledLine> {
-    match app.panes.get(&row.key) {
+    match app.panes.get(crate::bots::routing_key(row)) {
         Some(buffer) if !buffer.is_empty() => buffer
             .iter()
             .skip(buffer.len().saturating_sub(PREVIEW_BODY))

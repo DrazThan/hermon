@@ -18,6 +18,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use chrono::DateTime;
 use tempfile::TempDir;
 
+mod common;
+
 use hermon::remote::proto::{AgentMsg, PROTO_VERSION, encode_agent_msg};
 use hermon::remote::source::RemoteSource;
 use hermon::roster::{RosterRow, Sources, build_roster};
@@ -185,7 +187,12 @@ fn remote_sessions_tail_disconnect_and_reconnect_through_a_real_agent() {
     })
     .expect("the remote's claude session reaches the roster");
     assert_eq!(row.key, "job1/C:555555");
-    assert_eq!(row.id, "C:11111111-2222-3333-4444-555555555555");
+    common::hermes_profiles::require_hr1(
+        &row.id,
+        b"job1",
+        "C",
+        b"11111111-2222-3333-4444-555555555555",
+    );
     assert_eq!(row.model, "claude-sonnet-5");
     assert!(
         !row.title.contains("⌁ disconnected"),
