@@ -89,8 +89,16 @@ pub struct SourceArgs {
     pub claude_dir: String,
 
     /// Hermes state.db path.
-    #[arg(long, default_value_t = default_hermes_db())]
-    pub hermes_db: String,
+    #[arg(long, conflicts_with = "hermes_home")]
+    pub hermes_db: Option<String>,
+
+    /// Hermes home: main state.db and immediate profiles/*/state.db.
+    #[arg(long)]
+    pub hermes_home: Option<String>,
+
+    /// Visible, clearable bot filter (case-insensitive; * is a wildcard).
+    #[arg(long, value_parser = parse_bot)]
+    pub bot: Option<String>,
 
     /// OpenCode opencode.db path.
     #[arg(long, default_value_t = default_opencode_db())]
@@ -109,8 +117,8 @@ pub struct SourceArgs {
     pub gemini_dir: String,
 
     /// Hermes agent.log (roster API-call ticker).
-    #[arg(long, default_value_t = default_hermes_log())]
-    pub hermes_log: String,
+    #[arg(long)]
+    pub hermes_log: Option<String>,
 
     /// Safety ceiling for a session stuck mid-turn with no activity.
     #[arg(long, default_value_t = 180.0)]
@@ -208,6 +216,15 @@ pub struct SourceArgs {
 }
 
 impl SourceArgs {
+    pub fn monitor_options(&self) -> crate::bots::MonitorOptions {
+        crate::bots::MonitorOptions {
+            hermes_home: self.hermes_home.as_deref().map(crate::bots::expand_home),
+            hermes_db: self.hermes_db.as_deref().map(crate::bots::expand_home),
+            hermes_log: self.hermes_log.as_deref().map(crate::bots::expand_home),
+            bot: self.bot.clone(),
+        }
+    }
+
     /// Builds [`NotifyCfg`] from the `--no-notify*`/`--notify-cooldown`
     /// flags. `--no-notify` is the master switch: it wins over any per-kind
     /// flag rather than combining with it, so `--no-notify
@@ -244,23 +261,14 @@ fn default_claude_dir() -> String {
         .to_string()
 }
 
-fn default_hermes_db() -> String {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".hermes")
-        .join("state.db")
-        .display()
-        .to_string()
-}
-
-fn default_hermes_log() -> String {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".hermes")
-        .join("logs")
-        .join("agent.log")
-        .display()
-        .to_string()
+fn parse_bot(s: &str) -> Result<String, String> {
+    if s.trim().is_empty() {
+        return Err("blank bot pattern".into());
+    }
+    if s.chars().any(char::is_whitespace) {
+        return Err("bot pattern cannot contain whitespace".into());
+    }
+    Ok(s.into())
 }
 
 fn default_opencode_db() -> String {

@@ -36,21 +36,27 @@ pub enum MenuRow {
         glyph: &'static str,
     },
     /// "… N more sessions"
-    More { count: usize },
+    More {
+        count: usize,
+    },
     /// Separator before actions
     Separator,
     /// "Mute notifications", a checkmark item bound to the same mute the
     /// TUI's `[m]` flips ([`crate::notify::AlertHistory::set_muted`]). The
     /// mute is per-process: muting here does not mute a running `watch`.
-    MuteToggle { muted: bool },
+    MuteToggle {
+        muted: bool,
+    },
     /// "Open hermon watch"
     OpenWatch,
+    Notice(String),
+    ClearFilter,
     /// "Quit"
     Quit,
 }
 
 #[cfg(target_os = "macos")]
-pub use mac::run;
+pub use mac::{run, run_options};
 
 /// Non-macOS builds still expose the `menubar` subcommand (so `cargo build`
 /// succeeds everywhere) but refuse to run it — no tray backend exists there
@@ -58,6 +64,14 @@ pub use mac::run;
 #[cfg(not(target_os = "macos"))]
 pub fn run(_config: crate::config::EngineConfig) -> anyhow::Result<()> {
     anyhow::bail!("hermon menubar: macOS only")
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_options(
+    config: crate::config::EngineConfig,
+    _options: Option<crate::bots::MonitorOptions>,
+) -> anyhow::Result<()> {
+    run(config)
 }
 
 /// The status item's title: the live count always, `⏸ n` / `⚠ n` appended
@@ -199,6 +213,8 @@ pub fn menu_label(row: &MenuRow) -> String {
         MenuRow::Separator => String::new(),
         MenuRow::MuteToggle { .. } => "Mute notifications".to_string(),
         MenuRow::OpenWatch => "Open hermon watch".to_string(),
+        MenuRow::Notice(text) => text.clone(),
+        MenuRow::ClearFilter => "Clear bot filter (All)".into(),
         MenuRow::Quit => "Quit".to_string(),
     }
 }

@@ -215,7 +215,7 @@ fn status_line(palette: &Palette, matched: usize, total: usize) -> Line<'static>
 
 fn help_line() -> Line<'static> {
     Line::from(Span::styled(
-        "[\u{21b5}] apply   [c] clear all   [Esc] cancel",
+        "[\u{21b5}] apply [c] clear all [Esc] cancel · bot=slug*",
         palette::style(Sem::Dim),
     ))
 }
@@ -228,11 +228,27 @@ pub fn draft_matches(
     view: &ViewState,
     input: &str,
 ) -> (usize, usize) {
+    draft_matches_context(
+        rows,
+        view,
+        input,
+        &crate::bots::RosterContext::default(),
+        None,
+    )
+}
+
+pub fn draft_matches_context(
+    rows: &[crate::roster::RosterRow],
+    view: &ViewState,
+    input: &str,
+    context: &crate::bots::RosterContext,
+    selected: Option<&str>,
+) -> (usize, usize) {
     match Filter::parse(input) {
         Ok(filter) => {
             let mut probe = view.clone();
             probe.filter = filter;
-            let out = crate::view::apply(rows, &probe);
+            let out = crate::view::apply_context(rows, &probe, context, selected);
             (out.matched, out.total)
         }
         Err(_) => (0, rows.len()),

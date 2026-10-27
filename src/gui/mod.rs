@@ -26,6 +26,7 @@ use anyhow::anyhow;
 use eframe::egui;
 
 use crate::arbitration::{self, PidGuard, UiKind};
+use crate::bots::{MonitorOptions, RosterContext, routing_key};
 use crate::config::EngineConfig;
 use crate::engine::{Engine, Event, Lifecycle, UiCmd};
 use crate::render::StyledLine;
@@ -56,6 +57,13 @@ const GRID_STORAGE_KEY: &str = "hermon-grid";
 /// Opens the window and blocks until it closes, then shuts the engine down
 /// and joins it.
 pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
+    run_gui_options(config, None)
+}
+
+pub fn run_gui_options(
+    config: EngineConfig,
+    options: Option<MonitorOptions>,
+) -> anyhow::Result<()> {
     // The store paths the engine is watching, for the empty state — taken
     // before `config` moves into the engine below.
     let paths = vec![
@@ -71,7 +79,8 @@ pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
     let _pidfile = config.notify.any_enabled().then(claim_notifier).flatten();
     let (event_tx, event_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
-    let engine = Engine::spawn(config, event_tx, cmd_rx);
+    let initial_bot = options.as_ref().and_then(|o| o.bot.clone());
+    let engine = Engine::spawn_options(config, options, event_tx, cmd_rx);
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -94,6 +103,10 @@ pub fn run_gui(config: EngineConfig) -> anyhow::Result<()> {
                 paths,
                 max_panes,
             );
+            if let Some(bot) = &initial_bot {
+                app.filter_input = format!("bot={bot}");
+                app.filter_error = app.view.set_filter(&app.filter_input).err();
+            }
             app.restore(cc.storage);
             Ok(Box::new(app))
         }),
@@ -149,6 +162,9 @@ fn wake(events: Receiver<Event>, ctx: egui::Context) -> Receiver<Event> {
 /// it without a window.
 pub struct App {
     pub roster: Vec<RosterRow>,
+    pub context: RosterContext,
+    pending_context: Option<RosterContext>,
+    pub selected_store: Option<String>,
     pub ticker: Vec<StyledLine>,
     /// The selected session's [`RosterRow::id`], not its row number: the
     /// roster re-sorts by activity every tick. #75's table sets it; the pane
@@ -209,6 +225,9 @@ impl App {
     ) -> Self {
         App {
             roster: Vec::new(),
+            context: RosterContext::default(),
+            pending_context: None,
+            selected_store: None,
             ticker: Vec::new(),
             selected_id: None,
             panes: HashMap::new(),
@@ -264,7 +283,7 @@ impl App {
             .roster
             .iter()
             .filter(|row| self.view.is_pinned(&row.id))
-            .map(|row| row.key.clone())
+            .map(|row| routing_key(row).to_owned())
             .collect();
         let _ = self.cmds.send(UiCmd::Pinned(pinned_keys));
     }
@@ -275,7 +294,7 @@ impl App {
         while let Ok(event) = self.events.try_recv() {
             self.apply_event(event);
         }
-        let title = title_for(self.live_count());
+        let title = title_for(self.live_count_selected());
         (title != self.title).then(|| {
             self.title = title.clone();
             title
@@ -284,7 +303,13 @@ impl App {
 
     pub fn apply_event(&mut self, event: Event) {
         match event {
-            Event::Roster(rows) => self.roster = rows,
+            Event::Context(context) => self.pending_context = Some(context),
+            Event::Roster(rows) => {
+                let mut context = self.pending_context.take().unwrap_or_default();
+                context.retain_open_owners(&self.context, &self.open_panes, &rows);
+                self.context = context;
+                self.roster = rows;
+            }
             Event::Ticker(lines) => self.ticker = lines,
             Event::PaneLines { key, lines } => self.buffer_pane(&key, lines),
             Event::Lifecycle { key, change } => self.apply_lifecycle(&key, change),
@@ -294,13 +319,22 @@ impl App {
         }
     }
 
-    /// Sessions the fleet counts as live, using the TUI's vocabulary: ⏸/⚠
-    /// rows are attention, not live (`ui::list`'s fleet totals).
+    /// Selection and counts come from the shared matched session set.
     pub fn live_count(&self) -> usize {
-        self.roster
-            .iter()
-            .filter(|row| row.state == Liveness::Live)
-            .count()
+        self.live_count_selected()
+    }
+
+    fn live_count_selected(&self) -> usize {
+        view::apply_context(
+            &self.roster,
+            &self.view,
+            &self.context,
+            self.selected_store.as_deref(),
+        )
+        .rows
+        .into_iter()
+        .filter(|r| !r.id.is_empty() && r.state == Liveness::Live)
+        .count()
     }
 
     /// Drops a pane's buffer when the engine closes or reopens its tailer,
@@ -348,12 +382,17 @@ impl App {
         if !self.grid {
             return self.selected_key().into_iter().collect();
         }
-        view::apply(&self.roster, &self.view)
-            .rows
-            .iter()
-            .take(self.max_panes)
-            .map(|row| row.key.clone())
-            .collect()
+        view::apply_context(
+            &self.roster,
+            &self.view,
+            &self.context,
+            self.selected_store.as_deref(),
+        )
+        .rows
+        .iter()
+        .take(self.max_panes)
+        .map(|row| routing_key(row).to_owned())
+        .collect()
     }
 
     /// Brings the engine's open tailers in line with what the window shows,
@@ -384,14 +423,19 @@ impl App {
     /// the filter hides it.
     pub fn selected_row(&self) -> Option<&RosterRow> {
         let id = self.selected_id.as_deref()?;
-        view::apply(&self.roster, &self.view)
-            .rows
-            .into_iter()
-            .find(|row| row.id == id)
+        view::apply_context(
+            &self.roster,
+            &self.view,
+            &self.context,
+            self.selected_store.as_deref(),
+        )
+        .rows
+        .into_iter()
+        .find(|row| row.id == id)
     }
 
     fn selected_key(&self) -> Option<String> {
-        self.selected_row().map(|row| row.key.clone())
+        self.selected_row().map(|row| routing_key(row).to_owned())
     }
 
     /// Where the selected session currently sits among the visible
@@ -402,16 +446,27 @@ impl App {
         self.selected_id
             .as_ref()
             .and_then(|id| {
-                view::apply(&self.roster, &self.view)
-                    .rows
-                    .iter()
-                    .position(|row| &row.id == id)
+                view::apply_context(
+                    &self.roster,
+                    &self.view,
+                    &self.context,
+                    self.selected_store.as_deref(),
+                )
+                .rows
+                .iter()
+                .position(|row| &row.id == id)
             })
             .unwrap_or(0)
     }
 
     fn select_at(&mut self, position: usize) {
-        let rows = view::apply(&self.roster, &self.view).rows;
+        let rows = view::apply_context(
+            &self.roster,
+            &self.view,
+            &self.context,
+            self.selected_store.as_deref(),
+        )
+        .rows;
         let position = position.min(rows.len().saturating_sub(1));
         self.selected_id = rows.get(position).map(|row| row.id.clone());
     }
@@ -476,6 +531,10 @@ impl App {
     /// The body: the fleet table with the pane area under it, or a single
     /// zoomed pane with the window to itself.
     fn draw(&mut self, ui: &mut egui::Ui) {
+        if self.selected_row().is_none() {
+            self.select_at(0);
+        }
+        roster::render_warnings(ui, &self.context);
         self.handle_keys(ui.ctx());
         if self.zoomed && self.selected_row().is_some() {
             self.draw_panes(ui);
@@ -515,7 +574,7 @@ impl App {
                 self.selected_id = self
                     .roster
                     .iter()
-                    .find(|row| &row.key == key)
+                    .find(|row| routing_key(row) == key.as_str())
                     .map(|row| row.id.clone());
             }
             if action.double_clicked {
@@ -528,20 +587,24 @@ impl App {
     /// its buffer the transcript, its view the scroll state — three maps that
     /// stay disjoint so the draw can borrow them all at once.
     fn draw_pane(&mut self, ui: &mut egui::Ui, key: &str) -> pane::PaneAction {
-        let Some(row) = self.roster.iter().find(|row| row.key == key) else {
+        let Some(row) = self.roster.iter().find(|row| routing_key(row) == key) else {
             return pane::PaneAction::default();
         };
+        let label = self.context.label(row);
         let widget = pane::Pane {
-            key: &row.key,
+            key: &label,
             model: &row.model,
             state: row.state,
             selected: self.selected_id.as_deref() == Some(row.id.as_str()),
             pinned: self.view.is_pinned(&row.id),
             attn_elapsed: row.attn_elapsed,
-            lines: self.panes.get(&row.key).unwrap_or(&NO_LINES),
+            lines: self.panes.get(routing_key(row)).unwrap_or(&NO_LINES),
         };
-        let view = self.pane_views.entry(row.key.clone()).or_default();
-        pane::render(ui, &widget, view)
+        let view = self
+            .pane_views
+            .entry(routing_key(row).to_owned())
+            .or_default();
+        ui.push_id(key, |ui| pane::render(ui, &widget, view)).inner
     }
 }
 

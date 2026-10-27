@@ -37,16 +37,32 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// handler matches on these rather than on retained item handles.
 const ID_MUTE: &str = "hermon:mute";
 const ID_OPEN: &str = "hermon:open";
+const ID_CLEAR: &str = "hermon:clear-filter";
 const ID_QUIT: &str = "hermon:quit";
 
 pub fn run(config: EngineConfig) -> anyhow::Result<()> {
+    run_options(config, None)
+}
+
+pub fn run_options(
+    config: EngineConfig,
+    options: Option<crate::bots::MonitorOptions>,
+) -> anyhow::Result<()> {
     // The pidfile claims the notifier role, not merely "menubar is running":
     // a `menubar --no-notify` must leave `watch` notifying (#72).
     let pidfile = config.notify.any_enabled().then(claim_notifier).flatten();
 
     let (event_tx, event_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
-    let engine = Engine::spawn(config, event_tx, cmd_rx);
+    let mut view = crate::view::ViewState::default();
+    if let Some(bot) = options.as_ref().and_then(|o| o.bot.as_ref()) {
+        view.set_filter(&format!("bot={bot}"))
+            .map_err(anyhow::Error::msg)?;
+    }
+    let mut context = crate::bots::RosterContext::default();
+    let mut fleet = Vec::new();
+    let mut pending_context = None;
+    let engine = Engine::spawn_options(config, options, event_tx, cmd_rx);
     let mut engine = Some(engine);
     let mut pidfile = pidfile;
 
@@ -69,7 +85,7 @@ pub fn run(config: EngineConfig) -> anyhow::Result<()> {
             // tray-icon's own guidance (creating it any earlier has shown up
             // as a blank item on macOS).
             TaoEvent::NewEvents(StartCause::Init) => {
-                shown = build_menu(&rows, muted);
+                shown = menu_rows(&rows, &view, &context, muted);
                 icon = Some(icon_state(&rows, muted));
                 let mut builder = TrayIconBuilder::new().with_title(status_title(&rows, muted));
                 if let Some(menu) = menu_from(&shown) {
@@ -89,9 +105,15 @@ pub fn run(config: EngineConfig) -> anyhow::Result<()> {
             TaoEvent::MainEventsCleared => {
                 let mut fresh = false;
                 for engine_event in event_rx.try_iter() {
-                    if let Event::Roster(new_rows) = engine_event {
-                        rows = new_rows;
-                        fresh = true;
+                    match engine_event {
+                        Event::Context(c) => pending_context = Some(c),
+                        Event::Roster(new_rows) => {
+                            context = pending_context.take().unwrap_or_default();
+                            fleet = new_rows;
+                            rows = selected_rows(&fleet, &view, &context);
+                            fresh = true;
+                        }
+                        _ => {}
                     }
                 }
 
@@ -104,6 +126,11 @@ pub fn run(config: EngineConfig) -> anyhow::Result<()> {
                             }
                             fresh = true;
                         }
+                        ID_CLEAR => {
+                            view.clear();
+                            rows = selected_rows(&fleet, &view, &context);
+                            fresh = true;
+                        }
                         ID_OPEN => open_watch(),
                         ID_QUIT => *control_flow = ControlFlow::Exit,
                         // Session and summary rows are readouts, not actions.
@@ -114,7 +141,7 @@ pub fn run(config: EngineConfig) -> anyhow::Result<()> {
                 if fresh && let Some(tray) = &tray {
                     tray.set_title(Some(status_title(&rows, muted)));
 
-                    let wanted = build_menu(&rows, muted);
+                    let wanted = menu_rows(&rows, &view, &context, muted);
                     if wanted != shown {
                         tray.set_menu(menu_from(&wanted).map(|m| Box::new(m) as _));
                         shown = wanted;
@@ -148,6 +175,50 @@ pub fn run(config: EngineConfig) -> anyhow::Result<()> {
     })
 }
 
+fn selected_rows(
+    fleet: &[RosterRow],
+    view: &crate::view::ViewState,
+    context: &crate::bots::RosterContext,
+) -> Vec<RosterRow> {
+    crate::view::apply_context(fleet, view, context, None)
+        .rows
+        .into_iter()
+        .cloned()
+        .map(|mut r| {
+            r.key = context.label(&r);
+            r
+        })
+        .collect()
+}
+
+fn menu_rows(
+    rows: &[RosterRow],
+    view: &crate::view::ViewState,
+    context: &crate::bots::RosterContext,
+    muted: bool,
+) -> Vec<MenuRow> {
+    let mut menu = build_menu(rows, muted);
+    let label = if view.filter.is_empty() {
+        "Selected view · All".into()
+    } else {
+        format!("Selected view · {}", view.filter.as_input())
+    };
+    menu.insert(0, MenuRow::Notice(label));
+    menu.splice(
+        1..1,
+        context
+            .warnings
+            .iter()
+            .take(8)
+            .cloned()
+            .map(MenuRow::Notice),
+    );
+    if !view.filter.is_empty() {
+        menu.insert(1, MenuRow::ClearFilter);
+    }
+    menu
+}
+
 fn claim_notifier() -> Option<PidGuard> {
     let dir = arbitration::runtime_dir()?;
     match arbitration::claim(&dir, UiKind::Menubar) {
@@ -174,6 +245,7 @@ fn menu_from(items: &[MenuRow]) -> Option<Menu> {
                 menu.append(&CheckMenuItem::with_id(ID_MUTE, label, true, *muted, None))
             }
             MenuRow::OpenWatch => menu.append(&MenuItem::with_id(ID_OPEN, label, true, None)),
+            MenuRow::ClearFilter => menu.append(&MenuItem::with_id(ID_CLEAR, label, true, None)),
             MenuRow::Quit => menu.append(&MenuItem::with_id(ID_QUIT, label, true, None)),
             // Readouts: shown, never clickable.
             _ => menu.append(&MenuItem::new(label, false, None)),

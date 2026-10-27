@@ -69,9 +69,13 @@ pub struct Pane<'a> {
 
 /// Draws the pane into `area`, border included.
 pub fn render(frame: &mut Frame, area: Rect, pane: &Pane) {
+    render_labeled(frame, area, pane, pane.key);
+}
+
+pub fn render_labeled(frame: &mut Frame, area: Rect, pane: &Pane, label: &str) {
     let block = Block::bordered()
         .border_style(border_style(pane.state, pane.selected, pane.pinned))
-        .title(title(pane.key, pane.state));
+        .title(title(label, pane.state));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.is_empty() {

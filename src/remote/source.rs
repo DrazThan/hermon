@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::bots::{BotInfo, BotOwner, RosterContext, Route};
 use crate::remote::proto::{
     AgentMsg, Decoded, HostCmd, PROTO_VERSION, decode_agent_msg, encode_host_cmd,
 };
@@ -158,6 +159,9 @@ struct Shared {
     /// the sessions stay on the deck for their fresh window rather than
     /// vanishing the instant the pipe breaks.
     snapshot: Vec<SessionMeta>,
+    context: RosterContext,
+    pending_context: Option<RosterContext>,
+    ownership_notice: Option<String>,
     tails: HashMap<String, TailQueue>,
     /// Frames refused for exceeding [`MAX_FRAME_BYTES`], this connection.
     oversized: u64,
@@ -249,6 +253,26 @@ impl RemoteSource {
             .cloned()
             .map(|s| if down { mark_disconnected(s) } else { s })
             .collect()
+    }
+
+    pub fn snapshot_context(&self) -> (Vec<SessionMeta>, RosterContext) {
+        let shared = lock(&self.shared);
+        let down = !matches!(shared.link, Link::Up { .. });
+        let mut context = shared.context.clone();
+        if down {
+            for bot in &mut context.bots {
+                bot.available = false;
+            }
+        }
+        (
+            shared
+                .snapshot
+                .iter()
+                .cloned()
+                .map(|s| if down { mark_disconnected(s) } else { s })
+                .collect(),
+            context,
+        )
     }
 
     /// What this remote itself has to say on the deck: its link state, plus
@@ -506,6 +530,16 @@ fn notices(name: &str, shared: &Shared) -> Vec<String> {
              or add to the image{times}"
         ));
     }
+    if let Some(note) = &shared.ownership_notice {
+        out.push(format!("⚠ {name} — {note}"));
+    }
+    out.extend(
+        shared
+            .context
+            .warnings
+            .iter()
+            .map(|w| format!("⚠ {name} — {w}")),
+    );
     if shared.truncated {
         out.push(format!(
             "⚠ {name} — snapshot truncated at {MAX_SNAP_SESSIONS} sessions"
@@ -572,6 +606,9 @@ fn apply_frame(shared: &mut Shared, msg: AgentMsg, now: f64) -> Applied {
             // `stderr_dropped` is deliberately not among them: it is a
             // running total for the remote's whole life, so an agent cannot
             // erase the evidence of a flood by reconnecting.
+            shared.pending_context = None;
+            shared.context = RosterContext::default();
+            shared.ownership_notice = None;
             shared.oversized = 0;
             shared.truncated = false;
             shared.skew = None;
@@ -587,10 +624,51 @@ fn apply_frame(shared: &mut Shared, msg: AgentMsg, now: f64) -> Applied {
             )
         }
         _ if !matches!(shared.link, Link::Up { .. }) => Applied::Nothing,
+        AgentMsg::BotContext {
+            owners,
+            bots,
+            warnings,
+        } => {
+            shared.pending_context = validate_context(owners, bots, warnings);
+            shared.ownership_notice = shared
+                .pending_context
+                .is_none()
+                .then(|| "ownership metadata omitted: invalid or over cap".into());
+            Applied::Nothing
+        }
         AgentMsg::Snap { mut sessions } => {
             shared.truncated = sessions.len() > MAX_SNAP_SESSIONS;
             sessions.truncate(MAX_SNAP_SESSIONS);
-            shared.snapshot = sessions.into_iter().map(sanitize_meta).collect();
+            shared.snapshot = sessions
+                .into_iter()
+                .filter(|s| {
+                    let qualified = s.id.starts_with("hr1:")
+                        || s.id
+                            .split_once(':')
+                            .is_some_and(|(_, id)| id.starts_with("hr1:"));
+                    let valid = !qualified || Route::wire(&s.id).is_some();
+                    if !valid {
+                        shared.ownership_notice =
+                            Some("session route omitted: invalid or oversized identity".into());
+                    }
+                    valid
+                })
+                .map(sanitize_meta)
+                .collect();
+            let mut context = shared.pending_context.take().unwrap_or_default();
+            let owner_count = context.owners.len();
+            context.owners.retain(|id, owner| {
+                shared.snapshot.iter().any(|s| &s.id == id)
+                    && context.bots.iter().any(|b| b.owner.store == owner.store)
+                    && Route::wire(id).is_some_and(|r| {
+                        r.source == "H" && owner.store == crate::bots::store_id("", &r.store)
+                    })
+            });
+            if context.owners.len() != owner_count {
+                shared.ownership_notice =
+                    Some("ownership metadata omitted: invalid session attribution".into());
+            }
+            shared.context = context;
             if shared.skew.is_none()
                 && let Some(newest) = shared.snapshot.iter().map(|s| s.last_ts).reduce(f64::max)
                 && newest - now > SKEW_WARN_SECS
@@ -623,6 +701,50 @@ fn apply_frame(shared: &mut Shared, msg: AgentMsg, now: f64) -> Applied {
         }
         AgentMsg::Bye { .. } => Applied::Stop,
     }
+}
+
+fn validate_context(
+    mut owners: HashMap<String, BotOwner>,
+    mut bots: Vec<BotInfo>,
+    warnings: Vec<String>,
+) -> Option<RosterContext> {
+    let valid_owner = |o: &BotOwner| {
+        !o.store.is_empty()
+            && o.store.len() <= 16 * 1024
+            && !o.slug.is_empty()
+            && o.slug.len() <= 256
+            && o.label.len() <= 256
+            && o.origin.len() <= 256
+    };
+    if bots.len() > 128
+        || owners.len() > MAX_SNAP_SESSIONS
+        || warnings.len() > 128
+        || bots.iter().any(|b| !valid_owner(&b.owner))
+        || owners
+            .iter()
+            .any(|(id, o)| id.len() > 16 * 1024 || !valid_owner(o))
+    {
+        return None;
+    }
+    for owner in owners
+        .values_mut()
+        .chain(bots.iter_mut().map(|b| &mut b.owner))
+    {
+        owner.label = crate::bots::display(&owner.label);
+        owner.origin.clear();
+    }
+    for bot in &mut bots {
+        bot.last_activity = bot.last_activity.filter(|t| t.is_finite());
+    }
+    Some(RosterContext {
+        owners,
+        bots,
+        warnings: warnings
+            .into_iter()
+            .map(|w| clip_bytes(sanitize(&w).replace('\n', "�"), 256))
+            .collect(),
+        ticker: Vec::new(),
+    })
 }
 
 /// One frame off the wire, or why there wasn't one.
@@ -899,13 +1021,18 @@ fn read_frames<R: BufRead>(
         match frame {
             Frame::Eof => return,
             Frame::Oversized => {
-                lock(shared).oversized += 1;
+                let mut state = lock(shared);
+                state.oversized += 1;
+                state.pending_context = None;
                 continue;
             }
             Frame::Line => {}
         }
         let line = String::from_utf8_lossy(&buf);
         let Decoded::Msg(msg) = decode_agent_msg(line.trim_end()) else {
+            let mut state = lock(shared);
+            state.pending_context = None;
+            state.ownership_notice = Some("ownership metadata omitted: rejected frame".into());
             continue;
         };
         let applied = apply_frame(&mut lock(shared), msg, now_secs());

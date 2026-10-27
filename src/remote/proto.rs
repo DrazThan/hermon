@@ -21,7 +21,7 @@ use crate::source::{Replay, SessionMeta};
 /// Wire protocol version this build speaks. Version *policy* (what to do on
 /// a mismatch) is the host's job in later tickets — this ticket only pins
 /// the constant and the fact that decoding never depends on its value.
-pub const PROTO_VERSION: u32 = 1;
+pub const PROTO_VERSION: u32 = 2;
 
 /// Messages sent from the remote agent to the host.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,6 +32,12 @@ pub enum AgentMsg {
         proto_version: u32,
         hostname: String,
         sources: Vec<String>,
+    },
+    /// Optional ownership for exactly the following snapshot.
+    BotContext {
+        owners: std::collections::HashMap<String, crate::bots::BotOwner>,
+        bots: Vec<crate::bots::BotInfo>,
+        warnings: Vec<String>,
     },
     /// A full snapshot of the agent's current sessions.
     Snap { sessions: Vec<SessionMeta> },

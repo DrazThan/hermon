@@ -187,6 +187,7 @@ enum Op {
 /// One parsed `key<op>value` term.
 #[derive(Debug, Clone, PartialEq)]
 enum Term {
+    Bot(String),
     /// `field=pattern`, case-insensitive, `*` matches any run of characters.
     Glob {
         field: StrField,
@@ -202,6 +203,7 @@ enum Term {
 impl Term {
     fn matches(&self, r: &RosterRow) -> bool {
         match self {
+            Term::Bot(_) => false,
             Term::Glob { field, pattern } => glob_match(pattern, field.value(r)),
             Term::Cmp { field, op, value } => field.value(r).is_some_and(|v| match op {
                 Op::Eq => v == *value,
@@ -260,8 +262,31 @@ impl Filter {
         self.raw.join(" ")
     }
 
-    fn matches(&self, r: &RosterRow) -> bool {
-        self.terms.iter().all(|t| t.matches(r))
+    pub fn matches_owner(
+        &self,
+        owner: Option<&crate::bots::BotOwner>,
+        selected_store: Option<&str>,
+    ) -> bool {
+        if selected_store.is_some_and(|s| owner.is_none_or(|o| o.store != s)) {
+            return false;
+        }
+        self.terms.iter().all(|t| match t {
+            Term::Bot(pattern) => owner.is_some_and(|o| glob_match(pattern, &o.slug)),
+            _ => true,
+        })
+    }
+
+    fn matches_context(
+        &self,
+        r: &RosterRow,
+        context: &crate::bots::RosterContext,
+        selected: Option<&str>,
+    ) -> bool {
+        self.matches_owner(context.owners.get(&r.id), selected)
+            && self
+                .terms
+                .iter()
+                .all(|t| matches!(t, Term::Bot(_)) || t.matches(r))
     }
 }
 
@@ -273,6 +298,12 @@ fn parse_term(word: &str) -> Result<Term, String> {
     };
     let (key, rest) = word.split_at(at);
     let (op, value) = (&rest[..1], &rest[1..]);
+    if key == "bot" {
+        if op != "=" || value.is_empty() {
+            return Err(err("bot requires a non-empty bot=pattern".into()));
+        }
+        return Ok(Term::Bot(value.into()));
+    }
     if key.is_empty() {
         return Err(err("missing key".to_string()));
     }
@@ -422,7 +453,19 @@ fn key_cmp(a: &RosterRow, b: &RosterRow, key: SortKey) -> Ordering {
 /// attention grouping ignores the sort direction — attention rows stay on
 /// top either way.
 pub fn apply<'a>(rows: &'a [RosterRow], state: &ViewState) -> ViewOutput<'a> {
-    let mut out: Vec<&RosterRow> = rows.iter().filter(|r| state.filter.matches(r)).collect();
+    apply_context(rows, state, &crate::bots::RosterContext::default(), None)
+}
+
+pub fn apply_context<'a>(
+    rows: &'a [RosterRow],
+    state: &ViewState,
+    context: &crate::bots::RosterContext,
+    selected: Option<&str>,
+) -> ViewOutput<'a> {
+    let mut out: Vec<&RosterRow> = rows
+        .iter()
+        .filter(|r| !r.id.is_empty() && state.filter.matches_context(r, context, selected))
+        .collect();
     out.sort_by(|a, b| {
         let pin_group = pin_rank(state, &a.id).cmp(&pin_rank(state, &b.id));
         let attn_group = if state.attention_first {
@@ -445,7 +488,7 @@ pub fn apply<'a>(rows: &'a [RosterRow], state: &ViewState) -> ViewOutput<'a> {
     });
     ViewOutput {
         matched: out.len(),
-        total: rows.len(),
+        total: rows.iter().filter(|r| !r.id.is_empty()).count(),
         rows: out,
     }
 }

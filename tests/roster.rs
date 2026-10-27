@@ -576,7 +576,7 @@ fn six_store_union_preserves_metadata_and_opens_each_new_tailer() {
         ("Gm", "Gemini title"),
     ] {
         let row = find(&rows, &format!("{prefix}:123456"));
-        assert_eq!(row.id, new_stores::ID);
+        common::hermes_profiles::require_hr1(&row.id, b"", prefix, new_stores::ID.as_bytes());
         assert_eq!(row.title, title);
         assert_eq!(row.state, Liveness::Live);
         assert!(row.last_line.contains(title), "{row:?}");

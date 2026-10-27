@@ -290,13 +290,21 @@ fn parse_write_access(stdout: &str) -> bool {
 /// first time it's found missing (`hermon.py:1314`).
 fn lsof_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
+    let available = *AVAILABLE.get_or_init(|| {
         let available = Command::new("lsof").arg("-v").output().is_ok();
-        if !available {
-            eprintln!("hermon: lsof not found — mtime-only liveness for claude transcripts");
+        if !available && !super::diagnostics::capturing() {
+            super::diagnostics::report(
+                "hermon: lsof not found — mtime-only liveness for claude transcripts",
+            );
         }
         available
-    })
+    });
+    if !available && super::diagnostics::capturing() {
+        super::diagnostics::report(
+            "hermon: lsof not found — mtime-only liveness for claude transcripts",
+        );
+    }
+    available
 }
 
 /// A write-handle check, real or (in tests) a call-counting stub.

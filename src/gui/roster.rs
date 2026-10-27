@@ -30,10 +30,16 @@ pub fn render(ui: &mut Ui, app: &mut App) {
 
     if app.roster.is_empty() {
         render_lines(ui, &empty_state(&app.paths));
+        render_status_strip(ui, app);
         return;
     }
 
-    let output = view::apply(&app.roster, &app.view);
+    let output = view::apply_context(
+        &app.roster,
+        &app.view,
+        &app.context,
+        app.selected_store.as_deref(),
+    );
     if output.rows.is_empty() {
         render_lines(ui, &no_matches_state());
         ui.separator();
@@ -56,6 +62,7 @@ pub fn render(ui: &mut Ui, app: &mut App) {
                 .column(Column::exact(24.0))
                 .column(Column::exact(22.0))
                 .column(Column::initial(90.0).at_least(70.0))
+                .column(Column::initial(100.0).at_least(70.0))
                 .column(Column::initial(130.0).at_least(90.0))
                 .column(Column::remainder().at_least(100.0))
                 .column(Column::initial(120.0).at_least(90.0))
@@ -66,6 +73,9 @@ pub fn render(ui: &mut Ui, app: &mut App) {
                     header.col(|_| {});
                     header.col(|ui| {
                         ui.label(RichText::new("key").color(palette::DIM));
+                    });
+                    header.col(|ui| {
+                        ui.label(RichText::new("bot").color(palette::DIM));
                     });
                     sort_header(&mut header, &app.view, SortKey::Model, &mut sort_click);
                     sort_header(&mut header, &app.view, SortKey::Tool, &mut sort_click);
@@ -78,7 +88,13 @@ pub fn render(ui: &mut Ui, app: &mut App) {
                         let r = rows[row.index()];
                         let pinned = app.view.is_pinned(&r.id);
                         row.set_selected(selected_id.as_deref() == Some(r.id.as_str()));
-                        row_cells(&mut row, r, pinned, &mut pin_click);
+                        row_cells(
+                            &mut row,
+                            r,
+                            pinned,
+                            &mut pin_click,
+                            &app.context.owner_label(&r.id),
+                        );
                         if row.response().clicked() {
                             select_click = Some(r.id.clone());
                         }
@@ -108,6 +124,67 @@ pub fn render(ui: &mut Ui, app: &mut App) {
 /// feedback without losing what was there. Active terms show as removable
 /// chips on their own row underneath.
 fn render_top_bar(ui: &mut Ui, app: &mut App) {
+    egui::ComboBox::from_id_salt("bot-selector")
+        .selected_text(
+            app.context
+                .bots
+                .iter()
+                .find(|b| Some(&b.owner.store) == app.selected_store.as_ref())
+                .map_or_else(
+                    || {
+                        if app.selected_store.is_some() {
+                            "Unavailable bot".into()
+                        } else {
+                            "All bots".into()
+                        }
+                    },
+                    |b| b.owner.display(),
+                ),
+        )
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut app.selected_store, None, "All bots");
+            for bot in &app.context.bots {
+                let label = format!(
+                    "{}{}",
+                    bot.owner.display(),
+                    if bot.available { "" } else { " (unavailable)" }
+                );
+                ui.selectable_value(
+                    &mut app.selected_store,
+                    Some(bot.owner.store.clone()),
+                    label,
+                )
+                .on_hover_text(&bot.owner.store);
+            }
+        });
+    egui::CollapsingHeader::new("All discovered bots; counts in current session window").show(
+        ui,
+        |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("bot-overview")
+                .max_height(150.0)
+                .show(ui, |ui| {
+                    for (bot, line) in app
+                        .context
+                        .bots
+                        .iter()
+                        .zip(app.context.overview(&app.roster).into_iter().skip(1))
+                    {
+                        if ui
+                            .selectable_label(
+                                app.selected_store.as_ref() == Some(&bot.owner.store),
+                                line,
+                            )
+                            .on_hover_text(&bot.owner.store)
+                            .clicked()
+                        {
+                            app.selected_store = Some(bot.owner.store.clone());
+                        }
+                    }
+                });
+            ui.label("Attention is inferred; DB presence does not establish a running process.");
+        },
+    );
     ui.horizontal(|ui| {
         ui.toggle_value(&mut app.view.attention_first, "⚠ attention first");
         ui.toggle_value(&mut app.grid, "▦ grid");
@@ -122,7 +199,7 @@ fn render_top_bar(ui: &mut Ui, app: &mut App) {
         let has_error = app.filter_error.is_some();
         let mut edit = egui::TextEdit::singleline(&mut app.filter_input)
             .id(egui::Id::new(super::FILTER_ID))
-            .hint_text("model=claude* cost>1.00");
+            .hint_text("bot=worker* model=claude* cost>1.00");
         if has_error {
             edit = edit.text_color(palette::color(Sem::Error));
         }
@@ -134,12 +211,23 @@ fn render_top_bar(ui: &mut Ui, app: &mut App) {
             response.on_hover_text(error);
         }
 
-        let output = view::apply(&app.roster, &app.view);
+        let output = view::apply_context(
+            &app.roster,
+            &app.view,
+            &app.context,
+            app.selected_store.as_deref(),
+        );
         ui.label(
             RichText::new(format!("{} of {}", output.matched, output.total)).color(palette::DIM),
         );
     });
 
+    if ui.small_button("Clear filters").clicked() {
+        app.view.clear();
+        app.selected_store = None;
+        app.filter_input.clear();
+        app.filter_error = None;
+    }
     if !app.view.filter.chips().is_empty() {
         ui.horizontal(|ui| {
             let mut remove: Option<usize> = None;
@@ -158,6 +246,21 @@ fn render_top_bar(ui: &mut Ui, app: &mut App) {
             }
         });
     }
+}
+
+/// Persistent notices are drawn outside the list/zoom split.
+pub(super) fn render_warnings(ui: &mut Ui, context: &crate::bots::RosterContext) {
+    if context.warnings.is_empty() {
+        return;
+    }
+    egui::ScrollArea::vertical()
+        .id_salt("discovery-warnings")
+        .max_height(64.0)
+        .show(ui, |ui| {
+            for warning in &context.warnings {
+                ui.label(RichText::new(warning).color(palette::color(Sem::Error)));
+            }
+        });
 }
 
 /// One sortable header cell: the column label plus the active sort's arrow,
@@ -191,6 +294,7 @@ fn row_cells(
     r: &RosterRow,
     pinned: bool,
     pin_click: &mut Option<String>,
+    owner: &str,
 ) {
     let sems = row_sems(r.state);
     let (glyph, glyph_color) = palette::glyph_for_liveness(r.state);
@@ -212,7 +316,17 @@ fn row_cells(
         }
     });
     row.col(|ui| {
-        ui.label(mono(&r.key, palette::color(sems.text)));
+        ui.label(mono(&r.key, palette::color(sems.text)))
+            .on_hover_text(&r.id)
+            .context_menu(|ui| {
+                if ui.button("Copy full route").clicked() {
+                    ui.ctx().copy_text(r.id.clone());
+                    ui.close();
+                }
+            });
+    });
+    row.col(|ui| {
+        ui.label(mono(owner, palette::DIM));
     });
     row.col(|ui| {
         ui.label(mono(&r.model, palette::color(sems.text)));
@@ -245,8 +359,24 @@ fn mono(text: &str, color: Color32) -> RichText {
 /// [`App::apply_event`] already keeps current — the same content `hermon
 /// ls` prints under its table.
 fn render_status_strip(ui: &mut Ui, app: &App) {
-    render_lines(ui, std::slice::from_ref(&totals_line(&app.roster)));
-    if !app.ticker.is_empty() {
+    let rows: Vec<_> = view::apply_context(
+        &app.roster,
+        &app.view,
+        &app.context,
+        app.selected_store.as_deref(),
+    )
+    .rows
+    .into_iter()
+    .filter(|r| !r.id.is_empty())
+    .cloned()
+    .collect();
+    ui.label(RichText::new("Selected view").color(palette::DIM));
+    render_lines(ui, std::slice::from_ref(&totals_line(&rows)));
+    let ticker = crate::roster::bot_ticker(&app.context, &app.view, app.selected_store.as_deref());
+    if !app.context.ticker.is_empty() {
+        ui.label(RichText::new("Local recent log tails (file recency); bot-filtered API calls; other session filters do not apply").color(palette::DIM));
+        render_lines(ui, &ticker);
+    } else if app.context.bots.is_empty() {
         render_lines(ui, &app.ticker);
     }
 }

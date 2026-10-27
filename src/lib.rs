@@ -4,6 +4,7 @@
 //! issues and PRs stay connected to the Python implementation it replaces.
 
 pub mod arbitration;
+pub mod bots;
 pub mod cli;
 pub mod config;
 pub mod engine;
@@ -20,7 +21,6 @@ pub mod ui;
 pub mod view;
 
 use std::io::IsTerminal;
-use std::path::Path;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -33,10 +33,7 @@ use config::EngineConfig;
 use engine::PANE_TICK;
 use notify::NotifyCfg;
 use remote::spec::{RemoteSpec, parse_specs, split_argv, to_command};
-use roster::{
-    Sources, TICKER_LIMIT, api_call_ticker, build_roster, remotes_summary_line, resolve_key,
-    roster_lines,
-};
+use roster::{Sources, build_roster, remotes_summary_line};
 use source::Replay;
 
 /// The notify config this process actually runs with: what the flags asked
@@ -95,6 +92,7 @@ pub fn run() -> anyhow::Result<()> {
 
     match cli.cmd {
         Command::Watch(args) => {
+            let options = args.monitor_options();
             // `watch` keeps the Python default 300s fresh window
             // (`hermon.py:1463`); only `ls` widens it to an hour.
             let (remotes, remote_flags) = resolve_remotes(&args)?;
@@ -102,12 +100,19 @@ pub fn run() -> anyhow::Result<()> {
             let replay = replay_from(&args);
             let config = EngineConfig {
                 claude_dir: args.claude_dir,
-                hermes_db: args.hermes_db,
+                hermes_db: args
+                    .hermes_db
+                    .unwrap_or_else(|| bots::default_home().join("state.db").display().to_string()),
                 opencode_db: args.opencode_db,
                 codex_dir: args.codex_dir,
                 grok_dir: args.grok_dir,
                 gemini_dir: args.gemini_dir,
-                hermes_log: args.hermes_log,
+                hermes_log: args.hermes_log.unwrap_or_else(|| {
+                    bots::default_home()
+                        .join("logs/agent.log")
+                        .display()
+                        .to_string()
+                }),
                 idle_timeout: args.idle_timeout,
                 fresh_window: 300.0,
                 interval: Duration::from_secs_f64(args.interval),
@@ -119,24 +124,32 @@ pub fn run() -> anyhow::Result<()> {
                 remote_flags,
                 docker_auto: args.docker_auto,
             };
-            ui::run_tui(config)
+            ui::run_tui_options(config, Some(options))
         }
         // The window is a second engine consumer, not a second engine
         // configuration: same flags and same 300s fresh window as `watch`.
         // Arbitrated the same way `watch` is (#72/#77): a running menubar
         // outranks it, so a `gui` alongside one silences its own banners.
         Command::Gui(args) => {
+            let options = args.monitor_options();
             let (remotes, remote_flags) = resolve_remotes(&args)?;
             let notify = arbitrated_notify_cfg(&args, UiKind::Gui);
             let replay = replay_from(&args);
             let config = EngineConfig {
                 claude_dir: args.claude_dir,
-                hermes_db: args.hermes_db,
+                hermes_db: args
+                    .hermes_db
+                    .unwrap_or_else(|| bots::default_home().join("state.db").display().to_string()),
                 opencode_db: args.opencode_db,
                 codex_dir: args.codex_dir,
                 grok_dir: args.grok_dir,
                 gemini_dir: args.gemini_dir,
-                hermes_log: args.hermes_log,
+                hermes_log: args.hermes_log.unwrap_or_else(|| {
+                    bots::default_home()
+                        .join("logs/agent.log")
+                        .display()
+                        .to_string()
+                }),
                 idle_timeout: args.idle_timeout,
                 fresh_window: 300.0,
                 interval: Duration::from_secs_f64(args.interval),
@@ -148,7 +161,7 @@ pub fn run() -> anyhow::Result<()> {
                 remote_flags,
                 docker_auto: args.docker_auto,
             };
-            gui::run_gui(config)
+            gui::run_gui_options(config, Some(options))
         }
         Command::Ls(args) => ls(&args),
         Command::Render(args) => render(&args),
@@ -179,17 +192,26 @@ pub fn run() -> anyhow::Result<()> {
             // outranks it, so this only ever honours an explicit flag — but
             // it goes through the same seam so #77's `gui` slots in as one
             // more arm.
+            let options = args.source.monitor_options();
             let (remotes, remote_flags) = resolve_remotes(&args.source)?;
             let notify = arbitrated_notify_cfg(&args.source, UiKind::Menubar);
             let replay = replay_from(&args.source);
             let config = EngineConfig {
                 claude_dir: args.source.claude_dir,
-                hermes_db: args.source.hermes_db,
+                hermes_db: args
+                    .source
+                    .hermes_db
+                    .unwrap_or_else(|| bots::default_home().join("state.db").display().to_string()),
                 opencode_db: args.source.opencode_db,
                 codex_dir: args.source.codex_dir,
                 grok_dir: args.source.grok_dir,
                 gemini_dir: args.source.gemini_dir,
-                hermes_log: args.source.hermes_log,
+                hermes_log: args.source.hermes_log.unwrap_or_else(|| {
+                    bots::default_home()
+                        .join("logs/agent.log")
+                        .display()
+                        .to_string()
+                }),
                 idle_timeout: args.source.idle_timeout,
                 fresh_window: 300.0,
                 interval: Duration::from_secs_f64(args.source.interval),
@@ -201,12 +223,18 @@ pub fn run() -> anyhow::Result<()> {
                 remote_flags,
                 docker_auto: args.source.docker_auto,
             };
-            menubar::run(config)
+            menubar::run_options(config, Some(options))
         }
         Command::Agent(args) => {
+            let options = args.monitor_options();
+            if options.bot.is_some() {
+                eprintln!("hermon agent: --bot ignored; snapshots include all sessions");
+            }
             let config = remote::agent::AgentConfig {
                 claude_dir: args.claude_dir,
-                hermes_db: args.hermes_db,
+                hermes_db: args
+                    .hermes_db
+                    .unwrap_or_else(|| bots::default_home().join("state.db").display().to_string()),
                 opencode_db: args.opencode_db,
                 codex_dir: args.codex_dir,
                 grok_dir: args.grok_dir,
@@ -219,9 +247,40 @@ pub fn run() -> anyhow::Result<()> {
                 fresh_window: 300.0,
                 interval: Duration::from_secs_f64(args.interval),
             };
-            remote::agent::run(config)
+            remote::agent::run_options(config, Some(options))
         }
     }
+}
+
+fn initial_view(src: &cli::SourceArgs) -> anyhow::Result<view::ViewState> {
+    let mut state = view::ViewState::default();
+    if let Some(bot) = &src.bot {
+        state
+            .set_filter(&format!("bot={bot}"))
+            .map_err(|e| anyhow!(e))?;
+    }
+    Ok(state)
+}
+
+fn sources_from(src: &cli::SourceArgs) -> anyhow::Result<Sources> {
+    let (remotes, flags) = resolve_remotes(src)?;
+    let db = src
+        .hermes_db
+        .clone()
+        .unwrap_or_else(|| bots::default_home().join("state.db").display().to_string());
+    Ok(attach_remotes(
+        Sources::new(
+            &src.claude_dir,
+            &db,
+            &src.opencode_db,
+            &src.codex_dir,
+            &src.grok_dir,
+            &src.gemini_dir,
+        )
+        .with_options(src.monitor_options()),
+        &remotes,
+        &flags,
+    ))
 }
 
 fn now_secs() -> f64 {
@@ -237,18 +296,19 @@ fn now_secs() -> f64 {
 /// session id; from there the tailer is the whole loop.
 fn render(args: &cli::RenderArgs) -> anyhow::Result<()> {
     let src = &args.source;
-    let mut sources = Sources::new(
-        &src.claude_dir,
-        &src.hermes_db,
-        &src.opencode_db,
-        &src.codex_dir,
-        &src.grok_dir,
-        &src.gemini_dir,
-    );
+    let mut sources = sources_from(src)?;
     let now = now_secs();
 
     let rows = build_roster(&mut sources, now, args.fresh_window, src.idle_timeout);
-    let row = resolve_key(&rows, &args.key)?;
+    let row = roster::resolve_key_context(&rows, &args.key, &sources.context)?;
+    let state = initial_view(src)?;
+    if !view::apply_context(&rows, &state, &sources.context, None)
+        .rows
+        .iter()
+        .any(|r| r.id == row.id)
+    {
+        anyhow::bail!("{}: target filtered out", row.key);
+    }
     let mut tailer = sources
         .open_tailer(&row.key, &row.id, replay_from(src))
         .ok_or_else(|| anyhow!("{}: this source cannot tail sessions yet", row.key))?;
@@ -278,19 +338,7 @@ fn render(args: &cli::RenderArgs) -> anyhow::Result<()> {
 /// rather than silently dropping the remote (#91).
 fn ls(args: &LsArgs) -> anyhow::Result<()> {
     let src = &args.source;
-    let (remotes, remote_flags) = resolve_remotes(src)?;
-    let mut sources = attach_remotes(
-        Sources::new(
-            &src.claude_dir,
-            &src.hermes_db,
-            &src.opencode_db,
-            &src.codex_dir,
-            &src.grok_dir,
-            &src.gemini_dir,
-        ),
-        &remotes,
-        &remote_flags,
-    );
+    let mut sources = sources_from(src)?;
     let now = now_secs();
 
     // Same rule as `hermon.py:67 USE_COLOR`.
@@ -310,8 +358,14 @@ fn ls(args: &LsArgs) -> anyhow::Result<()> {
         print_line(summary);
     }
     let rows = build_roster(&mut sources, now, args.fresh_window, src.idle_timeout);
-    let ticker = api_call_ticker(Path::new(&src.hermes_log), TICKER_LIMIT);
-    for line in roster_lines(&rows, &ticker, now) {
+    let state = initial_view(src)?;
+    let selected: Vec<_> = view::apply_context(&rows, &state, &sources.context, None)
+        .rows
+        .into_iter()
+        .cloned()
+        .collect();
+    for line in roster::roster_lines_context(&selected, &rows, &sources.context, &state, None, now)
+    {
         print_line(line);
     }
     Ok(())

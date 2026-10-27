@@ -17,11 +17,7 @@ use crate::source::{Replay, SessionMeta, Source, Tailer};
 /// Opens `db_path` read-only, safe to use alongside the running Hermes
 /// process under WAL (`hermon.py:460 hermes_connect`). Never opens writable.
 fn hermes_connect(db_path: &Path) -> rusqlite::Result<Connection> {
-    let uri = format!("file:{}?mode=ro", db_path.display());
-    let conn = Connection::open_with_flags(
-        &uri,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )?;
+    let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.busy_timeout(Duration::from_secs(2))?;
     Ok(conn)
 }
@@ -106,26 +102,40 @@ fn summarize_last_message(
 pub struct HermesSource {
     db_path: PathBuf,
     warned: bool,
+    healthy: bool,
 }
 
 impl HermesSource {
     pub fn new(db_path: impl AsRef<str>) -> Self {
-        HermesSource {
-            db_path: expand_tilde(db_path.as_ref()),
+        Self::from_path(expand_tilde(db_path.as_ref()))
+    }
+
+    pub fn from_path(db_path: PathBuf) -> Self {
+        Self {
+            db_path,
             warned: false,
+            healthy: false,
         }
     }
 
+    pub fn healthy(&self) -> bool {
+        self.healthy
+    }
+
     fn warn(&mut self) {
-        if !self.warned {
+        if crate::source::diagnostics::capturing() || !self.warned {
             self.warned = true;
-            eprintln!("· hermes db unavailable: {}", self.db_path.display());
+            crate::source::diagnostics::hermes_database(&format!(
+                "· hermes db unavailable: {}",
+                self.db_path.display()
+            ));
         }
     }
 }
 
 impl Source for HermesSource {
     fn sessions(&mut self) -> Vec<SessionMeta> {
+        self.healthy = false;
         let conn = match hermes_connect(&self.db_path) {
             Ok(conn) => conn,
             Err(_) => {
@@ -212,7 +222,17 @@ impl Source for HermesSource {
             }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        match rows.collect::<rusqlite::Result<Vec<_>>>() {
+            Ok(rows) => {
+                self.healthy = true;
+                self.warned = false;
+                rows
+            }
+            Err(_) => {
+                self.warn();
+                Vec::new()
+            }
+        }
     }
 
     fn last_tool(&mut self, session_id: &str) -> String {
