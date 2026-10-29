@@ -1,5 +1,6 @@
 //! Workflow definitions, deterministic hub, comment templates and durable run files.
 
+pub mod agent;
 pub mod hub;
 pub mod store;
 pub mod templates;
