@@ -70,3 +70,8 @@ New gates, attempts and manual actions create new notification generations.
 
 The independent acceptance tests and their freeze records are under
 `docs/flow/evidence/118/`.
+
+Slice 5 implements the `Git` interface with real project commands and annotated
+evidence tags. See [checks and git evidence](checks.md) for configuration,
+independent test expectations, environment/deadline handling and the host's
+attempt-context binding responsibilities.
