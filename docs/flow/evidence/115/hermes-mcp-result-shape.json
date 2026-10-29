@@ -1,0 +1,28 @@
+{
+  "decoded_response_shape": {
+    "result": {
+      "results": [
+        {
+          "id": "<text>",
+          "title": "<text>",
+          "url": "<text>",
+          "type": "<text>",
+          "highlight": "<text>",
+          "timestamp": "<text>",
+          "path": "<text>",
+          "verification": {
+            "state": "<text>"
+          },
+          "parent_data_source_url": "<text>"
+        }
+      ],
+      "type": "<text>"
+    }
+  },
+  "outer_keys": [
+    "result"
+  ],
+  "result_text_length": 656,
+  "xml_tag_counts": {},
+  "starts_with_error": false
+}

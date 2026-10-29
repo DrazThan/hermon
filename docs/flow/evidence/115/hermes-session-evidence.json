@@ -1,0 +1,168 @@
+[
+  {
+    "session_id": "local-dddff2885ca92d131b1c1937463d6b22b26712206512dd89ea56178019ef636c",
+    "running": false,
+    "execution_generation": 2,
+    "profile": "default",
+    "cwd": "/private/tmp/hermon-115",
+    "mcp_servers": [
+      {
+        "name": "notion",
+        "connected": true,
+        "tools": 69
+      }
+    ],
+    "tool_evidence": []
+  },
+  {
+    "session_id": "local-cbe9c2b8850d8fe5d86a106adfad9251577390b9ae97bf08b9bb49fd4d7941a6",
+    "running": false,
+    "execution_generation": 1,
+    "profile": "default",
+    "cwd": "/private/tmp/hermon-115",
+    "mcp_servers": [
+      {
+        "name": "notion",
+        "connected": true,
+        "tools": 69
+      }
+    ],
+    "tool_evidence": []
+  },
+  {
+    "session_id": "local-63091769f2dd01123262cc5be660291f5a2d1e347b23941aeebb4ad959206248",
+    "running": false,
+    "execution_generation": 1,
+    "profile": "default",
+    "cwd": "/private/tmp/hermon-115",
+    "mcp_servers": [
+      {
+        "name": "notion",
+        "connected": true,
+        "tools": 69
+      }
+    ],
+    "tool_evidence": []
+  },
+  {
+    "session_id": "local-e5b06343dd8d158f6f9b3f9bb5c8d5011f87c98bff12cd07f008e84447173996",
+    "running": false,
+    "execution_generation": 1,
+    "profile": "default",
+    "cwd": "/private/tmp/hermon-115",
+    "mcp_servers": [
+      {
+        "name": "notion",
+        "connected": true,
+        "tools": 69
+      }
+    ],
+    "tool_evidence": [
+      {
+        "kind": "call",
+        "name": "execute_code",
+        "arguments": "{\"code\": \"print(' '.join(str(i) for i in range(1,2001)))\"}"
+      },
+      {
+        "kind": "result",
+        "name": "execute_code",
+        "content_sha256": "81ff5ffe98830095f4caacb565e904d3b2919f75faf9fcf5e86016415fd2cbeb",
+        "top_level_keys": [
+          "status",
+          "error",
+          "tool_calls_made",
+          "duration_seconds",
+          "user_summary"
+        ]
+      }
+    ]
+  },
+  {
+    "session_id": "local-4ee90923d7bbc41d47da5766557cf05526d571ad270a0dff54e86cf84f4d26e8",
+    "running": false,
+    "execution_generation": 1,
+    "profile": "default",
+    "cwd": "/private/tmp/hermon-115",
+    "mcp_servers": [
+      {
+        "name": "notion",
+        "connected": true,
+        "tools": 69
+      }
+    ],
+    "tool_evidence": [
+      {
+        "kind": "call",
+        "name": "skill_view",
+        "arguments": "{\"name\": \"notion\"}"
+      },
+      {
+        "kind": "result",
+        "name": "skill_view",
+        "content_sha256": "3291d8e7fbc825f55ccddd581137451b43f4039614304538f2980e512d7e8aaa",
+        "top_level_keys": [
+          "success",
+          "name",
+          "description",
+          "tags",
+          "related_skills",
+          "content",
+          "path",
+          "skill_dir",
+          "linked_files",
+          "usage_hint",
+          "required_environment_variables",
+          "required_commands",
+          "missing_required_environment_variables",
+          "missing_credential_files",
+          "missing_required_commands",
+          "setup_needed",
+          "setup_skipped",
+          "readiness_status",
+          "metadata"
+        ],
+        "success": true,
+        "skill_name": "notion",
+        "readiness_status": "available",
+        "first_heading": "# Notion"
+      },
+      {
+        "kind": "call",
+        "name": "tool_describe",
+        "arguments": "{\"names\": [\"mcp__notion__notion_search\"]}"
+      },
+      {
+        "kind": "result",
+        "name": "tool_describe",
+        "content_sha256": "879c62703c71b311d5de5c4fd60db200a6a9c9067f9abce0ad0351cb3b7a7ad0",
+        "top_level_keys": [
+          "tools"
+        ]
+      },
+      {
+        "kind": "call",
+        "name": "tool_call",
+        "arguments": "{\"calls\": [{\"name\": \"mcp__notion__notion_search\", \"arguments\": {\"query\": \"FLOW115_7C82_NONEXISTENT_PROBE\", \"page_size\": 1}}]}"
+      },
+      {
+        "kind": "result",
+        "name": "tool_call",
+        "content_sha256": "eb131ed9044a00223c8e64d8175e7c32bb60f7b3cecbe85c51f2b81d649e0be9",
+        "top_level_keys": []
+      },
+      {
+        "kind": "call",
+        "name": "clarify",
+        "arguments": "{\"questions\": []}"
+      },
+      {
+        "kind": "result",
+        "name": "clarify",
+        "content_sha256": "9b0dc8bbe7cab6dd4a6b14f9228cfd440a4325621ef9a87f01983b87e8197f9d",
+        "top_level_keys": [
+          "error"
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,113 @@
+{
+  "session_id": "local-92c92592d1e610fe61ebdeebe71dd84526ec6d9c89666520b79b74c63b0497f4",
+  "execution_generation": 1,
+  "running": false,
+  "revision": 1,
+  "info": {
+    "profile_name": "sdlc-docs",
+    "cwd": "/private/tmp/hermon-115",
+    "skills": {
+      "autonomous-ai-agents": [
+        "hermes-agent"
+      ],
+      "memory": [
+        "mnemosyne-sdlc-memory"
+      ],
+      "productivity": [
+        "notion"
+      ],
+      "research": [
+        "grounded-citations"
+      ],
+      "general": [
+        "rummy-kb",
+        "unslop",
+        "sdlc-communication"
+      ],
+      "sdlc": [
+        "sdlc-docs"
+      ]
+    },
+    "mcp_servers": [
+      {
+        "name": "notion",
+        "transport": "http",
+        "tools": 48,
+        "connected": true,
+        "disabled": false,
+        "status": "connected",
+        "sampling": {
+          "requests": 0,
+          "errors": 0,
+          "tokens_used": 0,
+          "tool_use_count": 0
+        }
+      },
+      {
+        "name": "linear",
+        "transport": "http",
+        "tools": 38,
+        "connected": true,
+        "disabled": false,
+        "status": "connected",
+        "sampling": {
+          "requests": 0,
+          "errors": 0,
+          "tokens_used": 0,
+          "tool_use_count": 0
+        }
+      }
+    ],
+    "enabled_toolsets": [
+      "browser",
+      "clarify",
+      "code_execution",
+      "computer_use",
+      "connections",
+      "cronjob",
+      "delegation",
+      "file",
+      "image_gen",
+      "kanban",
+      "linear",
+      "memory",
+      "notion",
+      "session_search",
+      "skills",
+      "terminal",
+      "todo",
+      "tts",
+      "vision",
+      "web",
+      "x_search"
+    ]
+  },
+  "tool_result_excerpts": [
+    {
+      "tool_call_id": "call-c3208661-2cf2-4b17-8d1e-d30e635982c5-0",
+      "sha256": "fa3e19c760287c9234a6bfd429ec2c9ef0a5a55ce059a6090f88fdd6ec8a4da5",
+      "success": true,
+      "skill_name": "notion",
+      "readiness_status": "setup_needed",
+      "first_heading": "# Notion",
+      "discovered_tool_names": []
+    },
+    {
+      "tool_call_id": "call-c3208661-2cf2-4b17-8d1e-d30e635982c5-1",
+      "sha256": "879c62703c71b311d5de5c4fd60db200a6a9c9067f9abce0ad0351cb3b7a7ad0",
+      "success": null,
+      "skill_name": null,
+      "readiness_status": null,
+      "first_heading": null,
+      "discovered_tool_names": [
+        "mcp__notion__notion_search"
+      ]
+    }
+  ],
+  "cleanup": {
+    "interrupt_acknowledged_execution_generation": 1,
+    "interrupt_acknowledged_state": "running",
+    "subsequent_snapshot_running": false,
+    "note": "The stream viewer had already exited -15. Scoped session.interrupt was then sent through the installed internal gateway client, not a public CLI cancellation contract."
+  }
+}
