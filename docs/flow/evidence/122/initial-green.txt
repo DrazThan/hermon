@@ -1,0 +1,30 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.52s
+     Running tests/code_host.rs (target/debug/deps/code_host-01a94eb2222ff554)
+
+running 9 tests
+test pr_open_body_and_base ... ok
+test pr_open_recovers_a_lost_create_response ... ok
+test pr_open_fails_closed_on_lookup_and_push_errors ... FAILED
+test merge_gate_rejects_mismatched_pr_identity_and_bad_oid ... ok
+test pr_open_rejects_wrong_run_and_rebound_intake ... ok
+test pr_open_reconciles_retry_and_restart ... ok
+test hub_never_invokes_merge ... ok
+test merge_gate_requires_merged_and_ancestor ... ok
+test pr_open_does_not_reuse_a_closed_or_foreign_pr ... ok
+
+failures:
+
+---- pr_open_fails_closed_on_lookup_and_push_errors stdout ----
+
+thread 'pr_open_fails_closed_on_lookup_and_push_errors' (94597284) panicked at crates/hermon-flow/tests/code_host.rs:101:63:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "code host state belongs to another intake or artifact revision" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    pr_open_fails_closed_on_lookup_and_push_errors
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.76s
+
+error: test failed, to rerun pass `-p hermon-flow --test code_host`
