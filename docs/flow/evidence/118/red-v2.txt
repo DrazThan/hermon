@@ -1,0 +1,248 @@
+   Compiling hermon-flow v0.5.0 (/private/tmp/hermon-118-freeze-v2-_45nbppc/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running tests/hub.rs (target/debug/deps/hub-de9d32aef6b61b6e)
+
+running 33 tests
+test hub_agent_stop_error_cannot_resend_worker ... FAILED
+test hub_failed_alert_delivery_is_retried_without_restarting_work ... FAILED
+test hub_check_failures_cannot_publish_success ... FAILED
+test hub_agent_poll_error_retains_unsettled_worker ... FAILED
+test hub_code_host_failure_alerts_and_manual_retry_works ... FAILED
+test hub_concurrency_limit_wait_is_visible_and_recovers ... FAILED
+test hub_agent_start_failure_retries_are_bounded ... FAILED
+test hub_advance_idempotent ... FAILED
+test hub_different_family_is_required_before_review_start ... FAILED
+test hub_happy_path_sdlc ... FAILED
+test hub_gate_blocks_successors ... FAILED
+test hub_git_evidence_failure_cannot_release_successor ... FAILED
+test hub_invalid_result_is_unknown_block ... FAILED
+test hub_never_silent_on_block ... FAILED
+test hub_manual_retry_keeps_automation ... FAILED
+test hub_missing_completion_is_not_success ... FAILED
+test hub_non_review_verdict_is_unknown_block ... FAILED
+test hub_red_fix_max_runs_bounded ... FAILED
+test hub_manual_override_keeps_automation ... FAILED
+test hub_result_rejects_unknown_fields ... FAILED
+test hub_review_requires_known_verdict ... FAILED
+test hub_review_rounds_bounded ... FAILED
+test hub_result_requires_every_schema_field ... FAILED
+test hub_stall_alert_is_deduplicated_and_does_not_stop_work ... FAILED
+test hub_scope_change_requires_fresh_owner_go ... FAILED
+test hub_test_defect_routes_to_red_fix ... FAILED
+test hub_timeout_records_failure_before_late_success ... FAILED
+test hub_transient_git_evidence_failures_retry_then_alert ... FAILED
+test hub_transient_retry_then_alert ... FAILED
+test hub_timeout_unsettled_stop_cannot_retry ... FAILED
+test hub_transient_gate_observation_failures_retry_then_alert ... FAILED
+test hub_transient_git_check_failures_retry_then_alert ... FAILED
+test hub_unsettled_outcome_prevents_automatic_or_manual_resend ... FAILED
+
+failures:
+
+---- hub_agent_stop_error_cannot_resend_worker stdout ----
+
+thread 'hub_agent_stop_error_cannot_resend_worker' (93725168) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_failed_alert_delivery_is_retried_without_restarting_work stdout ----
+
+thread 'hub_failed_alert_delivery_is_retried_without_restarting_work' (93725173) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_check_failures_cannot_publish_success stdout ----
+
+thread 'hub_check_failures_cannot_publish_success' (93725169) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_agent_poll_error_retains_unsettled_worker stdout ----
+
+thread 'hub_agent_poll_error_retains_unsettled_worker' (93725166) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_code_host_failure_alerts_and_manual_retry_works stdout ----
+
+thread 'hub_code_host_failure_alerts_and_manual_retry_works' (93725170) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach review: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_concurrency_limit_wait_is_visible_and_recovers stdout ----
+
+thread 'hub_concurrency_limit_wait_is_visible_and_recovers' (93725171) panicked at crates/hermon-flow/tests/hub.rs:268:9:
+owner must be alerted: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- hub_agent_start_failure_retries_are_bounded stdout ----
+
+thread 'hub_agent_start_failure_retries_are_bounded' (93725167) panicked at crates/hermon-flow/tests/hub.rs:855:5:
+assertion `left == right` failed
+  left: 0
+ right: 3
+
+---- hub_advance_idempotent stdout ----
+
+thread 'hub_advance_idempotent' (93725165) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_different_family_is_required_before_review_start stdout ----
+
+thread 'hub_different_family_is_required_before_review_start' (93725172) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_happy_path_sdlc stdout ----
+
+thread 'hub_happy_path_sdlc' (93725176) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach docs: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_gate_blocks_successors stdout ----
+
+thread 'hub_gate_blocks_successors' (93725174) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach owner_go: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_git_evidence_failure_cannot_release_successor stdout ----
+
+thread 'hub_git_evidence_failure_cannot_release_successor' (93725175) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach red: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_invalid_result_is_unknown_block stdout ----
+
+thread 'hub_invalid_result_is_unknown_block' (93725177) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_never_silent_on_block stdout ----
+
+thread 'hub_never_silent_on_block' (93725181) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_manual_retry_keeps_automation stdout ----
+
+thread 'hub_manual_retry_keeps_automation' (93725179) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_missing_completion_is_not_success stdout ----
+
+thread 'hub_missing_completion_is_not_success' (93725180) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_non_review_verdict_is_unknown_block stdout ----
+
+thread 'hub_non_review_verdict_is_unknown_block' (93725182) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_red_fix_max_runs_bounded stdout ----
+
+thread 'hub_red_fix_max_runs_bounded' (93725183) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_manual_override_keeps_automation stdout ----
+
+thread 'hub_manual_override_keeps_automation' (93725178) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_result_rejects_unknown_fields stdout ----
+
+thread 'hub_result_rejects_unknown_fields' (93725184) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_review_requires_known_verdict stdout ----
+
+thread 'hub_review_requires_known_verdict' (93725186) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach review: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_review_rounds_bounded stdout ----
+
+thread 'hub_review_rounds_bounded' (93725187) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach review: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_result_requires_every_schema_field stdout ----
+
+thread 'hub_result_requires_every_schema_field' (93725185) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_stall_alert_is_deduplicated_and_does_not_stop_work stdout ----
+
+thread 'hub_stall_alert_is_deduplicated_and_does_not_stop_work' (93725189) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_scope_change_requires_fresh_owner_go stdout ----
+
+thread 'hub_scope_change_requires_fresh_owner_go' (93725188) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_test_defect_routes_to_red_fix stdout ----
+
+thread 'hub_test_defect_routes_to_red_fix' (93725190) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_timeout_records_failure_before_late_success stdout ----
+
+thread 'hub_timeout_records_failure_before_late_success' (93725191) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_transient_git_evidence_failures_retry_then_alert stdout ----
+
+thread 'hub_transient_git_evidence_failures_retry_then_alert' (93725195) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_transient_retry_then_alert stdout ----
+
+thread 'hub_transient_retry_then_alert' (93725196) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_timeout_unsettled_stop_cannot_retry stdout ----
+
+thread 'hub_timeout_unsettled_stop_cannot_retry' (93725192) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_transient_gate_observation_failures_retry_then_alert stdout ----
+
+thread 'hub_transient_gate_observation_failures_retry_then_alert' (93725193) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach owner_go: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_transient_git_check_failures_retry_then_alert stdout ----
+
+thread 'hub_transient_git_check_failures_retry_then_alert' (93725194) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+---- hub_unsettled_outcome_prevents_automatic_or_manual_resend stdout ----
+
+thread 'hub_unsettled_outcome_prevents_automatic_or_manual_resend' (93725197) panicked at crates/hermon-flow/tests/hub.rs:262:9:
+failed to reach green: Run { id: "RUN-118", current: "plan", status: Ready, active: None, attempts: [], events: [], alerts: [], block: None, freezes: {}, pr: None, runs: {}, retries: {}, check_failures: {}, gate_requests: {}, unsettled: false }
+
+
+failures:
+    hub_advance_idempotent
+    hub_agent_poll_error_retains_unsettled_worker
+    hub_agent_start_failure_retries_are_bounded
+    hub_agent_stop_error_cannot_resend_worker
+    hub_check_failures_cannot_publish_success
+    hub_code_host_failure_alerts_and_manual_retry_works
+    hub_concurrency_limit_wait_is_visible_and_recovers
+    hub_different_family_is_required_before_review_start
+    hub_failed_alert_delivery_is_retried_without_restarting_work
+    hub_gate_blocks_successors
+    hub_git_evidence_failure_cannot_release_successor
+    hub_happy_path_sdlc
+    hub_invalid_result_is_unknown_block
+    hub_manual_override_keeps_automation
+    hub_manual_retry_keeps_automation
+    hub_missing_completion_is_not_success
+    hub_never_silent_on_block
+    hub_non_review_verdict_is_unknown_block
+    hub_red_fix_max_runs_bounded
+    hub_result_rejects_unknown_fields
+    hub_result_requires_every_schema_field
+    hub_review_requires_known_verdict
+    hub_review_rounds_bounded
+    hub_scope_change_requires_fresh_owner_go
+    hub_stall_alert_is_deduplicated_and_does_not_stop_work
+    hub_test_defect_routes_to_red_fix
+    hub_timeout_records_failure_before_late_success
+    hub_timeout_unsettled_stop_cannot_retry
+    hub_transient_gate_observation_failures_retry_then_alert
+    hub_transient_git_check_failures_retry_then_alert
+    hub_transient_git_evidence_failures_retry_then_alert
+    hub_transient_retry_then_alert
+    hub_unsettled_outcome_prevents_automatic_or_manual_resend
+
+test result: FAILED. 0 passed; 33 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p hermon-flow --test hub`

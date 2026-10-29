@@ -30,6 +30,9 @@ fn blocked(kind: &str) -> Poll {
 }
 #[derive(Default)]
 struct FakeAgent {
+    start_errors: VecDeque<Block>,
+    poll_error: bool,
+    stop_error: bool,
     starts: Vec<StartRequest>,
     polls: BTreeMap<String, VecDeque<Poll>>,
     stops: Vec<String>,
@@ -52,9 +55,15 @@ impl Agent for FakeAgent {
     }
     fn start(&mut self, r: &StartRequest) -> Result<String, Block> {
         self.starts.push(r.clone());
+        if let Some(error) = self.start_errors.pop_front() {
+            return Err(error);
+        }
         Ok(format!("{}#{}", r.step, r.number))
     }
     fn poll(&mut self, handle: &str) -> Result<Poll, Block> {
+        if self.poll_error {
+            return Err(Block::new(BlockKind::Transient, "lost worker connection"));
+        }
         Ok(self
             .polls
             .get_mut(handle)
@@ -63,6 +72,9 @@ impl Agent for FakeAgent {
     }
     fn stop(&mut self, handle: &str) -> Result<Settlement, Block> {
         self.stops.push(handle.into());
+        if self.stop_error {
+            return Err(Block::new(BlockKind::Capability, "cannot settle worker"));
+        }
         Ok(if self.unsettled_stop {
             Settlement::Unsettled
         } else {
@@ -72,12 +84,21 @@ impl Agent for FakeAgent {
 }
 #[derive(Default)]
 struct FakeTracker {
+    gate_error: bool,
+    gate_polls: usize,
     fail_alerts: usize,
     approved: BTreeSet<(String, u32)>,
     alerts: Vec<Alert>,
 }
 impl Tracker for FakeTracker {
     fn gate_approved(&mut self, _: &str, step: &str, request: u32) -> Result<bool, Block> {
+        self.gate_polls += 1;
+        if self.gate_error {
+            return Err(Block::new(
+                BlockKind::Transient,
+                "tracker temporarily unavailable",
+            ));
+        }
         Ok(self.approved.contains(&(step.into(), request)))
     }
     fn alert(&mut self, _: &str, alert: &Alert) -> anyhow::Result<()> {
@@ -112,6 +133,9 @@ impl CodeHost for FakeHost {
 type CheckCall = (String, Vec<String>, BTreeMap<String, String>);
 #[derive(Default)]
 struct FakeGit {
+    check_error: Option<BlockKind>,
+    evidence_error: Option<BlockKind>,
+    fail_evidence: bool,
     checks: Vec<CheckCall>,
     evidence: Vec<(String, String, u32)>,
     fail_checks: usize,
@@ -125,6 +149,9 @@ impl Git for FakeGit {
     ) -> Result<(), Block> {
         self.checks
             .push((step.into(), checks.to_vec(), freezes.clone()));
+        if let Some(kind) = &self.check_error {
+            return Err(Block::new(kind.clone(), "check temporarily unavailable"));
+        }
         if self.fail_checks > 0 {
             self.fail_checks -= 1;
             Err(Block::new(BlockKind::Unknown, "project check failed"))
@@ -134,6 +161,12 @@ impl Git for FakeGit {
     }
     fn evidence(&mut self, step: &str, tag: &str, revision: u32) -> Result<String, Block> {
         self.evidence.push((step.into(), tag.into(), revision));
+        if let Some(kind) = &self.evidence_error {
+            return Err(Block::new(kind.clone(), "evidence temporarily unavailable"));
+        }
+        if self.fail_evidence {
+            return Err(Block::new(BlockKind::Capability, "cannot write evidence"));
+        }
         Ok(format!("{tag}.{revision}"))
     }
 }
@@ -699,6 +732,7 @@ fn hub_review_requires_known_verdict() {
 fn hub_failed_alert_delivery_is_retried_without_restarting_work() {
     let mut r = Rig::new();
     r.to("green");
+    let delivered_before = r.tracker.alerts.len();
     r.tracker.fail_alerts = 1;
     let handle = r.run.active.as_ref().unwrap().handle.clone();
     r.agent
@@ -718,13 +752,225 @@ fn hub_failed_alert_delivery_is_retried_without_restarting_work() {
         },
     );
     assert!(result.is_err());
-    assert!(r.tracker.alerts.is_empty());
+    assert_eq!(r.tracker.alerts.len(), delivered_before);
     r.tick();
-    assert_eq!(r.tracker.alerts.len(), 1);
+    assert_eq!(r.tracker.alerts.len(), delivered_before + 1);
     assert_eq!(r.starts("green"), 1);
     for _ in 0..5 {
         r.tick();
     }
-    assert_eq!(r.tracker.alerts.len(), 1);
+    assert_eq!(r.tracker.alerts.len(), delivered_before + 1);
     assert_eq!(r.run.status, Status::Blocked);
+}
+
+#[test]
+fn hub_result_requires_every_schema_field() {
+    let Poll::Finished {
+        result: Some(text), ..
+    } = done(None)
+    else {
+        unreachable!()
+    };
+    for field in [
+        "schema",
+        "status",
+        "summary",
+        "artifacts",
+        "block",
+        "verdict",
+        "questions",
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        value.as_object_mut().unwrap().remove(field);
+        let mut r = Rig::new();
+        r.to("green");
+        r.finish(Poll::Finished {
+            process_success: true,
+            completion: true,
+            result: Some(value.to_string()),
+        });
+        assert_eq!(
+            r.run.status,
+            Status::Blocked,
+            "omitted schema field: {field}"
+        );
+        assert_eq!(r.run.block.as_ref().unwrap().kind, BlockKind::Unknown);
+        r.alert();
+        assert_eq!(r.starts("review"), 0);
+    }
+}
+#[test]
+fn hub_result_rejects_unknown_fields() {
+    for nested in [false, true] {
+        let poll = if nested {
+            blocked("capability")
+        } else {
+            done(None)
+        };
+        let Poll::Finished {
+            result: Some(text), ..
+        } = poll
+        else {
+            unreachable!()
+        };
+        let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        if nested {
+            value["block"]["extra"] = serde_json::json!(true);
+        } else {
+            value["extra"] = serde_json::json!(true);
+        }
+        let mut r = Rig::new();
+        r.to("green");
+        r.finish(Poll::Finished {
+            process_success: true,
+            completion: true,
+            result: Some(value.to_string()),
+        });
+        assert_eq!(r.run.status, Status::Blocked);
+        assert_eq!(r.run.block.as_ref().unwrap().kind, BlockKind::Unknown);
+        r.alert();
+    }
+}
+#[test]
+fn hub_non_review_verdict_is_unknown_block() {
+    for verdict in ["clean", "changes_needed"] {
+        let mut r = Rig::new();
+        r.to("green");
+        r.finish(done(Some(verdict)));
+        assert_eq!(r.run.status, Status::Blocked);
+        assert_eq!(r.run.block.as_ref().unwrap().kind, BlockKind::Unknown);
+        r.alert();
+        assert_eq!(r.starts("review"), 0);
+    }
+}
+#[test]
+fn hub_agent_start_failure_retries_are_bounded() {
+    let mut r = Rig::new();
+    r.agent.start_errors = (0..3)
+        .map(|_| Block::new(BlockKind::Transient, "process spawn failed"))
+        .collect();
+    for _ in 0..8 {
+        r.tick();
+    }
+    assert_eq!(r.starts("plan"), 3);
+    assert_eq!(r.run.status, Status::Blocked);
+    r.alert();
+    assert!(r.run.active.is_none());
+}
+#[test]
+fn hub_agent_poll_error_retains_unsettled_worker() {
+    let mut r = Rig::new();
+    r.to("green");
+    r.agent.poll_error = true;
+    for _ in 0..5 {
+        r.tick();
+    }
+    assert_eq!(r.run.status, Status::Blocked);
+    assert!(r.run.unsettled);
+    assert!(r.run.active.is_some());
+    r.alert();
+    assert_eq!(r.starts("green"), 1);
+    assert!(retry(&mut r.run, "connection failed").is_err());
+    assert!(override_step(&mut r.run, &r.workflow, "assume dead").is_err());
+}
+#[test]
+fn hub_agent_stop_error_cannot_resend_worker() {
+    let mut r = Rig::new();
+    r.to("green");
+    r.agent.stop_error = true;
+    r.clock.0 += 90 * 60;
+    for _ in 0..5 {
+        r.tick();
+    }
+    assert_eq!(r.run.status, Status::Blocked);
+    assert!(r.run.unsettled);
+    assert!(r.run.active.is_some());
+    r.alert();
+    assert_eq!(r.starts("green"), 1);
+    assert_eq!(r.agent.stops.len(), 1);
+    assert!(retry(&mut r.run, "try again").is_err());
+}
+#[test]
+fn hub_git_evidence_failure_cannot_release_successor() {
+    let mut r = Rig::new();
+    r.to("red");
+    r.git.fail_evidence = true;
+    r.finish(done(None));
+    for _ in 0..5 {
+        r.tick();
+    }
+    assert_eq!(r.run.status, Status::Blocked);
+    r.alert();
+    assert!(!r.run.freezes.contains_key("red"));
+    assert_eq!(r.starts("green"), 0);
+}
+
+#[test]
+fn hub_transient_git_check_failures_retry_then_alert() {
+    let mut r = Rig::new();
+    r.to("green");
+    r.git.check_error = Some(BlockKind::Transient);
+    for _ in 0..20 {
+        if r.run.status == Status::Blocked {
+            break;
+        }
+        if r.run.status == Status::Running {
+            r.finish(done(None));
+        } else {
+            r.tick();
+        }
+    }
+    assert_eq!(
+        r.git
+            .checks
+            .iter()
+            .filter(|(step, _, _)| step == "green")
+            .count(),
+        3
+    );
+    assert_eq!(r.run.status, Status::Blocked);
+    r.alert();
+    assert_eq!(r.starts("review"), 0);
+}
+#[test]
+fn hub_transient_git_evidence_failures_retry_then_alert() {
+    let mut r = Rig::new();
+    r.to("green");
+    r.git.evidence_error = Some(BlockKind::Transient);
+    for _ in 0..20 {
+        if r.run.status == Status::Blocked {
+            break;
+        }
+        if r.run.status == Status::Running {
+            r.finish(done(None));
+        } else {
+            r.tick();
+        }
+    }
+    assert_eq!(
+        r.git
+            .evidence
+            .iter()
+            .filter(|(step, _, _)| step == "green")
+            .count(),
+        3
+    );
+    assert_eq!(r.run.status, Status::Blocked);
+    r.alert();
+    assert_eq!(r.starts("review"), 0);
+    assert!(!r.run.freezes.contains_key("green"));
+}
+#[test]
+fn hub_transient_gate_observation_failures_retry_then_alert() {
+    let mut r = Rig::new();
+    r.to("owner_go");
+    r.tracker.gate_error = true;
+    let observed_before = r.tracker.gate_polls;
+    for _ in 0..10 {
+        r.tick();
+    }
+    assert_eq!(r.tracker.gate_polls, observed_before + 3);
+    assert_eq!(r.run.status, Status::Blocked);
+    r.alert();
+    assert_eq!(r.starts("red"), 0);
 }

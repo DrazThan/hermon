@@ -21,3 +21,17 @@ The nine named issue acceptance tests cover the happy SDLC path through docs, su
 ## Frozen ownership
 
 `freeze.sha256` covers the new acceptance suite and its existing SDLC fixture. Production implementation may change `src/hub.rs` but must keep these test inputs byte-for-byte unchanged. A genuine test defect returns to the independent test-writer for a correction, a rerun and a superseding freeze with the reason recorded here.
+
+## Superseding freeze v2
+
+The independent test-writer corrected a genuine test fixture defect: `hub_failed_alert_delivery_is_retried_without_restarting_work` reaches green through Owner GO, which has already delivered a required alert. Its original assertion incorrectly expected the lifetime alert list to be empty. The correction captures the previously delivered count, requires it to stay unchanged when the new alert fails delivery, and requires exactly one additional alert after retry, without restarting the blocked bot. Production behavior was not changed to accommodate the bad assertion.
+
+The implementer requested additional independent pre-fix coverage. Ten additional tests require every documented result field to be present (nullable `block` and `verdict` still require their keys), reject extra top-level and nested block fields, reject verdicts on non-review steps, exercise bounded transient start failures, preserve unresolved workers after poll/stop adapter errors, prevent git evidence failure from releasing a successor, and enforce the configured transient retry allowance for settled git-check, git-evidence and gate-observation adapter failures.
+
+Before the additional production changes, the updated suite compiled and ran **33 tests: 27 passed, 6 failed**. The six failures expose mandatory-field omissions, nested unknown fields, non-review verdicts, and missing transient retries for check/evidence/gate adapters; `supplemental-red.txt` retains this evidence. The four other new adapter-fault regressions passed the initial implementation.
+
+The complete corrected suite was also replayed against the original behavior-free stubs from commit `fde56ee` in an isolated `/private/tmp/hermon-118-freeze-v2-*` workspace: **0 passed, 33 failed**, retained in `red-v2.txt`. The isolated workspace contains only the flow crate, so its lock file was generated offline first; the recorded test command then used `--locked`. The live production source was never reverted. Clippy with warnings denied passed for the complete test target before v2 freeze.
+
+`freeze.v1.sha256` preserves the original manifest. The active `freeze.sha256` supersedes it and freezes the corrected 33-test suite and SDLC fixture. The same independent ownership and defect-correction rules continue to apply.
+
+For a settled transient check/evidence adapter failure, the retry reruns the owning bot and its checks/evidence; the evidence revision remains the same idempotency key until evidence succeeds. A transient gate-observation retry may create a fresh gate-request generation; the acceptance contract requires bounded retry and continued gate safety, without prescribing generation reuse. Explicit workflow `on_block` routes can handle non-transient kinds; the supplied SDLC defaults surface owner-question, capability and unknown blocks rather than retrying an unchanged semantic block.
