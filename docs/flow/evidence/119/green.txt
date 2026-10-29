@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running tests/agent.rs (target/debug/deps/agent-beae7b19aef3bb55)
+
+running 14 tests
+test agent_hermes_argv ... ok
+test agent_hermes_supervision_requires_verified_capability ... ok
+test agent_dead_supervisor_is_transient_and_does_not_signal_unrelated_process ... ok
+test agent_command_block ... ok
+test agent_command_nonzero_exit_rejects_valid_result ... ok
+test agent_command_resume_argv_and_task_stdin ... ok
+test agent_command_missing_resume_template_starts_fresh ... ok
+test agent_command_done ... ok
+test agent_command_invalid_result ... ok
+test agent_command_cancel_cannot_become_late_success ... ok
+test agent_command_timeout_kills_group ... ok
+test agent_timeout_remains_enforced_while_hub_is_absent ... ok
+test agent_command_protocol_completion_and_session_capture ... ok
+test agent_restart_reattach ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
