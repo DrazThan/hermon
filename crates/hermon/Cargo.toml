@@ -1,0 +1,38 @@
+[package]
+name = "hermon"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+hermon-core = { path = "../hermon-core" }
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+dirs.workspace = true
+eframe.workspace = true
+egui_extras.workspace = true
+ratatui.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tao.workspace = true
+tray-icon.workspace = true
+muda.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true
+tempfile.workspace = true
+
+# The release workflow wraps this binary to launch `hermon gui` from Finder.
+# Hermon.app keeps its Dock icon; it is not an LSUIElement background app.
+[package.metadata.bundle]
+name = "Hermon"
+identifier = "dev.hermon.app"
+icon = ["../../assets/hermon.icns"]
+version = "0.5.0"
+copyright = "Copyright (c) hermon contributors"
+category = "Developer Tool"
+short_description = "Live monitor deck for Hermes, Claude Code, Codex, Grok, Gemini CLI, and OpenCode agent sessions"

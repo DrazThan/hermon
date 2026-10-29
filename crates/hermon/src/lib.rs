@@ -4,7 +4,6 @@
 //! issues and PRs stay connected to the Python implementation it replaces.
 
 pub mod arbitration;
-pub mod bots;
 pub mod cli;
 pub mod config;
 pub mod engine;
@@ -14,11 +13,11 @@ pub mod login_item;
 pub mod menubar;
 pub mod notify;
 pub mod remote;
-pub mod render;
 pub mod roster;
-pub mod source;
 pub mod ui;
 pub mod view;
+
+pub use hermon_core::{bots, render, source};
 
 use std::io::IsTerminal;
 use std::thread;

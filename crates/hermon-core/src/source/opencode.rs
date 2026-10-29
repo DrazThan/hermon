@@ -16,9 +16,9 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::Value;
 
+use crate::render::commas;
 use crate::render::opencode::{PartStatus, render_opencode_part};
 use crate::render::{Seg, Sem, StyledLine};
-use crate::roster::commas;
 
 use super::{Replay, SessionMeta, Tailer};
 
@@ -331,7 +331,7 @@ impl OpenCodeTailer {
     }
 
     /// The periodic `Σ` counters, plus the one-shot archived line. Runs on
-    /// roughly every seventh poll — at [`crate::engine::PANE_TICK`] that is
+    /// roughly every seventh poll — at the application’s `PANE_TICK` that is
     /// the ~2s cadence of the Python loop (`hermon.py:972`).
     fn read_stats(&mut self, conn: &Connection) -> rusqlite::Result<Vec<StyledLine>> {
         self.tick += 1;

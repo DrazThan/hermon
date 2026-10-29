@@ -2313,6 +2313,7 @@ dependencies = [
  "dirs",
  "eframe",
  "egui_extras",
+ "hermon-core",
  "muda",
  "ratatui",
  "regex",
@@ -2322,6 +2323,19 @@ dependencies = [
  "tao",
  "tempfile",
  "tray-icon",
+]
+
+[[package]]
+name = "hermon-core"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

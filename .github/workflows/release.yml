@@ -20,7 +20,7 @@ jobs:
       - name: Check tag matches crate version
         run: |
           crate=$(cargo metadata --no-deps --format-version 1 |
-            python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+            python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "hermon"))')
           tag=${GITHUB_REF_NAME#v}
           test "$crate" = "$tag" || {
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $crate"
@@ -28,21 +28,21 @@ jobs:
           }
 
       - name: Build
-        run: cargo build --locked
+        run: cargo build --workspace --locked
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace --locked
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       # The profile Homebrew builds with (fat LTO, one codegen unit) — verify it
       # compiles here rather than in a user's `brew install`.
       - name: Release build
-        run: cargo build --release --locked
+        run: cargo build --release --locked -p hermon
 
   release:
     needs: test
@@ -75,12 +75,13 @@ jobs:
       # `--format osx` skips the .dmg cargo-bundle also knows how to build —
       # the cask installs a zipped .app directly, no disk image needed.
       - name: Build Hermon.app
-        run: cargo bundle --release --format osx
+        working-directory: crates/hermon
+        run: cargo bundle --release --package hermon --format osx
 
       # Finder launches CFBundleExecutable with no arguments, but the app
       # must start `hermon gui`. cargo-bundle has no hook for that, so the
       # compiled binary is renamed and a tiny wrapper script takes its place
-      # as CFBundleExecutable, forwarding into `gui` (see Cargo.toml
+      # as CFBundleExecutable, forwarding into `gui` (see crates/hermon/Cargo.toml
       # [package.metadata.bundle] and NOTES in that file).
       - name: Wrap executable to launch `gui`
         run: |
@@ -146,7 +147,7 @@ jobs:
         run: pip install cargo-zigbuild==0.23.3
 
       - name: Build static agent binary
-        run: cargo zigbuild --release --locked --target ${{ matrix.target }}
+        run: cargo zigbuild --release --locked -p hermon --target ${{ matrix.target }}
 
       - name: Check the binary is actually static
         run: file target/${{ matrix.target }}/release/hermon | grep "statically linked"

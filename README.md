@@ -354,7 +354,7 @@ $99/year) are future work — see [Non-goals](#non-goals).
 From a checkout instead:
 
 ```bash
-cargo install --path .
+cargo install --path crates/hermon
 ```
 
 Either way `hermon --version` should print the current release, e.g. `hermon 0.3.0`.
@@ -633,7 +633,7 @@ this build, or `hermon --version` for the build version.
 Hermes can shell out to additional tools, and each one tends to keep
 its own session store the same way Claude Code and OpenCode do — hermon
 watches that store directly rather than going through Hermes. Two traits in
-[`src/source/mod.rs`](src/source/mod.rs) are the whole contract:
+[`crates/hermon-core/src/source/mod.rs`](crates/hermon-core/src/source/mod.rs) are the whole contract:
 
 ```rust
 pub trait Source {
@@ -651,17 +651,17 @@ Adding a tool is:
 
 1. Implement `Source` for it — `sessions()` returns the shared
    `SessionMeta` shape (id, timestamps, model, tokens, cost, `turn_done`,
-   `tool_pending`, …); `classify()` (`src/source/mod.rs`) then gives you
+   `tool_pending`, …); `classify()` (`crates/hermon-core/src/source/mod.rs`) then gives you
    live/attention/done for free. `ClaudeSource`/`HermesSource`/
-   `OpenCodeSource` (`src/source/{claude,hermes,opencode}.rs`) are the
+   `OpenCodeSource` (`crates/hermon-core/src/source/{claude,hermes,opencode}.rs`) are the
    templates — pick whichever is closer to the new store's shape (flat file
    vs. row-per-message SQLite with a turn-completion signal).
 2. Implement `Tailer` for its live view, and a renderer turning one raw row
-   into `StyledLine`s (`src/render/{claude,hermes,opencode}.rs` are the
+   into `StyledLine`s (`crates/hermon-core/src/render/{claude,hermes,opencode}.rs` are the
    templates; `hermon render KEY` is the parity harness these are diffed
    against).
 3. Add a field to `Sources` and a match arm in its `open_tailer`
-   (`src/roster.rs`), and a loop over the new source in `build_roster` —
+   (`crates/hermon/src/roster.rs`), and a loop over the new source in `build_roster` —
    then wire root flags/config into every consumer, agent snapshot tagging
    and the host remote-prefix allowlist. Keep full IDs in tail routing.
 
@@ -678,7 +678,7 @@ No web UI, no persistence or analytics beyond what's on screen. No Windows
 ## Tests
 
 ```bash
-cargo test
+cargo test --workspace
 ```
 
 Fixtures only — synthetic transcripts and fixture SQLite DBs matching each

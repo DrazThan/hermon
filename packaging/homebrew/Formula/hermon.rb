@@ -9,7 +9,7 @@ class Hermon < Formula
   depends_on "rust" => :build
 
   def install
-    system "cargo", "install", *std_cargo_args
+    system "cargo", "install", *std_cargo_args(path: "crates/hermon")
   end
 
   test do

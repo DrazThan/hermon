@@ -1,9 +1,13 @@
-[package]
-name = "hermon"
+[workspace]
+members = ["crates/hermon", "crates/hermon-core"]
+default-members = ["crates/hermon"]
+resolver = "3"
+
+[workspace.package]
 version = "0.5.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.104"
 chrono = "0.4.45"
 clap = { version = "4.6.6", features = ["derive"] }
@@ -16,13 +20,9 @@ regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
 tao = "0.37.0"
 tray-icon = "0.24.2"
 muda = "0.19.3"
-
-[dev-dependencies]
 tempfile = "3.27.0"
 
 # Tuned for the shipped binary: one codegen unit and fat LTO so the whole
@@ -33,17 +33,3 @@ tempfile = "3.27.0"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
-
-# Hermon.app (#78): `cargo bundle --release` wraps the same `hermon` binary
-# the CLI/menubar use. It launches with no arguments (Finder passes none), so
-# the release workflow swaps in a `gui` argv0 wrapper after bundling — see
-# .github/workflows/release.yml. No LSUIElement here: unlike the menubar,
-# this one belongs in the Dock.
-[package.metadata.bundle]
-name = "Hermon"
-identifier = "dev.hermon.app"
-icon = ["assets/hermon.icns"]
-version = "0.5.0"
-copyright = "Copyright (c) hermon contributors"
-category = "Developer Tool"
-short_description = "Live monitor deck for Hermes, Claude Code, Codex, Grok, Gemini CLI, and OpenCode agent sessions"
