@@ -1,0 +1,120 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests/checks.rs (target/debug/deps/checks-84397636247bfef4)
+
+running 17 tests
+test check_timeout_is_bounded_and_blocks_evidence ... FAILED
+test check_tests_fail_supports_native_libtest ... FAILED
+test check_command_builtins_pass_and_fail ... FAILED
+test check_commands_preserve_argv_cwd_and_environment ... FAILED
+test check_missing_binary_is_capability ... FAILED
+test check_frozen_missing_reference_fails_closed ... ok
+test check_tests_fail_requires_expected_test_identity ... ok
+test check_frozen_unchanged_detects_edit ... FAILED
+test check_tests_fail_requires_new_failures ... FAILED
+test checks_and_evidence_reject_dirty_frozen_paths ... FAILED
+test check_paths_include_deleted_and_renamed_sources ... ok
+test check_only_paths_changed ... FAILED
+test evidence_metadata_overflow_never_publishes_partial_authority ... FAILED
+test evidence_failed_recheck_revokes_success_receipt ... FAILED
+test evidence_requires_successful_checks_at_current_head_and_branch ... FAILED
+test evidence_tag_note_under_limit ... FAILED
+test evidence_records_test_counts_and_is_idempotent_across_restart ... FAILED
+
+failures:
+
+---- check_timeout_is_bounded_and_blocks_evidence stdout ----
+
+thread 'check_timeout_is_bounded_and_blocks_evidence' (94216940) panicked at crates/hermon-flow/tests/checks.rs:382:5:
+assertion `left == right` failed
+  left: Unknown
+ right: Transient
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- check_tests_fail_supports_native_libtest stdout ----
+
+thread 'check_tests_fail_supports_native_libtest' (94216939) panicked at crates/hermon-flow/tests/checks.rs:295:10:
+native Rust test result identifies the failing case: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_command_builtins_pass_and_fail stdout ----
+
+thread 'check_command_builtins_pass_and_fail' (94216930) panicked at crates/hermon-flow/tests/checks.rs:350:54:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_commands_preserve_argv_cwd_and_environment stdout ----
+
+thread 'check_commands_preserve_argv_cwd_and_environment' (94216931) panicked at crates/hermon-flow/tests/checks.rs:366:46:
+direct argv and exact worktree/environment: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_missing_binary_is_capability stdout ----
+
+thread 'check_missing_binary_is_capability' (94216934) panicked at crates/hermon-flow/tests/checks.rs:331:9:
+assertion `left == right` failed
+  left: Unknown
+ right: Capability
+
+---- check_frozen_unchanged_detects_edit stdout ----
+
+thread 'check_frozen_unchanged_detects_edit' (94216933) panicked at crates/hermon-flow/tests/checks.rs:173:56:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_tests_fail_requires_new_failures stdout ----
+
+thread 'check_tests_fail_requires_new_failures' (94216938) panicked at crates/hermon-flow/tests/checks.rs:214:52:
+nonzero plus new test failure is RED: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- checks_and_evidence_reject_dirty_frozen_paths stdout ----
+
+thread 'checks_and_evidence_reject_dirty_frozen_paths' (94216941) panicked at crates/hermon-flow/tests/checks.rs:511:56:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_only_paths_changed stdout ----
+
+thread 'check_only_paths_changed' (94216935) panicked at crates/hermon-flow/tests/checks.rs:148:56:
+all paths belong to named set: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_metadata_overflow_never_publishes_partial_authority stdout ----
+
+thread 'evidence_metadata_overflow_never_publishes_partial_authority' (94217126) panicked at crates/hermon-flow/tests/checks.rs:535:56:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_failed_recheck_revokes_success_receipt stdout ----
+
+thread 'evidence_failed_recheck_revokes_success_receipt' (94217122) panicked at crates/hermon-flow/tests/checks.rs:498:36:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_requires_successful_checks_at_current_head_and_branch stdout ----
+
+thread 'evidence_requires_successful_checks_at_current_head_and_branch' (94217148) panicked at crates/hermon-flow/tests/checks.rs:478:36:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_tag_note_under_limit stdout ----
+
+thread 'evidence_tag_note_under_limit' (94217150) panicked at crates/hermon-flow/tests/checks.rs:397:36:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_records_test_counts_and_is_idempotent_across_restart stdout ----
+
+thread 'evidence_records_test_counts_and_is_idempotent_across_restart' (94217141) panicked at crates/hermon-flow/tests/checks.rs:450:42:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+
+failures:
+    check_command_builtins_pass_and_fail
+    check_commands_preserve_argv_cwd_and_environment
+    check_frozen_unchanged_detects_edit
+    check_missing_binary_is_capability
+    check_only_paths_changed
+    check_tests_fail_requires_new_failures
+    check_tests_fail_supports_native_libtest
+    check_timeout_is_bounded_and_blocks_evidence
+    checks_and_evidence_reject_dirty_frozen_paths
+    evidence_failed_recheck_revokes_success_receipt
+    evidence_metadata_overflow_never_publishes_partial_authority
+    evidence_records_test_counts_and_is_idempotent_across_restart
+    evidence_requires_successful_checks_at_current_head_and_branch
+    evidence_tag_note_under_limit
+
+test result: FAILED. 3 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+
+error: test failed, to rerun pass `-p hermon-flow --test checks`
