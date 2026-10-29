@@ -48,3 +48,59 @@ All peers and issues are synthetic. No live Linear comment is posted; issue #121
 reserves that live check for explicit owner approval. The core freeze may not be
 edited by the implementer; genuine defects return to the independent test-writer
 for documented superseding freeze.
+
+## Supplemental process resume freeze
+
+`tests/tracker_agent.rs` is frozen separately in `supplemental-freeze.sha256`.
+It launches only a synthetic Python worker through the real detached ProcessAgent.
+The independent RED is **2 tests, 0 passed, 2 failed** (`supplemental-red.txt`):
+after reopening the adapter, the default answer hook launches a fresh process
+without appending the owner answer. Matching Clippy passes
+(`supplemental-red-clippy.txt`). Host access allows owned process settlement
+observations; no external agent or user process is involved.
+
+The success contract requires reopening durable process receipts, resuming with
+the explicit prior session when supported, adding the literal owner answer to
+the new task and its stdin, and retaining the host-created continuation task.
+When resume is unsupported, a fresh session must also receive the prior task
+context. Reconciliation repeats neither task mutation nor owner answer append.
+
+## Superseding freeze v2: macOS accepted-socket fixture correction
+
+Initial production execution reached a platform defect in the fake HTTP server:
+its listener is nonblocking, and macOS can propagate that flag to accepted
+sockets. An immediate read raced client transmission and returned `WouldBlock`
+before any behavioral assertion (`initial-green.txt`). The independent
+test-writer confirmed this fixture problem and added exactly one setup call,
+`stream.set_nonblocking(false)`, before reading the accepted stream. Existing
+read deadlines and Content-Length assertions remain unchanged; no acceptance
+assertion was weakened.
+
+`freeze.v1.sha256` preserves the original manifest. The active `freeze.sha256`
+supersedes it with the corrected tracker test; the CLI test is byte-identical.
+The corrected test was replayed against the original behavior-free sources from
+`16c0f27`, exported by `git archive` into
+`/private/tmp/hermon-121-corrected-red`. It compiled and ran **10 tests, 0 passed,
+10 failed** at the stub behaviors (`red-v2.txt`). Live production files were not
+reverted or modified for this replay. CLI and supplemental process RED remain
+valid and unchanged.
+
+## Supplemental independent review regressions
+
+`tests/tracker_recovery.rs` is independently authored and frozen in
+`review-freeze.sha256`. Its first implementation replay is **4 tests, 3 passed,
+1 failed** (`review-red.txt`), with matching Clippy passing (`review-clippy.txt`).
+
+The failing regression covers an owner template containing a copied old hidden
+marker. The acceptance requirement says the current marker survives any template;
+rejecting that template at render prevented the comment from being delivered.
+The corrected behavior preserves the template text, neutralizes its copied marker,
+and appends the one authoritative current marker.
+
+The three passing regressions verify restart recovery after a mutation is
+accepted but its HTTP response is lost (exactly one mutation, then read-by-ID),
+GraphQL error/success:false/missing-ID responses never latching success, credentials
+never entering errors, immutable request body binding, issue/owner state binding,
+and a nullable comment author never authorizing GO. These use a separate local
+HTTP peer that preserves the client-supplied UUID and can drop a response after
+recording the accepted mutation. No live Linear issue is involved.

@@ -1,0 +1,29 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.75s
+     Running tests/tracker_agent.rs (target/debug/deps/tracker_agent-4ddf6f7353bfe1dd)
+
+running 2 tests
+test agent_owner_answer_resumes_explicit_session_after_restart ... FAILED
+test agent_owner_answer_fresh_fallback_carries_context ... FAILED
+
+failures:
+
+---- agent_owner_answer_resumes_explicit_session_after_restart stdout ----
+
+thread 'agent_owner_answer_resumes_explicit_session_after_restart' (94364626) panicked at crates/hermon-flow/tests/tracker_agent.rs:122:5:
+the owner answer must enter the new task: {"extra":[],"stdin":"Continue the original work.\n","task":"Continue the original work.\n"}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- agent_owner_answer_fresh_fallback_carries_context stdout ----
+
+thread 'agent_owner_answer_fresh_fallback_carries_context' (94364625) panicked at crates/hermon-flow/tests/tracker_agent.rs:122:5:
+the owner answer must enter the new task: {"extra":[],"stdin":"Continue the original work.\n","task":"Continue the original work.\n"}
+
+
+failures:
+    agent_owner_answer_fresh_fallback_carries_context
+    agent_owner_answer_resumes_explicit_session_after_restart
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+error: test failed, to rerun pass `-p hermon-flow --test tracker_agent`

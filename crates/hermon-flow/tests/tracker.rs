@@ -77,6 +77,9 @@ impl Server {
         }
     }
     fn serve(mut stream: TcpStream, shared: &Mutex<State>) {
+        // Accepted sockets may inherit O_NONBLOCK on macOS. Header reads must
+        // wait for the client bytes rather than race the nonblocking accept loop.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
