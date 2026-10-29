@@ -1,0 +1,36 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.98s
+     Running tests/tracker.rs (target/debug/deps/tracker-c337be70721d3efd)
+
+running 10 tests
+test template_escapes_bot_text ... ok
+test tracker_reads_issue_labels_and_comment_pages ... ok
+test template_marker_always_appended ... ok
+test tracker_post_is_durable_and_idempotent ... ok
+test gate_reply_cursor_survives_restart ... ok
+test gate_paginates_newest_first_without_losing_later_inserts ... ok
+test gate_go_ignores_non_owner ... ok
+test question_answer_resumes_session ... ok
+test tracker_post_marker_and_mention ... ok
+test gate_go_exact_owner_reply ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+     Running tests/tracker_agent.rs (target/debug/deps/tracker_agent-7041c120b88c6cb2)
+
+running 2 tests
+test agent_owner_answer_fresh_fallback_carries_context ... ok
+test agent_owner_answer_resumes_explicit_session_after_restart ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests/tracker_recovery.rs (target/debug/deps/tracker_recovery-621e302dd12c0d00)
+
+running 4 tests
+test template_literal_marker_cannot_replace_appended_authority ... ok
+test tracker_ambiguous_post_recovers_reserved_comment_after_restart ... ok
+test gate_nullable_author_never_authorizes_go ... ok
+test tracker_error_payloads_never_latch_success_or_disclose_token ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+

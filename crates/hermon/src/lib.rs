@@ -90,7 +90,31 @@ pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Command::Templates { .. } => anyhow::bail!("template preview not implemented"),
+        Command::Templates {
+            command:
+                cli::TemplatesCommand::Preview {
+                    workflow,
+                    template,
+                    project_templates,
+                },
+        } => {
+            let path = if workflow.is_dir() {
+                workflow.join("workflow.yaml")
+            } else {
+                workflow
+            };
+            let workflow = hermon_flow::workflow::Workflow::load(&path)?;
+            let pack = workflow
+                .templates
+                .as_ref()
+                .map(|dir| path.parent().unwrap_or(std::path::Path::new(".")).join(dir));
+            let templates = hermon_flow::templates::Templates::load(
+                project_templates.as_deref(),
+                pack.as_deref(),
+            )?;
+            println!("{}", templates.preview(&template)?);
+            Ok(())
+        }
         Command::Watch(args) => {
             let options = args.monitor_options();
             // `watch` keeps the Python default 300s fresh window

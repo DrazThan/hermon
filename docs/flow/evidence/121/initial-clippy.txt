@@ -1,0 +1,53 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Checking hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+error: this `if` statement can be collapsed
+   --> crates/hermon-flow/src/hub.rs:260:17
+    |
+260 | /                 if !run.unsettled
+261 | |                     && run
+262 | |                         .block
+263 | |                         .as_ref()
+...   |
+292 | |                 }
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+264 ~                         .is_some_and(|block| block.kind == BlockKind::OwnerQuestion)
+265 ~                     && let Some(question) =
+266 |                         run.owner_question.clone().filter(|q| q.step == run.current)
+...
+289 |                         }
+290 ~                     }
+    |
+
+error: this `if` statement can be collapsed
+   --> crates/hermon-flow/src/tracker.rs:188:13
+    |
+188 | /             if let Ok(data) = self.graphql(
+189 | |                 "query HermonComment($id:String!) { comment(id:$id) { id body } }",
+190 | |                 json!({"id":request.id}),
+191 | |             ) {
+...   |
+201 | |             }
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+191 ~             )
+192 ~                 && let Some(comment) = data.get("comment").filter(|v| v.is_object()) {
+193 |                     ensure!(
+...
+199 |                     return Ok(self.state.requests[&key].id.clone());
+200 ~                 }
+    |
+
+error: could not compile `hermon-flow` (lib test) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `hermon-flow` (lib) due to 2 previous errors

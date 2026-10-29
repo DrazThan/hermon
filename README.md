@@ -594,6 +594,8 @@ hermon gui      [...same flags as watch...]
 hermon menubar  [...same flags as watch...] [--install-login-item] [--uninstall-login-item]
 hermon ls       [...same source flags as watch...] [--fresh-window SEC]
 hermon render KEY [...same source flags as watch...] [--fresh-window SEC]
+hermon templates preview WORKFLOW TEMPLATE [--project-templates DIR]
+                render a workflow comment template with sample values, without posting
 hermon agent    [...same source flags as watch...]
                 the in-container half of the remote wire protocol: stream session
                 frames over stdio for a host `hermon watch`/`gui`/`menubar` to consume
@@ -624,6 +626,9 @@ Defaults make `hermon watch` correct with zero flags.
 automatically when stdout isn't a terminal); the ratatui screen (`hermon
 watch`) always renders in color — use `HERMON_ASCII=1` there instead if you
 need a plainer glyph set.
+
+Workflow template lookup, Linear app configuration, owner reply rules and restart
+behavior are described in [Linear tracker and templates](docs/flow/linear-tracker.md).
 
 Run any subcommand with `--help` for the exact flags and defaults shipped in
 this build, or `hermon --version` for the build version.

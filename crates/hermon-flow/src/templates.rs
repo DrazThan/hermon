@@ -25,7 +25,7 @@ const DEFINITIONS: &[(&str, &[&str], &str)] = &[
             "options",
             "run_status_cmd",
         ],
-        "{{owner_mention}} {{question}}\n\nTechnical: {{technical}}\n{{options}}\n",
+        "{{owner_mention}} {{question}}\n\nTechnical: {{bot}} / {{step}}: {{technical}}\n{{options}}\n",
     ),
     (
         "go_request.md",
@@ -118,18 +118,59 @@ impl Templates {
         }
         Ok(Self { bodies })
     }
+    /// Only `owner_mention` is trusted tracker markup. Bot values are always text.
     pub fn render(
         &self,
-        _name: &str,
-        _values: &BTreeMap<String, String>,
-        _owner_mention: &str,
-        _run_id: &str,
-        _request_id: &str,
+        name: &str,
+        values: &BTreeMap<String, String>,
+        owner_mention: &str,
+        run_id: &str,
+        request_id: &str,
     ) -> Result<String> {
-        anyhow::bail!("template rendering is not implemented")
+        let body = self
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown template {name}"))?
+            .replace("<!-- hermon:", "&lt;!-- hermon:");
+        let marker = marker(run_id, request_id)?;
+        let mut rendered = String::new();
+        let mut remaining = body.as_str();
+        while let Some(start) = remaining.find("{{") {
+            rendered.push_str(&remaining[..start]);
+            let after = &remaining[start + 2..];
+            let end = after.find("}}").expect("validated placeholder");
+            let key = &after[..end];
+            if key == "owner_mention" {
+                ensure!(
+                    !owner_mention.trim().is_empty(),
+                    "owner mention is required"
+                );
+                rendered.push_str(owner_mention);
+            } else {
+                let value = values
+                    .get(key)
+                    .ok_or_else(|| anyhow::anyhow!("missing template value {key}"))?;
+                rendered.push_str(&escape_text(value));
+            }
+            remaining = &after[end + 2..];
+        }
+        rendered.push_str(remaining);
+        rendered.push_str("\n\n");
+        rendered.push_str(&marker);
+        Ok(rendered)
     }
-    pub fn preview(&self, _name: &str) -> Result<String> {
-        anyhow::bail!("template preview is not implemented")
+    pub fn preview(&self, name: &str) -> Result<String> {
+        let values = DEFINITIONS
+            .iter()
+            .flat_map(|(_, fields, _)| fields.iter())
+            .map(|field| ((*field).to_owned(), format!("sample {field}")))
+            .collect();
+        self.render(
+            name,
+            &values,
+            "[Sample owner](https://linear.app/example/profiles/owner)",
+            "sample-run",
+            "sample-request",
+        )
     }
     pub fn get(&self, name: &str) -> Option<&str> {
         self.bodies.get(name).map(String::as_str)
@@ -166,6 +207,40 @@ impl Templates {
     }
 }
 
-pub fn marker(_run_id: &str, _request_id: &str) -> Result<String> {
-    anyhow::bail!("marker rendering is not implemented")
+pub fn marker(run_id: &str, request_id: &str) -> Result<String> {
+    for id in [run_id, request_id] {
+        ensure!(
+            !id.is_empty()
+                && id.len() <= 256
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b)),
+            "invalid run/request marker ID"
+        );
+    }
+    Ok(format!("<!-- hermon:run={run_id};request={request_id} -->"))
+}
+
+fn escape_text(value: &str) -> String {
+    let mut escaped = String::new();
+    for c in value.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            // Linear converts bare resource URLs into mentions. Break both URL
+            // schemes and @ handles, in addition to escaping markdown links.
+            '@' | ':' => {
+                escaped.push(c);
+                escaped.push('\u{200b}');
+            }
+            '\\' | '*' | '_' | '[' | ']' | '(' | ')' | '`' | '#' | '!' | '|' | '~' | '+' | '-'
+            | '=' | '{' | '}' => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            _ => escaped.push(c),
+        }
+    }
+    escaped
 }

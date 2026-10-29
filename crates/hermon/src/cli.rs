@@ -331,6 +331,7 @@ mod source_root_tests {
             Command::Ls(s) => s.source,
             Command::Render(s) => s.source,
             Command::Menubar(s) => s.source,
+            Command::Templates { .. } => panic!("template commands have no source flags"),
         }
     }
     #[test]
