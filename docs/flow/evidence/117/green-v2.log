@@ -1,0 +1,49 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running unittests src/lib.rs (target/debug/deps/hermon_flow-c4f9c009694be52e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/store.rs (target/debug/deps/store-595f25f5e78dc0b7)
+
+running 6 tests
+test flow_run_store_corrupt_committed_state_is_an_error ... ok
+test flow_run_store_does_not_promote_orphan_temp ... ok
+test flow_run_store_failed_serialization_preserves_committed_state ... ok
+test flow_run_store_events_are_append_only_jsonl ... ok
+test flow_run_store_atomic_write ... ok
+test flow_run_store_recovers_from_partial_temp ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/templates.rs (target/debug/deps/templates-bb820ab4232c7cc0)
+
+running 7 tests
+test templates_valid_plain_text_and_listed_placeholders_load ... ok
+test templates_placeholders_are_validated_per_kind ... ok
+test templates_reject_unknown_placeholder ... ok
+test templates_reject_logic_and_unclosed_placeholders ... ok
+test templates_require_owner_mention ... ok
+test templates_invalid_override_does_not_fall_back ... ok
+test templates_layer_lookup_order ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/workflow.rs (target/debug/deps/workflow-96e1f68ab5dc090b)
+
+running 11 tests
+test flow_workflow_rejects_yaml_alias ... ok
+test flow_workflow_cycle_bound_must_cover_every_automatic_cycle ... ok
+test flow_workflow_rejects_multiple_yaml_documents ... ok
+test flow_workflow_strict_yaml_does_not_reject_literal_punctuation ... ok
+test flow_workflow_rejects_unbounded_cycle ... ok
+test flow_workflow_rejects_duplicate_key ... ok
+test flow_workflow_rejects_dangling_next ... ok
+test flow_workflow_rejects_unknown_key ... ok
+test flow_workflow_valid_sdlc_pack ... ok
+test flow_workflow_rejects_invalid_model_and_limits ... ok
+test flow_workflow_rejects_unknown_checks_and_empty_parameters ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hermon", "crates/hermon-core"]
+members = ["crates/hermon", "crates/hermon-core", "crates/hermon-flow"]
 default-members = ["crates/hermon"]
 resolver = "3"
 
@@ -20,10 +20,12 @@ regex = "1.13.1"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
+serde_path_to_error = "0.1.20"
 tao = "0.37.0"
 tray-icon = "0.24.2"
 muda = "0.19.3"
 tempfile = "3.27.0"
+yaml-rust2 = { version = "0.13.0", default-features = false }
 
 # Tuned for the shipped binary: one codegen unit and fat LTO so the whole
 # crate graph is optimized together, symbols stripped since we don't ship
