@@ -1,0 +1,78 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.02s
+     Running tests/code_host.rs (target/debug/deps/code_host-01a94eb2222ff554)
+
+running 9 tests
+test pr_open_fails_closed_on_lookup_and_push_errors ... FAILED
+test merge_gate_requires_merged_and_ancestor ... FAILED
+test pr_open_rejects_wrong_run_and_rebound_intake ... FAILED
+test merge_gate_rejects_mismatched_pr_identity_and_bad_oid ... FAILED
+test pr_open_body_and_base ... FAILED
+test pr_open_does_not_reuse_a_closed_or_foreign_pr ... FAILED
+test hub_never_invokes_merge ... FAILED
+test pr_open_recovers_a_lost_create_response ... FAILED
+test pr_open_reconciles_retry_and_restart ... FAILED
+
+failures:
+
+---- pr_open_fails_closed_on_lookup_and_push_errors stdout ----
+
+thread 'pr_open_fails_closed_on_lookup_and_push_errors' (94581815) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- merge_gate_requires_merged_and_ancestor stdout ----
+
+thread 'merge_gate_requires_merged_and_ancestor' (94581812) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+---- pr_open_rejects_wrong_run_and_rebound_intake stdout ----
+
+thread 'pr_open_rejects_wrong_run_and_rebound_intake' (94581818) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+---- merge_gate_rejects_mismatched_pr_identity_and_bad_oid stdout ----
+
+thread 'merge_gate_rejects_mismatched_pr_identity_and_bad_oid' (94581811) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+---- pr_open_body_and_base stdout ----
+
+thread 'pr_open_body_and_base' (94581813) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+---- pr_open_does_not_reuse_a_closed_or_foreign_pr stdout ----
+
+thread 'pr_open_does_not_reuse_a_closed_or_foreign_pr' (94581814) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+---- hub_never_invokes_merge stdout ----
+
+thread 'hub_never_invokes_merge' (94581810) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+---- pr_open_recovers_a_lost_create_response stdout ----
+
+thread 'pr_open_recovers_a_lost_create_response' (94581817) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+---- pr_open_reconciles_retry_and_restart stdout ----
+
+thread 'pr_open_reconciles_retry_and_restart' (94581816) panicked at crates/hermon-flow/src/code_host.rs:28:9:
+not implemented: Slice 7 open_pr
+
+
+failures:
+    hub_never_invokes_merge
+    merge_gate_rejects_mismatched_pr_identity_and_bad_oid
+    merge_gate_requires_merged_and_ancestor
+    pr_open_body_and_base
+    pr_open_does_not_reuse_a_closed_or_foreign_pr
+    pr_open_fails_closed_on_lookup_and_push_errors
+    pr_open_reconciles_retry_and_restart
+    pr_open_recovers_a_lost_create_response
+    pr_open_rejects_wrong_run_and_rebound_intake
+
+test result: FAILED. 0 passed; 9 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+error: test failed, to rerun pass `-p hermon-flow --test code_host`
