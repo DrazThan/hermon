@@ -13,3 +13,4 @@ tempfile.workspace = true
 yaml-rust2.workspace = true
 libc = "0.2.189"
 sha2 = "0.10.9"
+ureq = { version = "3", features = ["json"] }

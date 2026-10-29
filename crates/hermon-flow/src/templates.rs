@@ -118,6 +118,19 @@ impl Templates {
         }
         Ok(Self { bodies })
     }
+    pub fn render(
+        &self,
+        _name: &str,
+        _values: &BTreeMap<String, String>,
+        _owner_mention: &str,
+        _run_id: &str,
+        _request_id: &str,
+    ) -> Result<String> {
+        anyhow::bail!("template rendering is not implemented")
+    }
+    pub fn preview(&self, _name: &str) -> Result<String> {
+        anyhow::bail!("template preview is not implemented")
+    }
     pub fn get(&self, name: &str) -> Option<&str> {
         self.bodies.get(name).map(String::as_str)
     }
@@ -151,4 +164,8 @@ impl Templates {
         );
         Ok(())
     }
+}
+
+pub fn marker(_run_id: &str, _request_id: &str) -> Result<String> {
+    anyhow::bail!("marker rendering is not implemented")
 }

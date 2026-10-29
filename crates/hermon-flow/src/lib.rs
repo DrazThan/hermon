@@ -5,4 +5,5 @@ pub mod checks;
 pub mod hub;
 pub mod store;
 pub mod templates;
+pub mod tracker;
 pub mod workflow;

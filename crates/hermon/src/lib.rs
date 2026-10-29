@@ -90,6 +90,7 @@ pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
+        Command::Templates { .. } => anyhow::bail!("template preview not implemented"),
         Command::Watch(args) => {
             let options = args.monitor_options();
             // `watch` keeps the Python default 300s fresh window

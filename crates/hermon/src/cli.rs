@@ -17,6 +17,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Preview workflow comment templates with sample values.
+    Templates {
+        #[command(subcommand)]
+        command: TemplatesCommand,
+    },
     /// Run the live monitor deck (a ratatui TUI).
     Watch(SourceArgs),
     /// Run the live monitor deck in a native desktop window.
@@ -31,6 +36,17 @@ pub enum Command {
     /// consume — the in-container half of the remote wire protocol (#88,
     /// #89). `--interval` (from [`SourceArgs`]) is the `Snap` cadence.
     Agent(SourceArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TemplatesCommand {
+    /// Render one template from a workflow file or workflow pack directory.
+    Preview {
+        workflow: std::path::PathBuf,
+        template: String,
+        #[arg(long)]
+        project_templates: Option<std::path::PathBuf>,
+    },
 }
 
 /// Menubar-specific options, including source flags and login-item management.

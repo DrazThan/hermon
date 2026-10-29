@@ -1,0 +1,85 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/tracker.rs (target/debug/deps/tracker-8064a9514f2147c7)
+
+running 10 tests
+test template_escapes_bot_text ... FAILED
+test template_marker_always_appended ... FAILED
+test tracker_post_marker_and_mention ... FAILED
+test question_answer_resumes_session ... FAILED
+test gate_go_exact_owner_reply ... FAILED
+test tracker_reads_issue_labels_and_comment_pages ... FAILED
+test gate_reply_cursor_survives_restart ... FAILED
+test gate_paginates_newest_first_without_losing_later_inserts ... FAILED
+test gate_go_ignores_non_owner ... FAILED
+test tracker_post_is_durable_and_idempotent ... FAILED
+
+failures:
+
+---- template_escapes_bot_text stdout ----
+
+thread 'template_escapes_bot_text' (94355488) panicked at crates/hermon-flow/tests/tracker.rs:305:10:
+called `Result::unwrap()` on an `Err` value: template rendering is not implemented
+
+---- template_marker_always_appended stdout ----
+
+thread 'template_marker_always_appended' (94355489) panicked at crates/hermon-flow/tests/tracker.rs:273:14:
+called `Result::unwrap()` on an `Err` value: template rendering is not implemented
+
+---- tracker_post_marker_and_mention stdout ----
+
+thread 'tracker_post_marker_and_mention' (94355491) panicked at crates/hermon-flow/tests/tracker.rs:227:14:
+called `Result::unwrap()` on an `Err` value: posting is not implemented
+
+---- question_answer_resumes_session stdout ----
+
+thread 'question_answer_resumes_session' (94355487) panicked at crates/hermon-flow/tests/tracker.rs:604:10:
+called `Result::unwrap()` on an `Err` value: alerts are not implemented
+
+---- gate_go_exact_owner_reply stdout ----
+
+thread 'gate_go_exact_owner_reply' (94355483) panicked at crates/hermon-flow/tests/tracker.rs:373:66:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+
+---- tracker_reads_issue_labels_and_comment_pages stdout ----
+
+thread 'tracker_reads_issue_labels_and_comment_pages' (94355492) panicked at crates/hermon-flow/tests/tracker.rs:480:38:
+called `Result::unwrap()` on an `Err` value: issue reads are not implemented
+
+---- gate_reply_cursor_survives_restart stdout ----
+
+thread 'gate_reply_cursor_survives_restart' (94355486) panicked at crates/hermon-flow/tests/tracker.rs:440:62:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+
+---- gate_paginates_newest_first_without_losing_later_inserts stdout ----
+
+thread 'gate_paginates_newest_first_without_losing_later_inserts' (94355485) panicked at crates/hermon-flow/tests/tracker.rs:684:62:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+
+---- gate_go_ignores_non_owner stdout ----
+
+thread 'gate_go_ignores_non_owner' (94355484) panicked at crates/hermon-flow/tests/tracker.rs:403:62:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tracker_post_is_durable_and_idempotent stdout ----
+
+thread 'tracker_post_is_durable_and_idempotent' (94355490) panicked at crates/hermon-flow/tests/tracker.rs:332:10:
+called `Result::unwrap()` on an `Err` value: posting is not implemented
+
+
+failures:
+    gate_go_exact_owner_reply
+    gate_go_ignores_non_owner
+    gate_paginates_newest_first_without_losing_later_inserts
+    gate_reply_cursor_survives_restart
+    question_answer_resumes_session
+    template_escapes_bot_text
+    template_marker_always_appended
+    tracker_post_is_durable_and_idempotent
+    tracker_post_marker_and_mention
+    tracker_reads_issue_labels_and_comment_pages
+
+test result: FAILED. 0 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test tracker`

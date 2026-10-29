@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 hermon-core = { path = "../hermon-core" }
+hermon-flow = { path = "../hermon-flow" }
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true

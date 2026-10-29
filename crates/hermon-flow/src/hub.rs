@@ -134,12 +134,40 @@ pub trait Agent {
     /// Bind starts idempotently to (run_id, step, number). An error guarantees
     /// no worker was launched; an uncertain launch must return a pollable handle.
     fn start(&mut self, request: &StartRequest) -> std::result::Result<String, Block>;
+    /// Resume an answered, settled attempt; adapters without sessions start fresh.
+    fn resume_after_answer(
+        &mut self,
+        _previous_handle: &str,
+        request: &StartRequest,
+        _answer: &str,
+    ) -> std::result::Result<String, Block> {
+        self.start(request)
+    }
     /// Finished confirms worker settlement, even when its result is invalid.
     /// Observation errors cannot establish settlement and block resend.
     fn poll(&mut self, handle: &str) -> std::result::Result<Poll, Block>;
     fn stop(&mut self, handle: &str) -> std::result::Result<Settlement, Block>;
 }
 pub trait Tracker {
+    fn question(
+        &mut self,
+        _run_id: &str,
+        _step: &str,
+        _request: u32,
+        _bot: &str,
+        _questions: &[String],
+    ) -> std::result::Result<(), Block> {
+        Ok(())
+    }
+    fn answer(
+        &mut self,
+        _run_id: &str,
+        _step: &str,
+        _request: u32,
+    ) -> std::result::Result<Option<String>, Block> {
+        Ok(None)
+    }
+
     /// True only for an exact authorized owner reply to this gate request.
     fn gate_approved(
         &mut self,
