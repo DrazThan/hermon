@@ -1,0 +1,221 @@
+   Compiling arraydeque v0.5.1
+   Compiling yaml-rust2 v0.13.0
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running unittests src/lib.rs (target/debug/deps/hermon_flow-9b2a658e31b76e31)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/store.rs (target/debug/deps/store-0f75f97dd1069385)
+
+running 6 tests
+test flow_run_store_atomic_write ... FAILED
+test flow_run_store_recovers_from_partial_temp ... FAILED
+test flow_run_store_failed_serialization_preserves_committed_state ... FAILED
+test flow_run_store_events_are_append_only_jsonl ... FAILED
+test flow_run_store_corrupt_committed_state_is_an_error ... FAILED
+test flow_run_store_does_not_promote_orphan_temp ... FAILED
+
+failures:
+
+---- flow_run_store_atomic_write stdout ----
+
+thread 'flow_run_store_atomic_write' (93521735) panicked at crates/hermon-flow/tests/store.rs:22:37:
+called `Result::unwrap()` on an `Err` value: run store not implemented
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- flow_run_store_recovers_from_partial_temp stdout ----
+
+thread 'flow_run_store_recovers_from_partial_temp' (93521740) panicked at crates/hermon-flow/tests/store.rs:49:44:
+called `Result::unwrap()` on an `Err` value: run store not implemented
+
+---- flow_run_store_failed_serialization_preserves_committed_state stdout ----
+
+thread 'flow_run_store_failed_serialization_preserves_committed_state' (93521739) panicked at crates/hermon-flow/tests/store.rs:78:44:
+called `Result::unwrap()` on an `Err` value: run store not implemented
+
+---- flow_run_store_events_are_append_only_jsonl stdout ----
+
+thread 'flow_run_store_events_are_append_only_jsonl' (93521738) panicked at crates/hermon-flow/tests/store.rs:90:44:
+called `Result::unwrap()` on an `Err` value: run store not implemented
+
+---- flow_run_store_corrupt_committed_state_is_an_error stdout ----
+
+thread 'flow_run_store_corrupt_committed_state_is_an_error' (93521736) panicked at crates/hermon-flow/tests/store.rs:122:5:
+assertion failed: format!("{error:#}").contains("run.json")
+
+---- flow_run_store_does_not_promote_orphan_temp stdout ----
+
+thread 'flow_run_store_does_not_promote_orphan_temp' (93521737) panicked at crates/hermon-flow/tests/store.rs:70:44:
+called `Result::unwrap()` on an `Err` value: run store not implemented
+
+
+failures:
+    flow_run_store_atomic_write
+    flow_run_store_corrupt_committed_state_is_an_error
+    flow_run_store_does_not_promote_orphan_temp
+    flow_run_store_events_are_append_only_jsonl
+    flow_run_store_failed_serialization_preserves_committed_state
+    flow_run_store_recovers_from_partial_temp
+
+test result: FAILED. 0 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test store`
+     Running tests/templates.rs (target/debug/deps/templates-82659fc8aea2fcea)
+
+running 7 tests
+test templates_reject_unknown_placeholder ... FAILED
+test templates_require_owner_mention ... FAILED
+test templates_valid_plain_text_and_listed_placeholders_load ... FAILED
+test templates_reject_logic_and_unclosed_placeholders ... FAILED
+test templates_placeholders_are_validated_per_kind ... FAILED
+test templates_invalid_override_does_not_fall_back ... FAILED
+test templates_layer_lookup_order ... FAILED
+
+failures:
+
+---- templates_reject_unknown_placeholder stdout ----
+
+thread 'templates_reject_unknown_placeholder' (93521785) panicked at crates/hermon-flow/tests/templates.rs:64:5:
+template loading not implemented
+
+---- templates_require_owner_mention stdout ----
+
+thread 'templates_require_owner_mention' (93521786) panicked at crates/hermon-flow/tests/templates.rs:78:9:
+template loading not implemented
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- templates_valid_plain_text_and_listed_placeholders_load stdout ----
+
+thread 'templates_valid_plain_text_and_listed_placeholders_load' (93521787) panicked at crates/hermon-flow/tests/templates.rs:146:62:
+called `Result::unwrap()` on an `Err` value: template loading not implemented
+
+---- templates_reject_logic_and_unclosed_placeholders stdout ----
+
+thread 'templates_reject_logic_and_unclosed_placeholders' (93521784) panicked at crates/hermon-flow/tests/templates.rs:137:9:
+assertion failed: format!("{error:#}").contains("question.md")
+
+---- templates_placeholders_are_validated_per_kind stdout ----
+
+thread 'templates_placeholders_are_validated_per_kind' (93521783) panicked at crates/hermon-flow/tests/templates.rs:99:5:
+template loading not implemented
+
+---- templates_invalid_override_does_not_fall_back stdout ----
+
+thread 'templates_invalid_override_does_not_fall_back' (93521781) panicked at crates/hermon-flow/tests/templates.rs:118:5:
+template loading not implemented
+
+---- templates_layer_lookup_order stdout ----
+
+thread 'templates_layer_lookup_order' (93521782) panicked at crates/hermon-flow/tests/templates.rs:24:48:
+called `Result::unwrap()` on an `Err` value: template loading not implemented
+
+
+failures:
+    templates_invalid_override_does_not_fall_back
+    templates_layer_lookup_order
+    templates_placeholders_are_validated_per_kind
+    templates_reject_logic_and_unclosed_placeholders
+    templates_reject_unknown_placeholder
+    templates_require_owner_mention
+    templates_valid_plain_text_and_listed_placeholders_load
+
+test result: FAILED. 0 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test templates`
+     Running tests/workflow.rs (target/debug/deps/workflow-983e2d5c5ff1b252)
+
+running 11 tests
+test flow_workflow_rejects_yaml_alias ... FAILED
+test flow_workflow_rejects_invalid_model_and_limits ... FAILED
+test flow_workflow_rejects_unknown_key ... FAILED
+test flow_workflow_valid_sdlc_pack ... FAILED
+test flow_workflow_rejects_unknown_checks_and_empty_parameters ... FAILED
+test flow_workflow_rejects_dangling_next ... FAILED
+test flow_workflow_strict_yaml_does_not_reject_literal_punctuation ... FAILED
+test flow_workflow_rejects_duplicate_key ... FAILED
+test flow_workflow_cycle_bound_must_cover_every_automatic_cycle ... FAILED
+test flow_workflow_rejects_multiple_yaml_documents ... FAILED
+test flow_workflow_rejects_unbounded_cycle ... FAILED
+
+failures:
+
+---- flow_workflow_rejects_yaml_alias stdout ----
+
+thread 'flow_workflow_rejects_yaml_alias' (93521827) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+---- flow_workflow_rejects_invalid_model_and_limits stdout ----
+
+thread 'flow_workflow_rejects_invalid_model_and_limits' (93521822) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+---- flow_workflow_rejects_unknown_key stdout ----
+
+thread 'flow_workflow_rejects_unknown_key' (93521826) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+---- flow_workflow_valid_sdlc_pack stdout ----
+
+thread 'flow_workflow_valid_sdlc_pack' (93521829) panicked at crates/hermon-flow/tests/workflow.rs:20:52:
+called `Result::unwrap()` on an `Err` value: workflow parsing not implemented
+
+---- flow_workflow_rejects_unknown_checks_and_empty_parameters stdout ----
+
+thread 'flow_workflow_rejects_unknown_checks_and_empty_parameters' (93521825) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+---- flow_workflow_rejects_dangling_next stdout ----
+
+thread 'flow_workflow_rejects_dangling_next' (93521820) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+---- flow_workflow_strict_yaml_does_not_reject_literal_punctuation stdout ----
+
+thread 'flow_workflow_strict_yaml_does_not_reject_literal_punctuation' (93521828) panicked at crates/hermon-flow/tests/workflow.rs:189:53:
+called `Result::unwrap()` on an `Err` value: workflow parsing not implemented
+
+---- flow_workflow_rejects_duplicate_key stdout ----
+
+thread 'flow_workflow_rejects_duplicate_key' (93521821) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+---- flow_workflow_cycle_bound_must_cover_every_automatic_cycle stdout ----
+
+thread 'flow_workflow_cycle_bound_must_cover_every_automatic_cycle' (93521819) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+---- flow_workflow_rejects_multiple_yaml_documents stdout ----
+
+thread 'flow_workflow_rejects_multiple_yaml_documents' (93521823) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- flow_workflow_rejects_unbounded_cycle stdout ----
+
+thread 'flow_workflow_rejects_unbounded_cycle' (93521824) panicked at crates/hermon-flow/tests/workflow.rs:11:5:
+error must identify file: workflow parsing not implemented
+
+
+failures:
+    flow_workflow_cycle_bound_must_cover_every_automatic_cycle
+    flow_workflow_rejects_dangling_next
+    flow_workflow_rejects_duplicate_key
+    flow_workflow_rejects_invalid_model_and_limits
+    flow_workflow_rejects_multiple_yaml_documents
+    flow_workflow_rejects_unbounded_cycle
+    flow_workflow_rejects_unknown_checks_and_empty_parameters
+    flow_workflow_rejects_unknown_key
+    flow_workflow_rejects_yaml_alias
+    flow_workflow_strict_yaml_does_not_reject_literal_punctuation
+    flow_workflow_valid_sdlc_pack
+
+test result: FAILED. 0 passed; 11 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test workflow`
+error: 3 targets failed:
+    `-p hermon-flow --test store`
+    `-p hermon-flow --test templates`
+    `-p hermon-flow --test workflow`

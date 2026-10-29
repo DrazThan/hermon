@@ -1,0 +1,29 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running tests/workflow_scale.rs (target/debug/deps/workflow_scale-e6b4fc7b08efa85f)
+
+running 1 test
+test flow_workflow_large_linear_graph_loads ... FAILED
+
+failures:
+
+---- flow_workflow_large_linear_graph_loads stdout ----
+
+thread 'flow_workflow_large_linear_graph_loads' (93560830) panicked at crates/hermon-flow/tests/workflow_scale.rs:33:5:
+large acyclic workflow must load: status=signal: 6 (SIGABRT)
+stdout=
+running 1 test
+
+stderr=
+thread 'flow_workflow_large_linear_graph_loads' (93560832) has overflowed its stack
+fatal runtime error: stack overflow, aborting
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    flow_workflow_large_linear_graph_loads
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `-p hermon-flow --test workflow_scale`
