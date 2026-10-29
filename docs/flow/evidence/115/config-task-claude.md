@@ -1,0 +1,1 @@
+Use /flow115 for this read-only CLI contract probe. Read the skill and call only the local flow115 MCP probe tool (no arguments). Return only JSON with the skill nonce and MCP result. No edits, shell commands, delegation, other tools, or external requests. The skill nonce is only in its SKILL.md; the MCP nonce is only in the fixture response.

@@ -1,0 +1,94 @@
+{
+  "recorded_at_utc": "2026-10-29T17:14:16.457199+00:00",
+  "executables": {
+    "hermes": {
+      "path_on_PATH": "/Users/taloz/.local/bin/hermes",
+      "resolved_path": "/Users/taloz/.local/bin/hermes",
+      "wrapper_contents": "#!/bin/sh\nexec /Users/taloz/.hermes/hermes-agent/.hermes/bin/hermes \"$@\"\n",
+      "wrapper_read_command": [
+        "cat",
+        "/Users/taloz/.local/bin/hermes"
+      ]
+    },
+    "codex": {
+      "path_on_PATH": "/Users/taloz/.local/share/mise/installs/node/26/bin/codex",
+      "resolved_path": "/Users/taloz/.local/share/mise/installs/node/26.10.0/lib/node_modules/@openai/codex/bin/codex.js"
+    },
+    "claude": {
+      "path_on_PATH": "/Users/taloz/.local/share/mise/installs/node/26/bin/claude",
+      "resolved_path": "/Users/taloz/.local/share/mise/installs/node/26.10.0/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+    }
+  },
+  "commands": [
+    {
+      "argv": [
+        "hermes",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "Hermes Agent v0.22.4 (2026.9.24) \u00b7 stable \u00b7 local 4d04303818b6\nInstall directory: /Users/taloz/.hermes/hermes-agent\nInstall method: git\nPython: 3.14.7\nOpenAI SDK: 2.24.0\nUpdate available \u2014 run 'hermes update'\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "codex",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "codex-cli 0.160.0\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "claude",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "2.1.309 (Claude Code)\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "uname",
+        "-srm"
+      ],
+      "returncode": 0,
+      "stdout": "Darwin 25.6.0 arm64\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "sw_vers",
+        "-productVersion"
+      ],
+      "returncode": 0,
+      "stdout": "26.6.2\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/Users/taloz/.hermes/hermes-agent",
+        "rev-parse",
+        "HEAD"
+      ],
+      "returncode": 0,
+      "stdout": "4d04303818b61bf3aa09278af48356315515965b\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/Users/taloz/.hermes/hermes-agent",
+        "status",
+        "--porcelain",
+        "--untracked-files=no"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}
