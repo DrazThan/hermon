@@ -1,0 +1,58 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running tests/checks_regressions.rs (target/debug/deps/checks_regressions-7743044548883a19)
+
+running 11 tests
+test check_command_dirty_mutation_cannot_receive_evidence ... ok
+test evidence_rejects_modified_check_log ... FAILED
+test hub_real_checks_publish_only_successful_evidence ... ok
+test evidence_rejects_removed_check_log ... FAILED
+test evidence_binds_step_and_attempt_context ... ok
+test check_libtest_tail_cannot_silently_drop_earlier_failures ... FAILED
+test evidence_retry_repairs_missing_explicit_note ... ok
+test frozen_check_rejects_another_evidence_kind ... FAILED
+test check_relative_path_and_clean_environment ... ok
+test frozen_check_rejects_mismatched_annotation_and_explicit_note ... FAILED
+test check_timeout_settles_owned_descendants_only ... ok
+
+failures:
+
+---- evidence_rejects_modified_check_log stdout ----
+
+thread 'evidence_rejects_modified_check_log' (94251712) panicked at crates/hermon-flow/tests/checks_regressions.rs:106:5:
+published evidence must bind the actual log bytes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- evidence_rejects_removed_check_log stdout ----
+
+thread 'evidence_rejects_removed_check_log' (94251713) panicked at crates/hermon-flow/tests/checks_regressions.rs:118:5:
+a nonexistent log cannot support a new tag
+
+---- check_libtest_tail_cannot_silently_drop_earlier_failures stdout ----
+
+thread 'check_libtest_tail_cannot_silently_drop_earlier_failures' (94251708) panicked at crates/hermon-flow/tests/checks_regressions.rs:216:9:
+assertion `left == right` failed: either reject incomplete stdout or count all failures
+  left: Number(1)
+ right: 2
+
+---- frozen_check_rejects_another_evidence_kind stdout ----
+
+thread 'frozen_check_rejects_another_evidence_kind' (94251715) panicked at crates/hermon-flow/tests/checks_regressions.rs:321:5:
+the requested freeze key must match the recorded evidence kind
+
+---- frozen_check_rejects_mismatched_annotation_and_explicit_note stdout ----
+
+thread 'frozen_check_rejects_mismatched_annotation_and_explicit_note' (94251716) panicked at crates/hermon-flow/tests/checks_regressions.rs:308:5:
+conflicting freeze authority must not pass silently
+
+
+failures:
+    check_libtest_tail_cannot_silently_drop_earlier_failures
+    evidence_rejects_modified_check_log
+    evidence_rejects_removed_check_log
+    frozen_check_rejects_another_evidence_kind
+    frozen_check_rejects_mismatched_annotation_and_explicit_note
+
+test result: FAILED. 6 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.74s
+
+error: test failed, to rerun pass `-p hermon-flow --test checks_regressions`

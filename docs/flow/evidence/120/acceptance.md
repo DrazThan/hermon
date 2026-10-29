@@ -80,3 +80,26 @@ implementation (`corrected-green.txt`). Process checks required host access for
 `ps`-based group-settlement observations, as in Slice 4; a sandbox-only attempt
 could not make those observations. No production change was made for either
 fixture defect.
+
+## Supplemental independent review regressions
+
+After the corrected 17-test suite passed, independent review added 11 tests in
+`tests/checks_regressions.rs`, frozen separately in `supplemental-freeze.sha256`.
+Against the first implementation these compiled and ran **6 passed, 5 failed**
+(`supplemental-red.txt`); matching Clippy with warnings denied passes.
+
+The five failing regressions demonstrate that new evidence accepted modified
+or removed check logs, a bounded libtest tail parser silently omitted an earlier
+suite's failure count, `frozen_unchanged:red` accepted a reference whose recorded
+evidence kind was `plan`, and a frozen check ignored disagreement between a tag
+annotation and its explicit git note. These tests require publication to verify
+log bytes, either complete libtest counts or refusal of an incomplete report,
+and consistent, correctly typed freeze authority.
+
+The six initially passing regressions cover the real hub advancing to done with
+real checks/evidence; missing-note crash recovery without moving an existing
+tag; binding receipts to step and attempt; executable lookup through a relative
+configured PATH and `./binary` with no host HOME leakage; dirty command mutations
+blocking success; and a timeout settling an active SIGTERM-ignoring descendant
+while an unrelated process remains alive. No vendor agent or user process is
+signalled: the fixture owns its synthetic process group and sentinel.
