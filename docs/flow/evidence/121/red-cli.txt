@@ -1,0 +1,33 @@
+   Compiling form_urlencoded v1.2.2
+   Compiling ureq-proto v0.6.5
+   Compiling rustls v0.23.46
+   Compiling url v2.5.8
+   Compiling webbrowser v1.2.4
+   Compiling tao v0.37.0
+   Compiling egui-winit v0.36.1
+   Compiling eframe v0.36.1
+   Compiling ureq v3.5.0
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.19s
+     Running tests/templates_preview.rs (target/debug/deps/templates_preview-2e0335d04f3fd8e2)
+
+running 1 test
+test templates_preview_cli ... FAILED
+
+failures:
+
+---- templates_preview_cli stdout ----
+
+thread 'templates_preview_cli' (94352808) panicked at crates/hermon/tests/templates_preview.rs:27:5:
+Error: template preview not implemented
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    templates_preview_cli
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+error: test failed, to rerun pass `-p hermon --test templates_preview`

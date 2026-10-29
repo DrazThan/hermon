@@ -1,0 +1,26 @@
+   Compiling percent-encoding v2.3.2
+   Compiling ring v0.17.14
+   Compiling zeroize v1.9.1
+   Compiling getrandom v0.2.17
+   Compiling untrusted v0.9.0
+   Compiling httparse v1.10.1
+   Compiling rustls v0.23.46
+   Compiling bytes v1.12.1
+   Compiling subtle v2.6.1
+   Compiling base64 v0.23.1
+   Compiling utf8-zero v0.8.1
+   Compiling form_urlencoded v1.2.2
+   Compiling rustls-pki-types v1.15.1
+   Compiling url v2.5.8
+   Compiling webpki-roots v1.0.11
+   Compiling http v1.5.0
+   Compiling webbrowser v1.2.4
+   Compiling tao v0.37.0
+   Compiling egui-winit v0.36.1
+   Compiling ureq-proto v0.6.5
+   Compiling eframe v0.36.1
+   Compiling rustls-webpki v0.103.16
+   Compiling ureq v3.5.0
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `release` profile [optimized] target(s) in 1m 13s

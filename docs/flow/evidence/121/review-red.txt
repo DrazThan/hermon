@@ -1,0 +1,26 @@
+    Blocking waiting for file lock on build directory
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.62s
+     Running tests/tracker_recovery.rs (target/debug/deps/tracker_recovery-621e302dd12c0d00)
+
+running 4 tests
+test template_literal_marker_cannot_replace_appended_authority ... FAILED
+test tracker_ambiguous_post_recovers_reserved_comment_after_restart ... ok
+test gate_nullable_author_never_authorizes_go ... ok
+test tracker_error_payloads_never_latch_success_or_disclose_token ... ok
+
+failures:
+
+---- template_literal_marker_cannot_replace_appended_authority stdout ----
+
+thread 'template_literal_marker_cannot_replace_appended_authority' (94408893) panicked at crates/hermon-flow/tests/tracker_recovery.rs:262:87:
+a copied marker inside an owner template must be neutralized before appending the current marker: templates cannot supply run markers
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    template_literal_marker_cannot_replace_appended_authority
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `-p hermon-flow --test tracker_recovery`

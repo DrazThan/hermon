@@ -75,3 +75,9 @@ Slice 5 implements the `Git` interface with real project commands and annotated
 evidence tags. See [checks and git evidence](checks.md) for configuration,
 independent test expectations, environment/deadline handling and the host's
 attempt-context binding responsibilities.
+
+Slice 6 implements the `Tracker` interface with central-app Linear comments and
+owner-thread matching. Settled owner questions now persist the prior attempt
+handle and resume through `Agent::resume_after_answer` after a verified reply.
+Old snapshots load with no pending question. See [Linear tracker and templates](linear-tracker.md)
+for credentials, durable request state, incremental polling and preview usage.

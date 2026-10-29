@@ -1,0 +1,73 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.76s
+     Running tests/tracker.rs (target/debug/deps/tracker-c337be70721d3efd)
+
+running 10 tests
+test gate_go_exact_owner_reply ... FAILED
+test gate_go_ignores_non_owner ... FAILED
+test gate_reply_cursor_survives_restart ... FAILED
+test tracker_post_is_durable_and_idempotent ... FAILED
+test tracker_post_marker_and_mention ... FAILED
+test question_answer_resumes_session ... FAILED
+test tracker_reads_issue_labels_and_comment_pages ... FAILED
+test gate_paginates_newest_first_without_losing_later_inserts ... FAILED
+test template_escapes_bot_text ... ok
+test template_marker_always_appended ... ok
+
+failures:
+
+---- gate_go_exact_owner_reply stdout ----
+
+thread 'gate_go_exact_owner_reply' (94374705) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- gate_go_ignores_non_owner stdout ----
+
+thread 'gate_go_ignores_non_owner' (94374706) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- gate_reply_cursor_survives_restart stdout ----
+
+thread 'gate_reply_cursor_survives_restart' (94374708) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- tracker_post_is_durable_and_idempotent stdout ----
+
+thread 'tracker_post_is_durable_and_idempotent' (94374712) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- tracker_post_marker_and_mention stdout ----
+
+thread 'tracker_post_marker_and_mention' (94374713) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- question_answer_resumes_session stdout ----
+
+thread 'question_answer_resumes_session' (94374709) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- tracker_reads_issue_labels_and_comment_pages stdout ----
+
+thread 'tracker_reads_issue_labels_and_comment_pages' (94374714) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- gate_paginates_newest_first_without_losing_later_inserts stdout ----
+
+thread 'gate_paginates_newest_first_without_losing_later_inserts' (94374707) panicked at crates/hermon-flow/tests/tracker.rs:54:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+
+failures:
+    gate_go_exact_owner_reply
+    gate_go_ignores_non_owner
+    gate_paginates_newest_first_without_losing_later_inserts
+    gate_reply_cursor_survives_restart
+    question_answer_resumes_session
+    tracker_post_is_durable_and_idempotent
+    tracker_post_marker_and_mention
+    tracker_reads_issue_labels_and_comment_pages
+
+test result: FAILED. 2 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test tracker`

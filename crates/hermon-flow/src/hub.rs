@@ -58,6 +58,15 @@ pub struct Attempt {
     pub freezes: BTreeMap<String, String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerQuestion {
+    pub step: String,
+    pub request: u32,
+    pub bot: String,
+    pub questions: Vec<String>,
+    pub previous_handle: String,
+    pub answer: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
     pub id: String,
     pub current: String,
@@ -77,6 +86,8 @@ pub struct Run {
     /// Revisions belong to a tag, including tags shared by red and red_fix.
     #[serde(default)]
     pub evidence_revisions: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub owner_question: Option<OwnerQuestion>,
     #[serde(default)]
     pub alert_keys: BTreeSet<String>,
 }
@@ -99,6 +110,7 @@ impl Run {
             gate_requests: BTreeMap::new(),
             unsettled: false,
             evidence_revisions: BTreeMap::new(),
+            owner_question: None,
             alert_keys: BTreeSet::new(),
         }
     }
@@ -134,12 +146,44 @@ pub trait Agent {
     /// Bind starts idempotently to (run_id, step, number). An error guarantees
     /// no worker was launched; an uncertain launch must return a pollable handle.
     fn start(&mut self, request: &StartRequest) -> std::result::Result<String, Block>;
+    /// Adapters must carry the answer into either a resumed or fresh session.
+    /// Refuse by default rather than silently dropping the owner's decision.
+    fn resume_after_answer(
+        &mut self,
+        _previous_handle: &str,
+        _request: &StartRequest,
+        _answer: &str,
+    ) -> std::result::Result<String, Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "agent adapter cannot deliver owner-answer context",
+        ))
+    }
     /// Finished confirms worker settlement, even when its result is invalid.
     /// Observation errors cannot establish settlement and block resend.
     fn poll(&mut self, handle: &str) -> std::result::Result<Poll, Block>;
     fn stop(&mut self, handle: &str) -> std::result::Result<Settlement, Block>;
 }
 pub trait Tracker {
+    fn question(
+        &mut self,
+        _run_id: &str,
+        _step: &str,
+        _request: u32,
+        _bot: &str,
+        _questions: &[String],
+    ) -> std::result::Result<(), Block> {
+        Ok(())
+    }
+    fn answer(
+        &mut self,
+        _run_id: &str,
+        _step: &str,
+        _request: u32,
+    ) -> std::result::Result<Option<String>, Block> {
+        Ok(None)
+    }
+
     /// True only for an exact authorized owner reply to this gate request.
     fn gate_approved(
         &mut self,
@@ -215,6 +259,35 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                             "settled",
                             "worker settlement confirmed; owner retry required",
                         );
+                    }
+                }
+                if !run.unsettled
+                    && run
+                        .block
+                        .as_ref()
+                        .is_some_and(|block| block.kind == BlockKind::OwnerQuestion)
+                    && let Some(question) =
+                        run.owner_question.clone().filter(|q| q.step == run.current)
+                {
+                    deps.tracker
+                        .question(
+                            &run.id,
+                            &question.step,
+                            question.request,
+                            &question.bot,
+                            &question.questions,
+                        )
+                        .map_err(|block| anyhow!("question delivery failed: {}", block.reason))?;
+                    if let Some(answer) = deps
+                        .tracker
+                        .answer(&run.id, &question.step, question.request)
+                        .map_err(|block| anyhow!("answer polling failed: {}", block.reason))?
+                    {
+                        run.owner_question.as_mut().unwrap().answer = Some(answer.clone());
+                        run.status = Status::Ready;
+                        run.block = None;
+                        event(run, "owner_answer", &answer);
+                        continue;
                     }
                 }
                 let reason = run
@@ -319,6 +392,20 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                             Err(block) => handle_block(run, workflow, step, block),
                             Ok(result) => {
                                 if let Some(block) = result.block {
+                                    if block.kind == BlockKind::OwnerQuestion {
+                                        run.owner_question = Some(OwnerQuestion {
+                                            step: run.current.clone(),
+                                            request: attempt.number,
+                                            bot: step.bot.clone().unwrap_or_default(),
+                                            questions: if result.questions.is_empty() {
+                                                vec![block.reason.clone()]
+                                            } else {
+                                                result.questions
+                                            },
+                                            previous_handle: attempt.handle.clone(),
+                                            answer: None,
+                                        });
+                                    }
                                     handle_block(run, workflow, step, block);
                                     continue;
                                 }
@@ -492,7 +579,19 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                     freezes: run.freezes.clone(),
                 };
                 run.runs.insert(run.current.clone(), request.number);
-                match deps.agent.start(&request) {
+                let started = match run
+                    .owner_question
+                    .as_ref()
+                    .filter(|q| q.step == run.current)
+                {
+                    Some(question) if question.answer.is_some() => deps.agent.resume_after_answer(
+                        &question.previous_handle,
+                        &request,
+                        question.answer.as_deref().unwrap(),
+                    ),
+                    _ => deps.agent.start(&request),
+                };
+                match started {
                     Ok(handle) => {
                         let attempt = Attempt {
                             step: request.step,
@@ -502,6 +601,7 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                             family,
                             freezes: request.freezes,
                         };
+                        run.owner_question = None;
                         run.attempts.push(attempt.clone());
                         run.active = Some(attempt);
                         run.status = Status::Running;
@@ -532,6 +632,7 @@ fn transition(run: &mut Run, next: Option<&String>) {
     run.check_failures.remove(&run.current);
     run.active = None;
     run.block = None;
+    run.owner_question = None;
     if let Some(next) = next {
         event(run, "route", next);
         run.current.clone_from(next);

@@ -1,0 +1,146 @@
+   Compiling libc v0.2.189
+   Compiling cfg-if v1.0.4
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling version_check v0.9.5
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.229
+   Compiling typenum v1.20.1
+   Compiling zeroize v1.9.1
+   Compiling itoa v1.0.18
+   Compiling httparse v1.10.1
+   Compiling rustls-pki-types v1.15.1
+   Compiling cc v1.4.4
+   Compiling zmij v1.0.23
+   Compiling untrusted v0.9.0
+   Compiling crc32fast v1.5.1
+   Compiling foldhash v0.2.0
+   Compiling generic-array v0.14.7
+   Compiling bytes v1.12.1
+   Compiling serde_json v1.0.151
+   Compiling rustls v0.23.46
+   Compiling rustix v1.1.4
+   Compiling serde v1.0.229
+   Compiling log v0.4.34
+   Compiling once_cell v1.21.4
+   Compiling simd-adler32 v0.3.10
+   Compiling adler2 v2.0.1
+   Compiling getrandom v0.4.3
+   Compiling miniz_oxide v0.9.1
+   Compiling ring v0.17.14
+   Compiling syn v3.0.4
+   Compiling http v1.5.0
+   Compiling getrandom v0.2.17
+   Compiling errno v0.3.14
+   Compiling hashbrown v0.17.1
+   Compiling subtle v2.6.1
+   Compiling memchr v2.8.3
+   Compiling base64 v0.23.1
+   Compiling bitflags v2.13.1
+   Compiling anyhow v1.0.104
+   Compiling ureq-proto v0.6.5
+   Compiling hashlink v0.12.1
+   Compiling cpufeatures v0.2.17
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling flate2 v1.1.10
+   Compiling webpki-roots v1.0.11
+   Compiling digest v0.10.7
+   Compiling arraydeque v0.5.1
+   Compiling utf8-zero v0.8.1
+   Compiling percent-encoding v2.3.2
+   Compiling serde_derive v1.0.229
+   Compiling fastrand v2.5.0
+   Compiling sha2 v0.10.9
+   Compiling yaml-rust2 v0.13.0
+   Compiling serde_path_to_error v0.1.20
+   Compiling tempfile v3.27.0
+   Compiling rustls-webpki v0.103.16
+   Compiling ureq v3.5.0
+   Compiling hermon-flow v0.5.0 (/private/tmp/hermon-121-corrected-red/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.75s
+     Running tests/tracker.rs (/private/tmp/hermon-121-corrected-red/target/debug/deps/tracker-8064a9514f2147c7)
+
+running 10 tests
+test template_escapes_bot_text ... FAILED
+test tracker_post_marker_and_mention ... FAILED
+test tracker_post_is_durable_and_idempotent ... FAILED
+test template_marker_always_appended ... FAILED
+test gate_reply_cursor_survives_restart ... FAILED
+test tracker_reads_issue_labels_and_comment_pages ... FAILED
+test question_answer_resumes_session ... FAILED
+test gate_paginates_newest_first_without_losing_later_inserts ... FAILED
+test gate_go_exact_owner_reply ... FAILED
+test gate_go_ignores_non_owner ... FAILED
+
+failures:
+
+---- template_escapes_bot_text stdout ----
+
+thread 'template_escapes_bot_text' (94389338) panicked at crates/hermon-flow/tests/tracker.rs:308:10:
+called `Result::unwrap()` on an `Err` value: template rendering is not implemented
+
+---- tracker_post_marker_and_mention stdout ----
+
+thread 'tracker_post_marker_and_mention' (94389341) panicked at crates/hermon-flow/tests/tracker.rs:230:14:
+called `Result::unwrap()` on an `Err` value: posting is not implemented
+
+---- tracker_post_is_durable_and_idempotent stdout ----
+
+thread 'tracker_post_is_durable_and_idempotent' (94389340) panicked at crates/hermon-flow/tests/tracker.rs:335:10:
+called `Result::unwrap()` on an `Err` value: posting is not implemented
+
+---- template_marker_always_appended stdout ----
+
+thread 'template_marker_always_appended' (94389339) panicked at crates/hermon-flow/tests/tracker.rs:276:14:
+called `Result::unwrap()` on an `Err` value: template rendering is not implemented
+
+---- gate_reply_cursor_survives_restart stdout ----
+
+thread 'gate_reply_cursor_survives_restart' (94389336) panicked at crates/hermon-flow/tests/tracker.rs:443:62:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+
+---- tracker_reads_issue_labels_and_comment_pages stdout ----
+
+thread 'tracker_reads_issue_labels_and_comment_pages' (94389342) panicked at crates/hermon-flow/tests/tracker.rs:483:38:
+called `Result::unwrap()` on an `Err` value: issue reads are not implemented
+
+---- question_answer_resumes_session stdout ----
+
+thread 'question_answer_resumes_session' (94389337) panicked at crates/hermon-flow/tests/tracker.rs:607:10:
+called `Result::unwrap()` on an `Err` value: alerts are not implemented
+
+---- gate_paginates_newest_first_without_losing_later_inserts stdout ----
+
+thread 'gate_paginates_newest_first_without_losing_later_inserts' (94389335) panicked at crates/hermon-flow/tests/tracker.rs:687:62:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+
+---- gate_go_exact_owner_reply stdout ----
+
+thread 'gate_go_exact_owner_reply' (94389333) panicked at crates/hermon-flow/tests/tracker.rs:376:66:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- gate_go_ignores_non_owner stdout ----
+
+thread 'gate_go_ignores_non_owner' (94389334) panicked at crates/hermon-flow/tests/tracker.rs:406:62:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "gate replies are not implemented" }
+
+
+failures:
+    gate_go_exact_owner_reply
+    gate_go_ignores_non_owner
+    gate_paginates_newest_first_without_losing_later_inserts
+    gate_reply_cursor_survives_restart
+    question_answer_resumes_session
+    template_escapes_bot_text
+    template_marker_always_appended
+    tracker_post_is_durable_and_idempotent
+    tracker_post_marker_and_mention
+    tracker_reads_issue_labels_and_comment_pages
+
+test result: FAILED. 0 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p hermon-flow --test tracker`

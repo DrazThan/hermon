@@ -47,6 +47,15 @@ pub struct ProcessAttempt {
     pub cancelled: bool,
 }
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnswerPreparation {
+    previous: String,
+    answer: String,
+    session: Option<String>,
+    task: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct Launch {
     bot: String,
     argv: Vec<String>,
@@ -230,6 +239,91 @@ impl ProcessAgent {
         }
         Ok(handle)
     }
+    fn resume_answer(
+        &mut self,
+        previous_handle: &str,
+        request: &StartRequest,
+        answer: &str,
+    ) -> Result<String> {
+        ensure!(!answer.trim().is_empty(), "owner answer is empty");
+        let previous = self.resolve(previous_handle)?;
+        let directory = self.directory(request)?;
+        let prior_number = previous
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.parse::<u32>().ok())
+            .context("invalid prior attempt number")?;
+        ensure!(
+            previous.parent() == directory.parent() && prior_number < request.number,
+            "answer must resume an earlier attempt in the same run and step"
+        );
+        ensure!(
+            matches!(
+                self.poll_inner(previous_handle)?,
+                Poll::Finished {
+                    process_success: true,
+                    completion: true,
+                    ..
+                }
+            ),
+            "previous worker must be successfully settled before applying an owner answer"
+        );
+        let launch: Launch = read_json(&previous.join("launch.json"))?;
+        ensure!(launch.bot == request.bot, "answer must resume the same bot");
+        let _lock =
+            lock(&directory.join("answer.lock"), false)?.context("answer preparation lock")?;
+        let receipt = directory.join("owner-answer.json");
+        let preparation: AnswerPreparation = if receipt.exists() {
+            let preparation: AnswerPreparation = read_json(&receipt)?;
+            ensure!(
+                preparation.previous == previous_handle && preparation.answer == answer,
+                "attempt is already bound to another owner answer"
+            );
+            preparation
+        } else {
+            ensure!(
+                !directory.join("launch.json").exists(),
+                "cannot add an answer to an already launched attempt"
+            );
+            let resumable = matches!(self.bots.get(&request.bot), Some(BotConfig::Command(config)) if config.resume.is_some());
+            let session = self
+                .attempt(previous_handle)?
+                .session_id
+                .filter(|_| resumable);
+            let mut task = fs::read_to_string(directory.join("task.md"))?;
+            if session.is_none() {
+                task.push_str("\n\n## Prior task context\n");
+                task.push_str(&fs::read_to_string(previous.join("task.md"))?);
+            }
+            task.push_str("\n\n## Owner answer\n");
+            task.push_str(answer);
+            task.push('\n');
+            let preparation = AnswerPreparation {
+                previous: previous_handle.into(),
+                answer: answer.into(),
+                session,
+                task,
+            };
+            // Reserve the complete task before replacing it, so a crash cannot
+            // cause the same answer to be appended again.
+            write_json(&receipt, &preparation)?;
+            preparation
+        };
+        if !directory.join("launch.json").exists() {
+            let mut task = tempfile::NamedTempFile::new_in(&directory)?;
+            task.write_all(preparation.task.as_bytes())?;
+            task.as_file().sync_all()?;
+            task.persist(directory.join("task.md"))?;
+            File::open(&directory)?.sync_all()?;
+        } else {
+            ensure!(
+                fs::read_to_string(directory.join("task.md"))? == preparation.task,
+                "answered task changed after launch"
+            );
+        }
+        self.set_resume(request, preparation.session);
+        self.start_inner(request)
+    }
     fn poll_inner(&self, handle: &str) -> Result<Poll> {
         let directory = self.resolve(handle)?;
         let state_path = directory.join("process.json");
@@ -319,6 +413,15 @@ impl Agent for ProcessAgent {
     fn start(&mut self, request: &StartRequest) -> std::result::Result<String, Block> {
         self.start_inner(request)
             .map_err(|e| Block::new(BlockKind::Capability, format!("{e:#}")))
+    }
+    fn resume_after_answer(
+        &mut self,
+        previous_handle: &str,
+        request: &StartRequest,
+        answer: &str,
+    ) -> std::result::Result<String, Block> {
+        self.resume_answer(previous_handle, request, answer)
+            .map_err(|error| Block::new(BlockKind::Capability, format!("{error:#}")))
     }
     fn poll(&mut self, handle: &str) -> std::result::Result<Poll, Block> {
         self.poll_inner(handle)

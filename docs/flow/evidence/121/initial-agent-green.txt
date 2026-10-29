@@ -1,0 +1,10 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.74s
+     Running tests/tracker_agent.rs (target/debug/deps/tracker_agent-7041c120b88c6cb2)
+
+running 2 tests
+test agent_owner_answer_fresh_fallback_carries_context ... ok
+test agent_owner_answer_resumes_explicit_session_after_restart ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
