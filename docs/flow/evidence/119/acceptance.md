@@ -57,3 +57,29 @@ misleading zero exit rather than fixture syntax failure.
 
 The scope is process adapters and their hub integration seam. Tracker/code-host
 adapters and user-facing hub hosting are later slices.
+
+## Supplemental review regressions
+
+Production review identified two additional defects after the original 14 tests
+passed: a valid `result.json` that predated a fresh launch could be accepted when
+the new command wrote no result, and a `./relative-agent` executable resolved
+against the hub's current directory instead of its configured worktree.
+
+The independent test writer added `tests/agent_regressions.rs` without changing
+the original freeze. `supplemental-red.txt` records **0 passed, 2 failed** against
+the then-current implementation, reproducing both behaviors before their fixes.
+`supplemental-freeze.sha256` separately freezes these two tests. A fresh launch
+must discard pre-existing completion output before starting its command, and
+relative executable paths must resolve in the command's configured worktree.
+
+Review also required observing that the entire owned group had settled after
+SIGKILL before publishing a finished receipt. Merely queuing a signal and reaping
+the group leader cannot establish that all descendant tools have stopped.
+
+A final narrow regression covers a known failure before spawning: if `worker.log`
+cannot be opened, the adapter must not retain a launch reservation or consume
+bot capacity. After the filesystem is repaired, the same request can launch.
+`tests/agent_launch_failure.rs` was independently authored and frozen in
+`launch-failure-freeze.sha256`; `launch-failure-red.txt` records **0 passed,
+1 failed** before the spawn-stdio ordering fix. The preceding freezes remain
+unchanged.

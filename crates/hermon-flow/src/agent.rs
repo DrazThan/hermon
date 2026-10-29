@@ -197,7 +197,6 @@ impl ProcessAgent {
             timeout_ms: u64::try_from(self.timeout.as_millis())?.max(1),
             created_ms: now_ms(),
         };
-        write_json(&directory.join("launch.json"), &launch)?;
         let mut command = Command::new(&self.worker);
         command
             .arg(&directory)
@@ -215,6 +214,9 @@ impl ProcessAgent {
                 Ok(())
             });
         }
+        // Complete fallible local preparation before reserving the launch.
+        // Known no-launch failures remain retryable once their cause is fixed.
+        write_json(&directory.join("launch.json"), &launch)?;
         match command.spawn() {
             Ok(mut child) => {
                 thread::spawn(move || {
