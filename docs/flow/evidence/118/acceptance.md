@@ -35,3 +35,13 @@ The complete corrected suite was also replayed against the original behavior-fre
 `freeze.v1.sha256` preserves the original manifest. The active `freeze.sha256` supersedes it and freezes the corrected 33-test suite and SDLC fixture. The same independent ownership and defect-correction rules continue to apply.
 
 For a settled transient check/evidence adapter failure, the retry reruns the owning bot and its checks/evidence; the evidence revision remains the same idempotency key until evidence succeeds. A transient gate-observation retry may create a fresh gate-request generation; the acceptance contract requires bounded retry and continued gate safety, without prescribing generation reuse. Explicit workflow `on_block` routes can handle non-transient kinds; the supplied SDLC defaults surface owner-question, capability and unknown blocks rather than retrying an unchanged semantic block.
+
+## Superseding freeze v3
+
+Independent review identified stale retry counters after successful gate and built-in action transitions. Bot success cleared its retry counter, but a successful gate left prior observation failures counted against a later visit after scope change; successful PR opening likewise retained its transient counter.
+
+The independent test-writer added two narrow regressions. One observes a transient failure followed by successful Owner GO, routes through a scope change and a fresh plan, then requires the new Owner GO visit to receive its full configured retry allowance. The other makes PR opening fail transiently once, succeed, and verifies its transient counter is cleared. The earlier 33 tests retain their assertions; the fakes gained finite transient fault injection for these cases.
+
+Before the production fix, `cargo test -p hermon-flow --test hub --locked` compiled and ran **35 tests: 33 passed, 2 failed**. Both failures are the new regressions; `retry-reset-red.txt` retains the output. Clippy for the test target with warnings denied passed before freeze.
+
+`freeze.v2.sha256` preserves the preceding active manifest. The current `freeze.sha256` supersedes it and freezes the 35-test suite plus its unchanged SDLC fixture. A successful transition to a later step establishes a fresh retry/check-failure allowance for a future visit; workflow execution limits remain cumulative.

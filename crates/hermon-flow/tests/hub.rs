@@ -84,6 +84,7 @@ impl Agent for FakeAgent {
 }
 #[derive(Default)]
 struct FakeTracker {
+    gate_errors: usize,
     gate_error: bool,
     gate_polls: usize,
     fail_alerts: usize,
@@ -93,7 +94,8 @@ struct FakeTracker {
 impl Tracker for FakeTracker {
     fn gate_approved(&mut self, _: &str, step: &str, request: u32) -> Result<bool, Block> {
         self.gate_polls += 1;
-        if self.gate_error {
+        if self.gate_error || self.gate_errors > 0 {
+            self.gate_errors = self.gate_errors.saturating_sub(1);
             return Err(Block::new(
                 BlockKind::Transient,
                 "tracker temporarily unavailable",
@@ -112,6 +114,7 @@ impl Tracker for FakeTracker {
 }
 #[derive(Default)]
 struct FakeHost {
+    transient_errors: usize,
     opened: usize,
     merged: bool,
     fail: bool,
@@ -119,6 +122,13 @@ struct FakeHost {
 impl CodeHost for FakeHost {
     fn open_pr(&mut self, _: &str) -> Result<String, Block> {
         self.opened += 1;
+        if self.transient_errors > 0 {
+            self.transient_errors -= 1;
+            return Err(Block::new(
+                BlockKind::Transient,
+                "code host temporarily unavailable",
+            ));
+        }
         if self.fail {
             Err(Block::new(BlockKind::Capability, "code host login missing"))
         } else {
@@ -973,4 +983,46 @@ fn hub_transient_gate_observation_failures_retry_then_alert() {
     assert_eq!(r.run.status, Status::Blocked);
     r.alert();
     assert_eq!(r.starts("red"), 0);
+}
+
+#[test]
+fn hub_gate_success_resets_retry_allowance_for_later_owner_go() {
+    let mut r = Rig::new();
+    r.to("owner_go");
+    r.tracker.gate_errors = 1;
+    r.tick();
+    r.approve();
+    r.to("green");
+    r.finish(blocked("scope_change"));
+    r.to("plan");
+    r.finish(done(None));
+    r.to("owner_go");
+    let observed_before = r.tracker.gate_polls;
+    let red_before = r.starts("red");
+    r.tracker.gate_error = true;
+    for _ in 0..10 {
+        r.tick();
+    }
+    assert_eq!(
+        r.tracker.gate_polls,
+        observed_before + 3,
+        "each successful gate visit must reset its transient retry allowance"
+    );
+    assert_eq!(r.run.status, Status::Blocked);
+    r.alert();
+    assert_eq!(r.starts("red"), red_before);
+}
+#[test]
+fn hub_open_pr_success_clears_transient_retry_counter() {
+    let mut r = Rig::new();
+    r.to("review");
+    r.host.transient_errors = 1;
+    r.finish(done(Some("clean")));
+    r.to("merge");
+    assert_eq!(r.host.opened, 2);
+    assert_eq!(r.run.pr.as_deref(), Some("PR-1"));
+    assert!(
+        !r.run.retries.contains_key("pr"),
+        "successful built-in actions must clear their transient retry counter"
+    );
 }
