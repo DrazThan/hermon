@@ -1,0 +1,22 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running tests/tracker_default_agent.rs (target/debug/deps/tracker_default_agent-540c8e5bf7b4a9f6)
+
+running 1 test
+test agent_without_owner_answer_support_cannot_silently_start_fresh ... FAILED
+
+failures:
+
+---- agent_without_owner_answer_support_cannot_silently_start_fresh stdout ----
+
+thread 'agent_without_owner_answer_support_cannot_silently_start_fresh' (94440840) panicked at crates/hermon-flow/tests/tracker_default_agent.rs:38:10:
+an adapter must explicitly carry owner context before resuming or starting fresh: "fresh-session-without-answer"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    agent_without_owner_answer_support_cannot_silently_start_fresh
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test tracker_default_agent`

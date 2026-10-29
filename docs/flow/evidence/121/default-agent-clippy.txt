@@ -1,0 +1,2 @@
+    Checking hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s

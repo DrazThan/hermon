@@ -104,3 +104,18 @@ never entering errors, immutable request body binding, issue/owner state binding
 and a nullable comment author never authorizing GO. These use a separate local
 HTTP peer that preserves the client-supplied UUID and can drop a response after
 recording the accepted mutation. No live Linear issue is involved.
+
+## Supplemental unsupported-agent answer contract
+
+Independent review of the public Agent trait found that its default answer
+hook silently called `start` without carrying the owner answer. Although the
+real ProcessAgent overrides that hook correctly, another adapter could lose
+the answer while appearing to resume successfully.
+
+`tests/tracker_default_agent.rs` is independently authored and frozen in
+`default-agent-freeze.sha256`. Its behavioral RED is **1 compiled test, 0 passed,
+1 failed** (`default-agent-red.txt`) because the default hook returns a new
+context-free session. Matching Clippy passes (`default-agent-clippy.txt`).
+An adapter without explicit owner-answer support must return a nonempty
+`capability` block and must not launch a replacement. Supported adapters may
+resume the prior session or start fresh with complete answer/context delivery.
