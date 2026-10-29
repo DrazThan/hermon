@@ -1,0 +1,29 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s
+     Running tests/agent_regressions.rs (target/debug/deps/agent_regressions-98bbdc4121611c1d)
+
+running 2 tests
+test agent_relative_executable_resolves_in_worktree ... FAILED
+test agent_preexisting_result_is_not_new_completion_evidence ... FAILED
+
+failures:
+
+---- agent_relative_executable_resolves_in_worktree stdout ----
+
+thread 'agent_relative_executable_resolves_in_worktree' (93903691) panicked at crates/hermon-flow/tests/agent_regressions.rs:127:10:
+worktree-relative executable must launch: Block { kind: Capability, reason: "agent executable not found or not executable: ./review-agent" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- agent_preexisting_result_is_not_new_completion_evidence stdout ----
+
+thread 'agent_preexisting_result_is_not_new_completion_evidence' (93903690) panicked at crates/hermon-flow/tests/agent_regressions.rs:90:13:
+pre-existing result cannot complete a new process
+
+
+failures:
+    agent_preexisting_result_is_not_new_completion_evidence
+    agent_relative_executable_resolves_in_worktree
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+error: test failed, to rerun pass `-p hermon-flow --test agent_regressions`

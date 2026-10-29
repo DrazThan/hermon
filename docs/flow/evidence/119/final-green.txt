@@ -1,0 +1,37 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s
+     Running tests/agent.rs (target/debug/deps/agent-beae7b19aef3bb55)
+
+running 14 tests
+test agent_hermes_argv ... ok
+test agent_hermes_supervision_requires_verified_capability ... ok
+test agent_dead_supervisor_is_transient_and_does_not_signal_unrelated_process ... ok
+test agent_command_resume_argv_and_task_stdin ... ok
+test agent_command_done ... ok
+test agent_command_block ... ok
+test agent_command_nonzero_exit_rejects_valid_result ... ok
+test agent_command_missing_resume_template_starts_fresh ... ok
+test agent_command_cancel_cannot_become_late_success ... ok
+test agent_command_invalid_result ... ok
+test agent_command_timeout_kills_group ... ok
+test agent_timeout_remains_enforced_while_hub_is_absent ... ok
+test agent_command_protocol_completion_and_session_capture ... ok
+test agent_restart_reattach ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s
+
+     Running tests/agent_launch_failure.rs (target/debug/deps/agent_launch_failure-467ff464dbd5a3d1)
+
+running 1 test
+test agent_known_logfile_failure_can_be_retried_after_repair ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/agent_regressions.rs (target/debug/deps/agent_regressions-98bbdc4121611c1d)
+
+running 2 tests
+test agent_preexisting_result_is_not_new_completion_evidence ... ok
+test agent_relative_executable_resolves_in_worktree ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+

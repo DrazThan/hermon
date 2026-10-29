@@ -1,0 +1,115 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s
+     Running tests/agent.rs (target/debug/deps/agent-e5e5f1d301d5bb41)
+
+running 14 tests
+test agent_hermes_argv ... FAILED
+test agent_command_nonzero_exit_rejects_valid_result ... FAILED
+test agent_command_resume_argv_and_task_stdin ... FAILED
+test agent_command_done ... FAILED
+test agent_command_timeout_kills_group ... FAILED
+test agent_command_missing_resume_template_starts_fresh ... FAILED
+test agent_command_cancel_cannot_become_late_success ... FAILED
+test agent_restart_reattach ... FAILED
+test agent_command_block ... FAILED
+test agent_command_protocol_completion_and_session_capture ... FAILED
+test agent_hermes_supervision_requires_verified_capability ... ok
+test agent_command_invalid_result ... FAILED
+test agent_dead_supervisor_is_transient_and_does_not_signal_unrelated_process ... FAILED
+test agent_timeout_remains_enforced_while_hub_is_absent ... FAILED
+
+failures:
+
+---- agent_hermes_argv stdout ----
+
+thread 'agent_hermes_argv' (93864659) panicked at crates/hermon-flow/tests/agent.rs:346:5:
+assertion `left == right` failed
+  left: []
+ right: ["hermes", "-p", "sdlc-docs", "chat", "-Q", "--query-file", "/work tree/task file.md"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- agent_command_nonzero_exit_rejects_valid_result stdout ----
+
+thread 'agent_command_nonzero_exit_rejects_valid_result' (93864654) panicked at crates/hermon-flow/tests/agent.rs:502:51:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_command_resume_argv_and_task_stdin stdout ----
+
+thread 'agent_command_resume_argv_and_task_stdin' (93864656) panicked at crates/hermon-flow/tests/agent.rs:400:40:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_command_done stdout ----
+
+thread 'agent_command_done' (93864651) panicked at crates/hermon-flow/tests/agent.rs:185:5:
+assertion `left == right` failed
+  left: ""
+ right: "fixture-family"
+
+---- agent_command_timeout_kills_group stdout ----
+
+thread 'agent_command_timeout_kills_group' (93864657) panicked at crates/hermon-flow/tests/agent.rs:294:40:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_command_missing_resume_template_starts_fresh stdout ----
+
+thread 'agent_command_missing_resume_template_starts_fresh' (93864653) panicked at crates/hermon-flow/tests/agent.rs:433:40:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_command_cancel_cannot_become_late_success stdout ----
+
+thread 'agent_command_cancel_cannot_become_late_success' (93864650) panicked at crates/hermon-flow/tests/agent.rs:514:51:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_restart_reattach stdout ----
+
+thread 'agent_restart_reattach' (93864661) panicked at crates/hermon-flow/tests/agent.rs:321:44:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_command_block stdout ----
+
+thread 'agent_command_block' (93864649) panicked at crates/hermon-flow/tests/agent.rs:277:5:
+assertion `left == right` failed
+  left: "process launch not implemented"
+ right: "fixture lacks tool"
+
+---- agent_command_protocol_completion_and_session_capture stdout ----
+
+thread 'agent_command_protocol_completion_and_session_capture' (93864655) panicked at crates/hermon-flow/tests/agent.rs:473:55:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_command_invalid_result stdout ----
+
+thread 'agent_command_invalid_result' (93864652) panicked at crates/hermon-flow/tests/agent.rs:284:9:
+assertion `left == right` failed: garbage
+  left: Capability
+ right: Unknown
+
+---- agent_dead_supervisor_is_transient_and_does_not_signal_unrelated_process stdout ----
+
+thread 'agent_dead_supervisor_is_transient_and_does_not_signal_unrelated_process' (93864658) panicked at crates/hermon-flow/tests/agent.rs:538:44:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+---- agent_timeout_remains_enforced_while_hub_is_absent stdout ----
+
+thread 'agent_timeout_remains_enforced_while_hub_is_absent' (93864683) panicked at crates/hermon-flow/tests/agent.rs:442:55:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "process launch not implemented" }
+
+
+failures:
+    agent_command_block
+    agent_command_cancel_cannot_become_late_success
+    agent_command_done
+    agent_command_invalid_result
+    agent_command_missing_resume_template_starts_fresh
+    agent_command_nonzero_exit_rejects_valid_result
+    agent_command_protocol_completion_and_session_capture
+    agent_command_resume_argv_and_task_stdin
+    agent_command_timeout_kills_group
+    agent_dead_supervisor_is_transient_and_does_not_signal_unrelated_process
+    agent_hermes_argv
+    agent_restart_reattach
+    agent_timeout_remains_enforced_while_hub_is_absent
+
+test result: FAILED. 1 passed; 13 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p hermon-flow --test agent`
