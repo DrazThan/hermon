@@ -1,0 +1,134 @@
+   Compiling libc v0.2.189
+   Compiling zmij v1.0.23
+   Compiling getrandom v0.4.3
+   Compiling rustix v1.1.4
+   Compiling serde_core v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling cfg-if v1.0.4
+   Compiling bitflags v2.13.1
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling fastrand v2.5.0
+   Compiling once_cell v1.21.4
+   Compiling errno v0.3.14
+   Compiling tempfile v3.27.0
+   Compiling hermon-flow v0.5.0 (/private/tmp/hermon-120-freeze-v2-s4d736yf)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.30s
+     Running tests/checks.rs (/private/tmp/hermon-120-freeze-v2-s4d736yf/target/debug/deps/checks-98301d0cb3263db9)
+
+running 17 tests
+test check_tests_fail_requires_expected_test_identity ... ok
+test check_command_builtins_pass_and_fail ... FAILED
+test check_missing_binary_is_capability ... FAILED
+test check_frozen_missing_reference_fails_closed ... ok
+test check_tests_fail_supports_native_libtest ... FAILED
+test check_commands_preserve_argv_cwd_and_environment ... FAILED
+test check_timeout_is_bounded_and_blocks_evidence ... FAILED
+test check_paths_include_deleted_and_renamed_sources ... ok
+test check_frozen_unchanged_detects_edit ... FAILED
+test check_tests_fail_requires_new_failures ... FAILED
+test checks_and_evidence_reject_dirty_frozen_paths ... FAILED
+test evidence_failed_recheck_revokes_success_receipt ... FAILED
+test check_only_paths_changed ... FAILED
+test evidence_metadata_overflow_never_publishes_partial_authority ... FAILED
+test evidence_requires_successful_checks_at_current_head_and_branch ... FAILED
+test evidence_records_test_counts_and_is_idempotent_across_restart ... FAILED
+test evidence_tag_note_under_limit ... FAILED
+
+failures:
+
+---- check_command_builtins_pass_and_fail stdout ----
+
+thread 'check_command_builtins_pass_and_fail' (94244438) panicked at tests/checks.rs:351:54:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_missing_binary_is_capability stdout ----
+
+thread 'check_missing_binary_is_capability' (94244442) panicked at tests/checks.rs:332:9:
+assertion `left == right` failed
+  left: Unknown
+ right: Capability
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- check_tests_fail_supports_native_libtest stdout ----
+
+thread 'check_tests_fail_supports_native_libtest' (94244447) panicked at tests/checks.rs:296:10:
+native Rust test result identifies the failing case: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_commands_preserve_argv_cwd_and_environment stdout ----
+
+thread 'check_commands_preserve_argv_cwd_and_environment' (94244439) panicked at tests/checks.rs:367:46:
+direct argv and exact worktree/environment: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_timeout_is_bounded_and_blocks_evidence stdout ----
+
+thread 'check_timeout_is_bounded_and_blocks_evidence' (94244448) panicked at tests/checks.rs:383:5:
+assertion `left == right` failed
+  left: Unknown
+ right: Transient
+
+---- check_frozen_unchanged_detects_edit stdout ----
+
+thread 'check_frozen_unchanged_detects_edit' (94244441) panicked at tests/checks.rs:174:56:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_tests_fail_requires_new_failures stdout ----
+
+thread 'check_tests_fail_requires_new_failures' (94244446) panicked at tests/checks.rs:215:52:
+nonzero plus new test failure is RED: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- checks_and_evidence_reject_dirty_frozen_paths stdout ----
+
+thread 'checks_and_evidence_reject_dirty_frozen_paths' (94244449) panicked at tests/checks.rs:514:56:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_failed_recheck_revokes_success_receipt stdout ----
+
+thread 'evidence_failed_recheck_revokes_success_receipt' (94244648) panicked at tests/checks.rs:501:36:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- check_only_paths_changed stdout ----
+
+thread 'check_only_paths_changed' (94244443) panicked at tests/checks.rs:149:56:
+all paths belong to named set: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_metadata_overflow_never_publishes_partial_authority stdout ----
+
+thread 'evidence_metadata_overflow_never_publishes_partial_authority' (94244654) panicked at tests/checks.rs:538:56:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_requires_successful_checks_at_current_head_and_branch stdout ----
+
+thread 'evidence_requires_successful_checks_at_current_head_and_branch' (94244668) panicked at tests/checks.rs:481:36:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_records_test_counts_and_is_idempotent_across_restart stdout ----
+
+thread 'evidence_records_test_counts_and_is_idempotent_across_restart' (94244657) panicked at tests/checks.rs:451:42:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+---- evidence_tag_note_under_limit stdout ----
+
+thread 'evidence_tag_note_under_limit' (94244685) panicked at tests/checks.rs:398:36:
+called `Result::unwrap()` on an `Err` value: Block { kind: Unknown, reason: "Slice 5 not implemented" }
+
+
+failures:
+    check_command_builtins_pass_and_fail
+    check_commands_preserve_argv_cwd_and_environment
+    check_frozen_unchanged_detects_edit
+    check_missing_binary_is_capability
+    check_only_paths_changed
+    check_tests_fail_requires_new_failures
+    check_tests_fail_supports_native_libtest
+    check_timeout_is_bounded_and_blocks_evidence
+    checks_and_evidence_reject_dirty_frozen_paths
+    evidence_failed_recheck_revokes_success_receipt
+    evidence_metadata_overflow_never_publishes_partial_authority
+    evidence_records_test_counts_and_is_idempotent_across_restart
+    evidence_requires_successful_checks_at_current_head_and_branch
+    evidence_tag_note_under_limit
+
+test result: FAILED. 3 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+error: test failed, to rerun pass `--test checks`

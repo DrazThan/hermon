@@ -25,6 +25,7 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("fixture work tree");
         fs::create_dir_all(&repo).unwrap();
+        let repo = fs::canonicalize(repo).unwrap();
         git(&repo, &["init", "-b", "run"]);
         git(&repo, &["config", "user.email", "fixture@example.invalid"]);
         git(&repo, &["config", "user.name", "Fixture"]);
@@ -462,7 +463,9 @@ fn evidence_records_test_counts_and_is_idempotent_across_restart() {
         original,
         "retry must never move a prior evidence key"
     );
-    check(&mut restarted, &["tests_fail"]).unwrap();
+    restarted
+        .check("red_fix", &["tests_fail".into()], &BTreeMap::new())
+        .unwrap();
     let second = restarted.evidence("red_fix", "red", 2).unwrap();
     assert_eq!(second, "hermon/ISSUE-120/red.2");
     assert_ne!(git(&fixture.repo, &["rev-parse", &second]), original);

@@ -56,3 +56,27 @@ The fixture repositories, commands and logs are synthetic and local. No vendor
 agent, external project, network API or user git tag is touched. User-facing
 project loading and hub hosting remain later delivery slices; their host must
 supply accurate attempt metadata and expected new/baseline test IDs.
+
+## Superseding freeze v2: fixture corrections
+
+The independent test writer confirmed two genuine fixture defects after the
+first implementation passed 15 of 17 tests. On macOS, temporary paths may use
+`/var/...` while the shell reports physical `/private/var/...`; `Fixture.repo`
+now canonicalizes its existing directory once, so the cwd assertion compares
+actual worktree identity. The superseding RED evidence test now explicitly
+checks step `red_fix` before publishing `red_fix` evidence; its helper previously
+hardcoded step `red`. Production's same-step receipt requirement is preserved.
+
+`freeze.v1.sha256` retains the original manifest, `red.txt` retains original RED,
+and the active `freeze.sha256` supersedes v1 with only those two corrections.
+The corrected suite was replayed against the original behavior-free checks
+stubs from commit `3882bf9` in an isolated `/private/tmp/hermon-120-freeze-v2-*`
+crate: **3 passed, 14 failed** (`red-v2.txt`). The isolated crate had a minimal
+hub trait/block scaffold and the same frozen tests/fixture; its lockfile was
+first generated offline. The live production source was never reverted.
+
+The corrected acceptance suite passes **17 tests, 0 failures** against the first
+implementation (`corrected-green.txt`). Process checks required host access for
+`ps`-based group-settlement observations, as in Slice 4; a sandbox-only attempt
+could not make those observations. No production change was made for either
+fixture defect.
