@@ -65,7 +65,8 @@ Set `CheckCommand.report` for the `test` command:
   The failed count must equal the number of failure IDs. Unknown fields,
   duplicate IDs and inconsistent counts are rejected.
 - `Libtest`: Rust's normal `test ID ... FAILED` lines and `test result:`
-  summaries supply failure IDs and counts. Compiler errors alone do not
+  summaries supply failure IDs and counts, streaming every target's output.
+  Compiler errors alone do not
   establish RED. IDs must be unique across the reported test targets; use a
   JSON reporter with qualified IDs when target names would be ambiguous.
 
@@ -87,7 +88,8 @@ original RED tag. The annotation is JSON, repeated as a git note under
 `refs/notes/hermon` on the annotated tag object. It records schema, ticket,
 step, evidence revision, attempt, bot, optional model, branch/base/commit,
 frozen paths, argv, exit codes, durations, test counts and log paths with
-SHA-256 digests. The full JSON must be below 8192 bytes. Oversized metadata
+SHA-256 digests. Log bytes are rehashed before new evidence is published; missing
+or altered logs block publication. The full JSON must be below 8192 bytes. Oversized metadata
 blocks before creating a tag; frozen authority is never silently truncated.
 
 `(tag, revision)` is an immutable idempotency key. Repeating evidence with the

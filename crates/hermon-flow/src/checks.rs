@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     os::unix::{fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -187,14 +187,22 @@ impl GitChecks {
             .map(|b| String::from_utf8(b.to_vec()).context("git path must be UTF-8"))
             .collect()
     }
-    fn frozen(&self, reference: &str, head: &str) -> Result<()> {
+    fn frozen(&self, kind: &str, reference: &str, head: &str) -> Result<()> {
         let tag_ref = format!("refs/tags/{reference}");
         self.git(&["check-ref-format", &tag_ref])?;
         let object = self.text(&["rev-parse", "--verify", &format!("{tag_ref}^{{tag}}")])?;
         let note = self.load_note(&object)?;
         ensure!(
-            note.schema == 1 && note.ticket == self.config.ticket && note.base == self.config.base,
+            note.schema == 1
+                && note.ticket == self.config.ticket
+                && note.base == self.config.base
+                && note.branch == self.config.branch
+                && note.tag == kind,
             "freeze belongs to a different run or base"
+        );
+        ensure!(
+            self.text(&["notes", "--ref=hermon", "show", &object])? == self.annotation(&object)?,
+            "freeze annotation and explicit note disagree"
         );
         let commit = self.text(&["rev-parse", "--verify", &format!("{tag_ref}^{{commit}}")])?;
         ensure!(note.commit == commit, "freeze target differs from its note");
@@ -292,7 +300,10 @@ impl GitChecks {
             let tests = config
                 .report
                 .as_ref()
-                .map(|format| parse_report(&stdout_path, format))
+                .map(|format| {
+                    parse_report(&stdout_path, format)
+                        .with_context(|| format!("parse test report; log: {}", log_path.display()))
+                })
                 .transpose()?;
             Ok(CommandEvidence {
                 name: name.into(),
@@ -392,6 +403,13 @@ impl GitChecks {
             receipt.head == head && receipt.step == step,
             "checks do not cover the current step and HEAD"
         );
+        for command in &receipt.commands {
+            ensure!(
+                hash_file(&command.log.path)? == command.log.sha256,
+                "check log changed before evidence: {}",
+                command.log.path.display()
+            );
+        }
         let note = EvidenceNote {
             schema: 1,
             ticket: self.config.ticket.clone(),
@@ -460,7 +478,7 @@ impl Git for GitChecks {
                 let reference = freezes.get(tag).ok_or_else(|| {
                     Block::new(BlockKind::Unknown, format!("missing freeze {tag}"))
                 })?;
-                self.frozen(reference, &head)
+                self.frozen(tag, reference, &head)
                     .map_err(|e| block(BlockKind::Unknown, e))?;
             } else {
                 let name = match check.as_str() {
@@ -494,7 +512,10 @@ impl Git for GitChecks {
                     {
                         return Err(Block::new(
                             BlockKind::Unknown,
-                            "tests_fail did not establish all expected new failures",
+                            format!(
+                                "tests_fail did not establish all expected new failures; log: {}",
+                                command.log.path.display()
+                            ),
                         ));
                     }
                 } else if command.exit_code != Some(0) {
@@ -609,28 +630,33 @@ fn hash_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", hash.finalize()))
 }
 fn parse_report(path: &Path, format: &TestReportFormat) -> Result<TestReport> {
+    const MAX_LINE: u64 = 1024 * 1024;
     let mut file = File::open(path)?;
-    // Reports belong at the end of stdout. Long diagnostics remain in the log;
-    // parsing has a fixed memory bound and fails closed on an oversized report.
-    let len = file.metadata()?.len();
-    let start = len.saturating_sub(1024 * 1024);
-    file.seek(SeekFrom::Start(start))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)?;
-    let text = if start > 0 {
-        text.split_once('\n')
-            .map(|(_, tail)| tail)
-            .context("test report exceeds parsing limit")?
-    } else {
-        &text
-    };
     let report: TestReport = match format {
-        TestReportFormat::Json => serde_json::from_str(
-            text.lines()
-                .rfind(|l| !l.trim().is_empty())
-                .context("missing test report")?,
-        )?,
+        TestReportFormat::Json => {
+            // JSON reports occupy the final nonempty line; earlier output is
+            // diagnostic. Read only a bounded tail, never half of a report.
+            let start = file.metadata()?.len().saturating_sub(MAX_LINE);
+            file.seek(SeekFrom::Start(start))?;
+            let mut text = String::new();
+            file.read_to_string(&mut text)?;
+            let text = if start > 0 {
+                text.split_once('\n')
+                    .map(|(_, tail)| tail)
+                    .context("test report exceeds parsing limit")?
+            } else {
+                &text
+            };
+            serde_json::from_str(
+                text.lines()
+                    .rfind(|l| !l.trim().is_empty())
+                    .context("missing test report")?,
+            )?
+        }
         TestReportFormat::Libtest => {
+            // Every target's summary contributes to evidence. Streaming the
+            // whole log prevents a bounded tail from silently dropping targets.
+            let mut reader = BufReader::new(file);
             let mut report = TestReport {
                 passed: 0,
                 failed: 0,
@@ -638,12 +664,35 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<TestReport> {
                 failures: vec![],
             };
             let mut summaries = 0;
-            for line in text.lines() {
+            let mut failure_bytes = 0;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let bytes = Read::by_ref(&mut reader)
+                    .take(MAX_LINE + 1)
+                    .read_line(&mut line)?;
+                ensure!(
+                    u64::try_from(bytes)? <= MAX_LINE,
+                    "libtest line exceeds parsing limit"
+                );
+                if bytes == 0 {
+                    break;
+                }
+                let line = line.trim_end_matches(['\r', '\n']);
                 if let Some(id) = line
                     .strip_prefix("test ")
                     .and_then(|l| l.strip_suffix(" ... FAILED"))
                 {
+                    failure_bytes += id.len();
+                    ensure!(
+                        u64::try_from(failure_bytes)? <= MAX_LINE,
+                        "test failure IDs exceed parsing limit"
+                    );
                     report.failures.push(id.into());
+                    ensure!(
+                        report.failures.len() <= 100_000,
+                        "too many test failure IDs"
+                    );
                 }
                 if let Some(summary) = line.strip_prefix("test result: ") {
                     let (_, counts) = summary
