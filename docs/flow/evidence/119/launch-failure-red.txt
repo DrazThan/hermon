@@ -1,0 +1,22 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running tests/agent_launch_failure.rs (target/debug/deps/agent_launch_failure-467ff464dbd5a3d1)
+
+running 1 test
+test agent_known_logfile_failure_can_be_retried_after_repair ... FAILED
+
+failures:
+
+---- agent_known_logfile_failure_can_be_retried_after_repair stdout ----
+
+thread 'agent_known_logfile_failure_can_be_retried_after_repair' (93912457) panicked at crates/hermon-flow/tests/agent_launch_failure.rs:53:5:
+a known no-launch failure must not retain capacity
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    agent_known_logfile_failure_can_be_retried_after_repair
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p hermon-flow --test agent_launch_failure`
