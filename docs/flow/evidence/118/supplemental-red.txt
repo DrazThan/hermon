@@ -1,0 +1,96 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running tests/hub.rs (target/debug/deps/hub-de9d32aef6b61b6e)
+
+running 33 tests
+test hub_concurrency_limit_wait_is_visible_and_recovers ... ok
+test hub_agent_stop_error_cannot_resend_worker ... ok
+test hub_check_failures_cannot_publish_success ... ok
+test hub_advance_idempotent ... ok
+test hub_failed_alert_delivery_is_retried_without_restarting_work ... ok
+test hub_agent_start_failure_retries_are_bounded ... ok
+test hub_code_host_failure_alerts_and_manual_retry_works ... ok
+test hub_agent_poll_error_retains_unsettled_worker ... ok
+test hub_gate_blocks_successors ... ok
+test hub_different_family_is_required_before_review_start ... ok
+test hub_git_evidence_failure_cannot_release_successor ... ok
+test hub_happy_path_sdlc ... ok
+test hub_missing_completion_is_not_success ... ok
+test hub_manual_retry_keeps_automation ... ok
+test hub_manual_override_keeps_automation ... ok
+test hub_red_fix_max_runs_bounded ... ok
+test hub_non_review_verdict_is_unknown_block ... FAILED
+test hub_stall_alert_is_deduplicated_and_does_not_stop_work ... ok
+test hub_review_requires_known_verdict ... ok
+test hub_review_rounds_bounded ... ok
+test hub_timeout_unsettled_stop_cannot_retry ... ok
+test hub_transient_gate_observation_failures_retry_then_alert ... FAILED
+test hub_result_rejects_unknown_fields ... FAILED
+test hub_scope_change_requires_fresh_owner_go ... ok
+test hub_test_defect_routes_to_red_fix ... ok
+test hub_timeout_records_failure_before_late_success ... ok
+test hub_transient_git_check_failures_retry_then_alert ... FAILED
+test hub_transient_git_evidence_failures_retry_then_alert ... FAILED
+test hub_transient_retry_then_alert ... ok
+test hub_unsettled_outcome_prevents_automatic_or_manual_resend ... ok
+test hub_never_silent_on_block ... ok
+test hub_result_requires_every_schema_field ... FAILED
+test hub_invalid_result_is_unknown_block ... ok
+
+failures:
+
+---- hub_non_review_verdict_is_unknown_block stdout ----
+
+thread 'hub_non_review_verdict_is_unknown_block' (93724456) panicked at crates/hermon-flow/tests/hub.rs:840:9:
+assertion `left == right` failed
+  left: Running
+ right: Blocked
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- hub_transient_gate_observation_failures_retry_then_alert stdout ----
+
+thread 'hub_transient_gate_observation_failures_retry_then_alert' (93724467) panicked at crates/hermon-flow/tests/hub.rs:972:5:
+assertion `left == right` failed
+  left: 2
+ right: 4
+
+---- hub_result_rejects_unknown_fields stdout ----
+
+thread 'hub_result_rejects_unknown_fields' (93724458) panicked at crates/hermon-flow/tests/hub.rs:830:9:
+assertion `left == right` failed
+  left: Capability
+ right: Unknown
+
+---- hub_transient_git_check_failures_retry_then_alert stdout ----
+
+thread 'hub_transient_git_check_failures_retry_then_alert' (93724468) panicked at crates/hermon-flow/tests/hub.rs:923:5:
+assertion `left == right` failed
+  left: 1
+ right: 3
+
+---- hub_transient_git_evidence_failures_retry_then_alert stdout ----
+
+thread 'hub_transient_git_evidence_failures_retry_then_alert' (93724469) panicked at crates/hermon-flow/tests/hub.rs:950:5:
+assertion `left == right` failed
+  left: 1
+ right: 3
+
+---- hub_result_requires_every_schema_field stdout ----
+
+thread 'hub_result_requires_every_schema_field' (93724459) panicked at crates/hermon-flow/tests/hub.rs:792:9:
+assertion `left == right` failed: omitted schema field: block
+  left: Running
+ right: Blocked
+
+
+failures:
+    hub_non_review_verdict_is_unknown_block
+    hub_result_rejects_unknown_fields
+    hub_result_requires_every_schema_field
+    hub_transient_gate_observation_failures_retry_then_alert
+    hub_transient_git_check_failures_retry_then_alert
+    hub_transient_git_evidence_failures_retry_then_alert
+
+test result: FAILED. 27 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p hermon-flow --test hub`
