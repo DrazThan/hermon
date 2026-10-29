@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod checks;
+pub mod code_host;
 pub mod hub;
 pub mod store;
 pub mod templates;
