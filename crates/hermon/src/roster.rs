@@ -30,38 +30,8 @@ use crate::source::hermes::HermesSource;
 use crate::source::opencode::OpenCodeSource;
 use crate::source::{Attn, Liveness, Replay, SessionMeta, Source, Tailer, classify};
 
-/// One session as the roster displays it (`hermon.py:1025 RosterRow`).
-#[derive(Debug, Clone, PartialEq)]
-pub struct RosterRow {
-    /// Qualified aggregate identity; direct source metadata keeps the raw vendor ID.
-    pub id: String,
-    /// Pane/roster label: `C:0f865f` (Claude), `H:b356d8` (Hermes),
-    /// `O:fiiDPP` (OpenCode), `X:123456` (Codex), `G:123456` (Grok),
-    /// `Gm:123456` (Gemini).
-    pub key: String,
-    pub state: Liveness,
-    pub model: String,
-    pub last_tool: String,
-    /// One-line summary of the newest event, as the source rendered it
-    /// ([`SessionMeta::last_line`]) — what the session is doing right now.
-    pub last_line: String,
-    pub in_tok: u64,
-    pub out_tok: u64,
-    /// Reported spend. `None` means no cost data available; `Some(v)` is the
-    /// actual spend, which may be zero.
-    pub cost: Option<f64>,
-    pub elapsed: Option<f64>,
-    pub last_ts: f64,
-    pub title: String,
-    /// Seconds since the session entered its current [`Liveness::Attention`]
-    /// state; `None` outside attention, and also outside the live engine
-    /// loop, which is the only caller that can track history across ticks
-    /// (`hermon ls`'s one-shot [`build_roster`] call always leaves this
-    /// unset). Populated by `engine::scan` after lifecycle events are
-    /// resolved, from a `key -> since` map the roster itself has no memory
-    /// of.
-    pub attn_elapsed: Option<f64>,
-}
+pub(crate) use hermon_core::render::commas;
+pub use hermon_core::roster::RosterRow;
 
 /// The six on-disk stores hermon reads plus any remote agents, held
 /// together so the roster can union them in one pass (`hermon.py:1462
@@ -1023,19 +993,6 @@ fn clock(now: f64) -> String {
     DateTime::from_timestamp(now as i64, 0)
         .map(|t| t.with_timezone(&Local).format("%H:%M:%S").to_string())
         .unwrap_or_default()
-}
-
-/// Thousands separators, matching Python's `{:,}` token counts.
-pub(crate) fn commas(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, ch) in digits.char_indices() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 /// Format cost for display: `—` (em-dash) for no data, `$X.XXXX` for known values.

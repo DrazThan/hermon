@@ -3,7 +3,7 @@
 
 pub mod claude;
 pub mod codex;
-pub(crate) mod diagnostics;
+pub mod diagnostics;
 pub mod gemini;
 pub mod grok;
 pub mod hermes;

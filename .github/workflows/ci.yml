@@ -17,13 +17,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --locked
+        run: cargo build --workspace --locked
 
       - name: Test
-        run: cargo test
+        run: cargo test --workspace --locked
+
+      - name: Release build
+        run: cargo build --release --locked -p hermon
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
+
+  musl-agent:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Add musl target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cargo-zigbuild
+        run: pip install cargo-zigbuild==0.23.3
+
+      - name: Build static agent binary
+        run: cargo zigbuild --release --locked -p hermon --target ${{ matrix.target }}
+
+      - name: Check the binary is actually static
+        run: file target/${{ matrix.target }}/release/hermon | grep "statically linked"

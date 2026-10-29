@@ -19,12 +19,12 @@ thread_local! {
 
 /// Scoped to the worker that owns the sources, including their construction.
 /// Not Send: restoring another thread's policy would be incorrect.
-pub(crate) struct Capture {
+pub struct Capture {
     previous: Option<Vec<Notice>>,
     _thread: PhantomData<Rc<()>>,
 }
 
-pub(crate) fn capture() -> Capture {
+pub fn capture() -> Capture {
     Capture {
         previous: NOTICES.with(|notices| notices.replace(Some(Vec::new()))),
         _thread: PhantomData,
@@ -37,11 +37,11 @@ impl Drop for Capture {
     }
 }
 
-pub(crate) fn capturing() -> bool {
+pub fn capturing() -> bool {
     NOTICES.with(|notices| notices.borrow().is_some())
 }
 
-pub(crate) fn report(message: &str) {
+pub fn report(message: &str) {
     emit(message, false);
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn hermes_database(message: &str) {
 
 /// The profile registry supplies authoritative owner-labelled health notices.
 /// Do not spend native warning slots on duplicate lower-level DB failures.
-pub(crate) fn registry_health_reported() {
+pub fn registry_health_reported() {
     NOTICES.with(|notices| {
         if let Some(notices) = notices.borrow_mut().as_mut() {
             notices.retain(|notice| !notice.hermes_database);
@@ -84,7 +84,7 @@ fn emit(message: &str, hermes_database: bool) {
 
 /// Drain once per scan. Active failures are reasserted by source readers;
 /// recovered failures therefore disappear rather than becoming stale notices.
-pub(crate) fn take() -> Vec<String> {
+pub fn take() -> Vec<String> {
     NOTICES.with(|notices| {
         notices
             .borrow_mut()

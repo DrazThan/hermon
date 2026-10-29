@@ -214,6 +214,19 @@ pub fn parse_ts(val: &str) -> Result<f64> {
     Ok(dt.timestamp() as f64 + f64::from(dt.timestamp_subsec_nanos()) / 1e9)
 }
 
+/// Thousands separators, matching Python's `{:,}` token counts.
+pub fn commas(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.char_indices() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -282,7 +282,7 @@ pub struct HermesTailer {
     last_id: Option<i64>,
     /// Counts polls; the stats line is checked every 7th one (`hermon.py`'s
     /// `tick % 4 == 1` at a 0.5s loop period, rescaled to this crate's 300ms
-    /// [`crate::engine::PANE_TICK`] so it still fires roughly every 2s).
+    /// the application’s `PANE_TICK` so it still fires roughly every 2s).
     tick: u32,
     last_stats: Option<StatsSnapshot>,
     /// Set once `ended_at` is observed; from then on `poll` returns nothing
