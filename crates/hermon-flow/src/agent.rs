@@ -488,12 +488,18 @@ fn protocol_observation(protocol: &Protocol, stdout: &str) -> (Option<String>, b
 }
 /// Owns a still-unreaped child, keeping its PID/group identity reserved until
 /// the last group signal. All error paths clean up that same owned group.
-struct OwnedChild {
+pub(crate) struct OwnedChild {
     child: Child,
     reaped: bool,
 }
 impl OwnedChild {
-    fn signal(&self, signal: i32) -> Result<()> {
+    pub(crate) fn new(child: Child) -> Self {
+        Self {
+            child,
+            reaped: false,
+        }
+    }
+    pub(crate) fn signal(&self, signal: i32) -> Result<()> {
         // SAFETY: child is retained unreaped, pgid was assigned by spawn, and
         // cannot be reused while this process still owns the child PID.
         if unsafe { libc::kill(-(self.child.id() as i32), signal) } == -1 {
@@ -512,7 +518,7 @@ impl OwnedChild {
         }
         Ok(())
     }
-    fn exited(&self) -> Result<bool> {
+    pub(crate) fn exited(&self) -> Result<bool> {
         // SAFETY: siginfo_t is a plain C struct; waitid initializes it. WNOWAIT
         // observes exit without reaping, preserving identity for group cleanup.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -528,6 +534,22 @@ impl OwnedChild {
             return Err(std::io::Error::last_os_error()).context("observe child without reaping");
         }
         Ok(unsafe { info.si_pid() } != 0)
+    }
+    pub(crate) fn finish(&mut self) -> Result<std::process::ExitStatus> {
+        // Retain the leader's PID until the whole owned group settles, including
+        // descendants whose parent exited successfully before them.
+        self.signal(libc::SIGKILL)?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !group_is_zombies(self.child.id())? {
+            ensure!(
+                Instant::now() < deadline,
+                "owned process group has not settled after SIGKILL"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let exit = self.child.wait()?;
+        self.reaped = true;
+        Ok(exit)
     }
 }
 fn group_is_zombies(group: u32) -> Result<bool> {
@@ -612,10 +634,7 @@ pub fn worker_main() -> Result<()> {
         .stdout(File::create(&state.attempt.log_path)?)
         .stderr(File::create(&state.attempt.stderr_path)?);
     let child = command.spawn().context("spawn agent argv")?;
-    let mut owned = OwnedChild {
-        child,
-        reaped: false,
-    };
+    let mut owned = OwnedChild::new(child);
     state.attempt.process_group = Some(owned.child.id());
     write_json(&directory.join("process.json"), &state)?;
     loop {
@@ -643,21 +662,11 @@ pub fn worker_main() -> Result<()> {
     }
     // Also clean descendants left behind by a normally exiting agent. Keep the
     // leader unreaped through this last signal so its group cannot be reused.
-    owned.signal(libc::SIGKILL)?;
     // Signal delivery is asynchronous. Keep both ownership and the leader PID
     // until every member is gone or a zombie; a stuck tool cannot release a
     // retry merely because its leader exited. Failure retains an unresolved
     // receipt and the hub must reconcile instead of resending.
-    let settlement_deadline = Instant::now() + Duration::from_secs(2);
-    while !group_is_zombies(owned.child.id())? {
-        ensure!(
-            Instant::now() < settlement_deadline,
-            "owned process group has not settled after SIGKILL"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-    let exit = owned.child.wait()?;
-    owned.reaped = true;
+    let exit = owned.finish()?;
     let stdout = read_text(&state.attempt.log_path);
     let (session, completion) = stdout
         .as_deref()

@@ -1,0 +1,24 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running tests/checks.rs (target/debug/deps/checks-4e66123e3f784bd0)
+
+running 17 tests
+test check_frozen_missing_reference_fails_closed ... ok
+test check_paths_include_deleted_and_renamed_sources ... ok
+test check_commands_preserve_argv_cwd_and_environment ... ok
+test check_tests_fail_supports_native_libtest ... ok
+test check_tests_fail_requires_expected_test_identity ... ok
+test checks_and_evidence_reject_dirty_frozen_paths ... ok
+test check_only_paths_changed ... ok
+test check_missing_binary_is_capability ... ok
+test evidence_metadata_overflow_never_publishes_partial_authority ... ok
+test evidence_failed_recheck_revokes_success_receipt ... ok
+test check_frozen_unchanged_detects_edit ... ok
+test evidence_tag_note_under_limit ... ok
+test evidence_requires_successful_checks_at_current_head_and_branch ... ok
+test check_tests_fail_requires_new_failures ... ok
+test check_timeout_is_bounded_and_blocks_evidence ... ok
+test check_command_builtins_pass_and_fail ... ok
+test evidence_records_test_counts_and_is_idempotent_across_restart ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+
