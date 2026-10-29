@@ -183,7 +183,7 @@ impl ProcessAgent {
             .iter()
             .map(|arg| substitute(arg, &task, &self.workdir, session.map(String::as_str)))
             .collect::<Result<_>>()?;
-        argv[0] = executable(&argv[0])?
+        argv[0] = executable(&argv[0], &self.workdir)?
             .to_str()
             .context("executable path must be UTF-8")?
             .to_owned();
@@ -382,13 +382,13 @@ fn substitute(arg: &str, task: &Path, workdir: &Path, session: Option<&str>) -> 
     output.push_str(rest);
     Ok(output)
 }
-fn executable(program: &str) -> Result<PathBuf> {
+fn executable(program: &str, workdir: &Path) -> Result<PathBuf> {
     let candidates: Vec<PathBuf> =
         if Path::new(program).components().count() > 1 || Path::new(program).is_absolute() {
-            vec![PathBuf::from(program)]
+            vec![workdir.join(program)]
         } else {
             std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-                .map(|p| p.join(program))
+                .map(|p| workdir.join(p).join(program))
                 .collect()
         };
     for path in candidates {
@@ -586,6 +586,17 @@ pub fn worker_main() -> Result<()> {
         exit_code: None,
     };
     write_json(&directory.join("process.json"), &state)?;
+    // A fresh launch must earn fresh result evidence. Keep any file left in
+    // the prepared attempt directory for diagnosis, but never deliver it as
+    // output from the process we are about to start.
+    let result_path = directory.join("result.json");
+    match fs::rename(&result_path, directory.join("result.before-launch.json")) {
+        Ok(()) => {
+            File::open(&directory)?.sync_all()?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("archive pre-existing result"),
+    }
     let mut command = Command::new(&launch.argv[0]);
     command
         .args(&launch.argv[1..])
