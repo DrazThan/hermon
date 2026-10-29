@@ -1,0 +1,39 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running tests/code_host_regressions.rs (target/debug/deps/code_host_regressions-a9a5a9735c8005bc)
+
+running 6 tests
+test missing_gh_uses_configured_path_and_blocks_capability ... ok
+test github_commands_bind_the_configured_repository_host ... FAILED
+test publication_rejects_changed_push_endpoint ... FAILED
+test code_host_receipts_never_persist_authentication ... ok
+test publication_rejects_a_new_additional_push_endpoint ... FAILED
+test merge_gate_rejects_changed_remote_after_restart ... ok
+
+failures:
+
+---- github_commands_bind_the_configured_repository_host stdout ----
+
+thread 'github_commands_bind_the_configured_repository_host' (94617813) panicked at crates/hermon-flow/tests/code_host_regressions.rs:197:5:
+configured ambient GH_HOST must not redirect a github.com run
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- publication_rejects_changed_push_endpoint stdout ----
+
+thread 'publication_rejects_changed_push_endpoint' (94617817) panicked at crates/hermon-flow/tests/code_host_regressions.rs:118:5:
+retargeted remote must receive no run branch
+
+---- publication_rejects_a_new_additional_push_endpoint stdout ----
+
+thread 'publication_rejects_a_new_additional_push_endpoint' (94617816) panicked at crates/hermon-flow/tests/code_host_regressions.rs:223:5:
+assertion failed: host.open_pr("RUN-122").is_err()
+
+
+failures:
+    github_commands_bind_the_configured_repository_host
+    publication_rejects_a_new_additional_push_endpoint
+    publication_rejects_changed_push_endpoint
+
+test result: FAILED. 3 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.91s
+
+error: test failed, to rerun pass `-p hermon-flow --test code_host_regressions`

@@ -38,3 +38,25 @@ Commands use per-child configured environments; tests do not mutate process-wide
 PATH. No live comment, PR, push or merge is performed. Core frozen tests must not
 be edited by the production implementer; a genuine fixture defect returns to
 the independent test-writer for a documented superseding freeze.
+
+## Supplemental independent review regressions
+
+`tests/code_host_regressions.rs` is frozen separately in `review-freeze.sha256`.
+Its independent behavioral RED is **6 compiled tests, 3 passed, 3 failed**
+(`review-red.txt`), with matching Clippy passing (`review-clippy.txt`). Owned
+process-group observations require host access; a sandbox run that failed at
+fixture construction was discarded and is not acceptance evidence.
+
+Two failures show that binding only `git remote get-url` leaves publication
+unbound to `remote.origin.pushurl`: replacing the push endpoint publishes the
+branch to another remote before failing, and adding a second push endpoint can
+publish to both remotes while appearing successful. Every effective push URL
+must remain bound to intake, and changes must fail before any push.
+
+The third failure shows that an ambient configured `GH_HOST` can redirect the
+explicit GitHub.com repository to another service. GitHub.com-scoped commands
+must bind their CLI host to GitHub.com.
+
+Passing regressions verify that a missing gh binary in an isolated git-only
+PATH yields a capability block, a changed fetch endpoint cannot approve a gate
+after restart, and authentication variables never enter durable receipts.
