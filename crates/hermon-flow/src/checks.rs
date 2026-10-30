@@ -63,6 +63,16 @@ struct TestReport {
     ignored: u64,
     failures: Vec<String>,
 }
+#[derive(Debug, Clone, Default)]
+struct PassingAssertions {
+    successful: bool,
+    passed: BTreeSet<String>,
+    ambiguous: BTreeSet<String>,
+}
+struct ParsedReport {
+    report: TestReport,
+    assertions: Option<PassingAssertions>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LogRef {
     path: PathBuf,
@@ -75,6 +85,12 @@ struct CommandEvidence {
     exit_code: Option<i32>,
     duration_ms: u64,
     tests: Option<TestReport>,
+    #[serde(skip)]
+    assertions: Option<PassingAssertions>,
+    /// Persist only the required subset, keeping evidence notes bounded even
+    /// when the project has thousands of baseline assertions.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    required_passed_tests: BTreeSet<String>,
     log: LogRef,
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -319,7 +335,7 @@ impl GitChecks {
                 "{name} exceeded its check timeout; log: {}",
                 log_path.display()
             );
-            let tests = config
+            let parsed = config
                 .report
                 .as_ref()
                 .map(|format| {
@@ -327,12 +343,18 @@ impl GitChecks {
                         .with_context(|| format!("parse test report; log: {}", log_path.display()))
                 })
                 .transpose()?;
+            let (tests, assertions) = match parsed {
+                Some(parsed) => (Some(parsed.report), parsed.assertions),
+                None => (None, None),
+            };
             Ok(CommandEvidence {
                 name: name.into(),
                 argv: config.argv.clone(),
                 exit_code: status.code(),
                 duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 tests,
+                assertions,
+                required_passed_tests: BTreeSet::new(),
                 log: LogRef {
                     sha256: hash_file(&log_path)?,
                     path: log_path,
@@ -520,7 +542,7 @@ impl Git for GitChecks {
                 let name = match check.as_str() {
                     "lint" => "lint",
                     "project_check" => "project_check",
-                    "tests_fail" => "test",
+                    "tests_fail" | "tests_pass" => "test",
                     other => other
                         .strip_prefix("cmd:")
                         .filter(|s| !s.is_empty())
@@ -528,7 +550,7 @@ impl Git for GitChecks {
                             Block::new(BlockKind::Capability, format!("unknown check {other}"))
                         })?,
                 };
-                let command = self.run_command(name)?;
+                let mut command = self.run_command(name)?;
                 if check == "tests_fail" {
                     let report = command.tests.as_ref().ok_or_else(|| {
                         Block::new(
@@ -554,6 +576,33 @@ impl Git for GitChecks {
                             ),
                         ));
                     }
+                } else if check == "tests_pass" {
+                    let assertions = command.assertions.as_ref().ok_or_else(|| {
+                        Block::new(
+                            BlockKind::Capability,
+                            "tests_pass requires VitestJson with named passing assertions",
+                        )
+                    })?;
+                    if command.exit_code != Some(0)
+                        || command
+                            .tests
+                            .as_ref()
+                            .is_none_or(|report| report.failed != 0)
+                        || !assertions.successful
+                        || self.context.new_tests.is_empty()
+                        || !self.context.baseline_failures.is_empty()
+                        || !self.context.new_tests.is_subset(&assertions.passed)
+                        || !self.context.new_tests.is_disjoint(&assertions.ambiguous)
+                    {
+                        return Err(Block::new(
+                            BlockKind::Unknown,
+                            format!(
+                                "tests_pass did not establish all expected passing assertions; log: {}",
+                                command.log.path.display()
+                            ),
+                        ));
+                    }
+                    command.required_passed_tests = self.context.new_tests.clone();
                 } else if command.exit_code != Some(0) {
                     return Err(Block::new(
                         BlockKind::Unknown,
@@ -669,9 +718,10 @@ fn hash_file(path: &Path) -> Result<String> {
     }
     Ok(format!("{:x}", hash.finalize()))
 }
-fn parse_report(path: &Path, format: &TestReportFormat) -> Result<TestReport> {
+fn parse_report(path: &Path, format: &TestReportFormat) -> Result<ParsedReport> {
     const MAX_LINE: u64 = 1024 * 1024;
     let mut file = File::open(path)?;
+    let mut assertions = None;
     let report: TestReport = match format {
         TestReportFormat::VitestJson => {
             // The JSON reporter emits one complete document. Reject truncated,
@@ -681,7 +731,9 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<TestReport> {
                 "Vitest report exceeds 16 MiB"
             );
             let source: VitestReport = serde_json::from_reader(file)?;
-            source.checked()?
+            let parsed = source.checked()?;
+            assertions = parsed.assertions;
+            parsed.report
         }
         TestReportFormat::Json => {
             // JSON reports occupy the final nonempty line; earlier output is
@@ -777,12 +829,16 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<TestReport> {
             && unique.iter().all(|s| !s.trim().is_empty()),
         "test counts and unique failure IDs disagree"
     );
-    Ok(report)
+    Ok(ParsedReport { report, assertions })
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VitestReport {
+    #[serde(default)]
+    success: bool,
+    #[serde(default)]
+    num_failed_test_suites: u64,
     num_passed_tests: u64,
     num_failed_tests: u64,
     num_pending_tests: u64,
@@ -797,6 +853,8 @@ struct VitestReport {
 #[serde(rename_all = "camelCase")]
 struct VitestFile {
     #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
     message: String,
     assertion_results: Vec<VitestAssertion>,
 }
@@ -807,7 +865,7 @@ struct VitestAssertion {
     status: String,
 }
 impl VitestReport {
-    fn checked(self) -> Result<TestReport> {
+    fn checked(self) -> Result<ParsedReport> {
         ensure!(
             self.num_runtime_error_test_suites == 0,
             "Vitest runtime errors are not behavioral RED"
@@ -820,7 +878,19 @@ impl VitestReport {
         };
         let mut pending = 0_u64;
         let mut todo = 0_u64;
+        let mut seen = BTreeSet::new();
+        let mut assertions = PassingAssertions {
+            successful: self.success && self.num_failed_test_suites == 0,
+            ..Default::default()
+        };
         for file in self.test_results {
+            if file
+                .status
+                .as_deref()
+                .is_some_and(|status| status != "passed")
+            {
+                assertions.successful = false;
+            }
             ensure!(
                 file.message.trim().is_empty(),
                 "Vitest suite/collection error is not behavioral RED"
@@ -830,8 +900,14 @@ impl VitestReport {
                     !assertion.full_name.trim().is_empty(),
                     "missing Vitest fullName"
                 );
+                if !seen.insert(assertion.full_name.clone()) {
+                    assertions.ambiguous.insert(assertion.full_name.clone());
+                }
                 match assertion.status.as_str() {
-                    "passed" => report.passed += 1,
+                    "passed" => {
+                        report.passed += 1;
+                        assertions.passed.insert(assertion.full_name);
+                    }
                     "failed" => {
                         report.failed += 1;
                         report.failures.push(assertion.full_name);
@@ -851,7 +927,10 @@ impl VitestReport {
                 && report.passed + report.failed + report.ignored == self.num_total_tests,
             "Vitest assertion counts disagree with summary"
         );
-        Ok(report)
+        Ok(ParsedReport {
+            report,
+            assertions: Some(assertions),
+        })
     }
 }
 fn glob_matches(pattern: &str, path: &str) -> bool {

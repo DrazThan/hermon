@@ -594,9 +594,12 @@ impl Git for HostGit<'_> {
                 .any(|name| name == "test-expectations.json")
         });
         let expected = if let Some((producer, _)) = producer {
-            // Planner expectations are independent of the RED worker. Never
-            // replace them with a newer unaccepted directory or RED result.
-            if checks.iter().any(|check| check == "tests_fail") {
+            // Planner expectations are independent of the test worker. Never
+            // replace them with a newer unaccepted directory or worker result.
+            if checks
+                .iter()
+                .any(|check| matches!(check.as_str(), "tests_fail" | "tests_pass"))
+            {
                 artifact(
                     &accepted(self.dir, self.record, producer).map_err(capability)?,
                     "test-expectations.json",

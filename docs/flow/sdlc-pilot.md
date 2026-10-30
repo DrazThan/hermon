@@ -17,6 +17,11 @@ an owner approval, live workflow, merge or Docs success.
 
 ## Pack contracts
 
+Test-only verification of existing behavior uses the separate
+[`sdlc-characterization` pack](characterization.md), selected at new-run intake
+with fresh Plan and Owner GO. Its named passing assertion gate preserves the
+strict RED workflow described below.
+
 Plan produces `plan.md`, `test-brief.md`, `impl-brief.md` and
 `test-expectations.json` beside its attempt's `result.json`. The plan names exact
 new acceptance test IDs and verified baseline failures, for example:

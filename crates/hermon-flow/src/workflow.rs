@@ -160,7 +160,8 @@ impl Workflow {
             }
             for (index, check) in step.check.iter().enumerate() {
                 let valid = match check.split_once(':') {
-                    None => ["lint", "tests_fail", "project_check"].contains(&check.as_str()),
+                    None => ["lint", "tests_fail", "tests_pass", "project_check"]
+                        .contains(&check.as_str()),
                     Some((kind, arg)) => {
                         ["only_paths_changed", "frozen_unchanged", "cmd"].contains(&kind)
                             && !arg.is_empty()

@@ -1,6 +1,7 @@
 //! Capability preflight with the same explicit environment used by project checks.
 use crate::{
     agent::{BotConfig, OwnedChild, Protocol, protocol_observation, substitute},
+    checks::TestReportFormat,
     intake::Project,
     workflow::Workflow,
 };
@@ -138,7 +139,7 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
         .filter_map(|check| {
             check.strip_prefix("cmd:").or(match check.as_str() {
                 "lint" => Some("lint"),
-                "tests_fail" => Some("test"),
+                "tests_fail" | "tests_pass" => Some("test"),
                 "project_check" => Some("project_check"),
                 _ => None,
             })
@@ -153,6 +154,18 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
                 )),
             );
         }
+    }
+    if workflow
+        .steps
+        .values()
+        .any(|step| step.check.iter().any(|check| check == "tests_pass"))
+    {
+        report.check("passing assertion reporter".into(), (|| {
+            ensure!(project.commands.get("test").is_some_and(|command|
+                matches!(command.report, Some(TestReportFormat::VitestJson))),
+                "tests_pass requires commands.test.report: VitestJson with named passing assertions");
+            Ok(())
+        })());
     }
     for (name, command) in &project.commands {
         report.check(
