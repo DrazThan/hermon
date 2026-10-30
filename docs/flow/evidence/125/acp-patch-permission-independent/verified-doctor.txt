@@ -1,0 +1,12 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+   Compiling hermon v0.5.0 (<repository>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.92s
+     Running tests/hermes_acp_doctor.rs (target/debug/deps/hermes_acp_doctor-51915d3c8478e41e)
+
+running 3 tests
+test doctor_requires_actual_task_result_file_even_after_verified_end_turn ... ok
+test doctor_accepts_verified_acp_bot_while_unrelated_tracker_auth_stays_failed ... ok
+test doctor_rejects_end_turn_without_main_session_usage ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.70s
+

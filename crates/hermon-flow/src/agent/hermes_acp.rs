@@ -181,12 +181,71 @@ impl Client {
     }
     fn output_permission(&self, params: &Value) -> Option<String> {
         let session = self.session_id.as_deref()?;
-        if params["sessionId"].as_str() != Some(session)
-            || params["toolCall"]["rawInput"]["tool"] != "write_file"
-        {
+        if params["sessionId"].as_str() != Some(session) {
             return None;
         }
-        let path = Path::new(params["toolCall"]["rawInput"]["arguments"]["path"].as_str()?);
+        let input = &params["toolCall"]["rawInput"];
+        let arguments = &input["arguments"];
+        match input["tool"].as_str()? {
+            "write_file" => {
+                self.output_path(Path::new(arguments["path"].as_str()?))?;
+            }
+            "patch" if arguments["mode"] == "patch" => {
+                for target in canonical_update_targets(arguments["patch"].as_str()?)? {
+                    let path = Path::new(target);
+                    self.output_path(path)?;
+                    // Patch approval is intentionally narrower than write_file:
+                    // no creation, lexical aliases, or symlinks within the attempt.
+                    if target.trim() != target
+                        || target
+                            .split('/')
+                            .skip(1)
+                            .any(|part| part.is_empty() || part == "." || part == "..")
+                    {
+                        return None;
+                    }
+                    // The system temp root may itself be an alias (e.g. /var).
+                    // Locate the outermost spelling of our canonical attempt,
+                    // then reject every symlink beneath that boundary.
+                    let root = path
+                        .ancestors()
+                        .skip(1)
+                        .filter(|ancestor| {
+                            fs::canonicalize(ancestor).ok().as_ref() == Some(&self.directory)
+                        })
+                        .last()?;
+                    let relative = path.strip_prefix(root).ok()?;
+                    let mut current = root.to_owned();
+                    for part in relative.components() {
+                        let name = part.as_os_str().to_str()?;
+                        if name.starts_with('.') || name.ends_with(".lock") {
+                            return None;
+                        }
+                        current.push(part);
+                        if fs::symlink_metadata(&current)
+                            .ok()?
+                            .file_type()
+                            .is_symlink()
+                        {
+                            return None;
+                        }
+                    }
+                    if !fs::symlink_metadata(path).ok()?.is_file() {
+                        return None;
+                    }
+                }
+            }
+            _ => return None,
+        }
+        params["options"]
+            .as_array()?
+            .iter()
+            .find(|option| option["kind"] == "allow_once")?
+            .get("optionId")?
+            .as_str()
+            .map(str::to_owned)
+    }
+    fn output_path(&self, path: &Path) -> Option<()> {
         let name = path.file_name()?.to_str()?;
         if !path.is_absolute()
             || path
@@ -218,13 +277,7 @@ impl Client {
         if !parent.starts_with(&self.directory) {
             return None;
         }
-        params["options"]
-            .as_array()?
-            .iter()
-            .find(|option| option["kind"] == "allow_once")?
-            .get("optionId")?
-            .as_str()
-            .map(str::to_owned)
+        Some(())
     }
     fn wait(
         &mut self,
@@ -291,6 +344,48 @@ impl Client {
         self.owned.finish()
     }
 }
+/// Accept only the unambiguous Update File subset of Hermes' permissive parser.
+/// Inspect every raw header; titles and displayed diffs are never authority.
+fn canonical_update_targets(patch: &str) -> Option<Vec<&str>> {
+    if patch.contains(['\r', '\0']) {
+        return None;
+    }
+    let body = patch
+        .strip_suffix('\n')
+        .unwrap_or(patch)
+        .strip_prefix("*** Begin Patch\n")?
+        .strip_suffix("\n*** End Patch")?;
+    let mut targets = Vec::new();
+    let mut hunk = false;
+    let mut content = false;
+    for line in body.split('\n') {
+        if let Some(target) = line.strip_prefix("*** Update File: ") {
+            if target.is_empty() || (!targets.is_empty() && !content) {
+                return None;
+            }
+            targets.push(target);
+            hunk = false;
+            content = false;
+        } else if line == "@@"
+            || line.strip_prefix("@@ ").is_some_and(|hint| {
+                hint.strip_suffix(" @@")
+                    .is_some_and(|text| !text.is_empty() && text.trim() == text)
+            })
+        {
+            if targets.is_empty() || (hunk && !content) {
+                return None;
+            }
+            hunk = true;
+            content = false;
+        } else if hunk && line.starts_with([' ', '+', '-']) {
+            content = true;
+        } else {
+            return None;
+        }
+    }
+    (!targets.is_empty() && content).then_some(targets)
+}
+
 fn identity(
     value: &Value,
     config: &HermesAcpConfig,
@@ -661,4 +756,60 @@ pub(crate) fn probe(
             .unwrap_or("no verified completion")
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::canonical_update_targets;
+
+    #[test]
+    fn patch_content_markers_cannot_inject_operations() {
+        let patch = "*** Begin Patch\n*** Update File: /owned/plan.md\n@@ heading @@\n-*** Delete File: /outside\n+*** Begin Patch\n *** End Patch\n@@\n-old\n+new\n*** End Patch\n";
+        assert_eq!(
+            canonical_update_targets(patch),
+            Some(vec!["/owned/plan.md"])
+        );
+    }
+
+    #[test]
+    fn every_target_and_hunk_requires_explicit_nonempty_content() {
+        for body in [
+            "",
+            "*** Update File: /owned/plan.md\n-old\n+new",
+            "*** Update File: /owned/plan.md\n@@",
+            "*** Update File: /owned/plan.md\n@@\n@@\n+new",
+            "*** Update File: /owned/plan.md\n@@\n+new\n@@",
+            "*** Update File: /owned/plan.md\n*** Update File: /owned/notes.md\n@@\n+new",
+            "*** Update File: /owned/plan.md\n@@\n+new\n*** Update File: /owned/notes.md",
+        ] {
+            assert!(
+                canonical_update_targets(&format!("*** Begin Patch\n{body}\n*** End Patch"))
+                    .is_none(),
+                "accepted {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parser_rejects_ambiguous_markers_and_unparsed_text() {
+        let valid =
+            "*** Begin Patch\n*** Update File: /owned/plan.md\n@@\n-old\n+new\n*** End Patch";
+        for patch in [
+            format!("prefix\n{valid}"),
+            format!("{valid}\nsuffix"),
+            format!("{valid}\n\n"),
+            valid.replace('\n', "\r\n"),
+            valid.replace("+new", "+new\0"),
+            valid.replace("@@", "@@ invalid"),
+            valid.replace("@@", "@@  padded @@"),
+            valid.replace("+new", "*** Begin Patch\n+new"),
+            valid.replace("+new", "*** Move File: /owned/plan.md -> /outside"),
+            valid.replace("+new", "*** End of File"),
+        ] {
+            assert!(
+                canonical_update_targets(&patch).is_none(),
+                "accepted {patch:?}"
+            );
+        }
+    }
 }
