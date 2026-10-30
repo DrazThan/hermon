@@ -214,7 +214,7 @@ fn acp_start_records_runtime_session_and_preserves_profile_argv() {
     let events = fixture.events();
     assert!(events.iter().any(|e|e["event"]=="spawn"&&e["argv"]==json!(["-p","sdlc-implementer","acp"])));
     assert!(events.iter().any(|e| e["event"] == "new"
-        && e["cwd"] == fixture.workdir.to_str().unwrap()
+        && e["cwd"] == fixture.workdir.canonicalize().unwrap().to_str().unwrap()
         && e["mcpServers"] == json!([])));
     assert!(events.iter().any(|e| e["event"] == "received"
         && e["message"]["method"] == "session/set_mode"
