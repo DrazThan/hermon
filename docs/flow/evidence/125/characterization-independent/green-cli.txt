@@ -1,0 +1,10 @@
+   Compiling hermon v0.5.0 (<repository>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.74s
+     Running tests/characterization_cli_independent.rs (target/debug/deps/characterization_cli_independent-c38564d380a1ee71)
+
+running 3 tests
+test tests_pass_uses_accepted_planner_ids_without_manual_run_edits ... ok
+test newer_unaccepted_planner_directory_cannot_replace_required_passing_ids ... ok
+test passing_unrelated_ids_cannot_replace_missing_planner_acceptance ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.62s

@@ -1,0 +1,19 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.26s
+     Running tests/characterization_independent.rs (target/debug/deps/characterization_independent-b71488a068b225cf)
+
+running 12 tests
+test inconsistent_assertion_counts_cannot_prove_named_passes ... ok
+test duplicate_expected_id_is_ambiguous_even_when_all_copies_pass ... ok
+test failed_expected_id_never_establishes_pass_even_with_exit_zero ... ok
+test missing_expected_id_rejects_counts_that_otherwise_pass ... ok
+test original_red_still_requires_real_expected_failures ... ok
+test accepted_named_passing_ids_are_recorded_without_unrelated_names ... ok
+test nonzero_and_signal_exit_cannot_prove_named_passes ... ok
+test empty_expected_ids_and_declared_baseline_failures_are_rejected ... ok
+test counts_only_and_incompatible_report_formats_cannot_prove_named_passes ... ok
+test suite_and_runtime_errors_cannot_prove_named_passes ... ok
+test skipped_pending_and_todo_expected_ids_never_establish_pass ... ok
+test characterization_freeze_forbids_test_edits_and_verification_forbids_production_edits ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.36s

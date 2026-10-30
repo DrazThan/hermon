@@ -1,0 +1,5 @@
+crates/hermon-flow/tests/characterization_independent.rs: OK
+crates/hermon-flow/tests/characterization_pack_independent.rs: OK
+crates/hermon/tests/characterization_cli_independent.rs: OK
+crates/hermon/tests/support/characterization_independent_fixture.rs: OK
+docs/flow/evidence/125/characterization-independent/acceptance.md: OK
