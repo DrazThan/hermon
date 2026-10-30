@@ -293,7 +293,7 @@ pub fn create(request: Request<'_>) -> Result<RunRecord> {
             record.workflow_name, record.base
         ),
     });
-    let initialize = || -> Result<()> {
+    let initialize = || -> Result<fs::File> {
         fs::create_dir_all(run_dir.parent().unwrap())?;
         let staging = tempfile::Builder::new()
             .prefix(".intake-")
@@ -308,36 +308,42 @@ pub fn create(request: Request<'_>) -> Result<RunRecord> {
         for (name, body) in &record.templates {
             fs::write(staging.path().join("context/templates").join(name), body)?;
         }
+        // Lock the inode before publication, retaining it through started
+        // delivery and the final snapshot so controls cannot race intake.
+        let run_lock = lock(&staging.path().join("run.lock"), false)?.context("run lock")?;
         save(staging.path(), &record)?;
         fs::rename(staging.path(), &run_dir)?;
-        Ok(())
+        Ok(run_lock)
     };
-    if let Err(error) = initialize() {
-        let _ = doctor::execute(
-            &project,
-            &[
-                "git".into(),
-                "worktree".into(),
-                "remove".into(),
-                "--".into(),
-                worktree_text.clone(),
-            ],
-            None,
-            15,
-        );
-        let _ = doctor::execute(
-            &project,
-            &[
-                "git".into(),
-                "branch".into(),
-                "-d".into(),
-                record.branch.clone(),
-            ],
-            None,
-            15,
-        );
-        return Err(error);
-    }
+    let _run_lock = match initialize() {
+        Ok(lock) => lock,
+        Err(error) => {
+            let _ = doctor::execute(
+                &project,
+                &[
+                    "git".into(),
+                    "worktree".into(),
+                    "remove".into(),
+                    "--".into(),
+                    worktree_text.clone(),
+                ],
+                None,
+                15,
+            );
+            let _ = doctor::execute(
+                &project,
+                &[
+                    "git".into(),
+                    "branch".into(),
+                    "-d".into(),
+                    record.branch.clone(),
+                ],
+                None,
+                15,
+            );
+            return Err(error);
+        }
+    };
     if let Err(error) = announce(&run_dir, &mut record) {
         record.run.status = Status::Blocked;
         record.run.block = Some(Block::new(

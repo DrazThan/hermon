@@ -128,6 +128,29 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
         };
         report.check(format!("bot {bot}"), probe());
     }
+    let required: BTreeSet<_> = workflow
+        .steps
+        .values()
+        .flat_map(|s| &s.check)
+        .filter_map(|check| {
+            check.strip_prefix("cmd:").or(match check.as_str() {
+                "lint" => Some("lint"),
+                "tests_fail" => Some("test"),
+                "project_check" => Some("project_check"),
+                _ => None,
+            })
+        })
+        .collect();
+    for name in required {
+        if !project.commands.contains_key(name) {
+            report.check(
+                format!("command {name}"),
+                Err(anyhow::anyhow!(
+                    "configure commands.{name}; required by workflow checks"
+                )),
+            );
+        }
+    }
     for (name, command) in &project.commands {
         report.check(
             format!("command {name}"),
@@ -144,6 +167,23 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
                 "status".into(),
                 "--hostname".into(),
                 "github.com".into(),
+            ],
+            None,
+            15,
+        )
+        .map(|_| ()),
+    );
+    report.check(
+        format!("gh repository {}", project.code_host.repo),
+        execute(
+            project,
+            &[
+                "gh".into(),
+                "repo".into(),
+                "view".into(),
+                project.code_host.repo.clone(),
+                "--json".into(),
+                "nameWithOwner".into(),
             ],
             None,
             15,

@@ -235,7 +235,19 @@ pub struct Dependencies<'a> {
 /// The host owns per-run locking and durable snapshots. No wall clock, process,
 /// filesystem or network calls are made except through the supplied interfaces.
 pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) -> Result<()> {
-    if run.paused || run.cancelled {
+    if run.cancelled {
+        // Cancellation is terminal for acceptance, not for supervision. Keep
+        // observing the owned handle until the worker confirms settlement.
+        if let Some(attempt) = &run.active
+            && matches!(deps.agent.poll(&attempt.handle), Ok(Poll::Finished { .. }))
+        {
+            run.active = None;
+            run.unsettled = false;
+            event(run, "settled", "cancelled worker settlement confirmed");
+        }
+        return Ok(());
+    }
+    if run.paused {
         return Ok(());
     }
     // A very large configured retry limit must not monopolize the host loop.

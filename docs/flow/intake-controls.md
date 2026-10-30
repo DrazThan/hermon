@@ -82,7 +82,9 @@ environments are copied to run snapshots, task files, or event receipts.
 
 Doctor checks each distinct required bot with a trivial task and a bounded
 owned process group, checks project commands under `env`, and authenticates to
-the tracker and GitHub. Missing tools identify the configured PATH and a fix.
+the tracker and GitHub. It rejects missing commands referenced by workflow
+checks and verifies access to the configured GitHub repository. Missing tools
+identify the configured PATH and a fix.
 Bot exit zero alone cannot establish successful completion. Commands have
 configured deadlines; bot probes have a 30-second deadline. Probe output is
 bounded and excluded from diagnostic errors to avoid exposing credentials.
@@ -126,6 +128,7 @@ Pause stops new dispatch; it does not signal the active worker. Resume clears
 the pause. Cancel persists terminal intent before requesting a stop from the
 run's owned supervisor. It never signals an arbitrary stored PID. Late success
 cannot accept a cancelled step, start a successor or resurrect the run.
+The hub continues polling cancelled handles until settlement is confirmed.
 
 The hosting loop must use the same run lock and shared `control::save` API,
 respect the persisted hub flags, and retry `intake::announce` and

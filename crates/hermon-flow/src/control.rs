@@ -113,10 +113,12 @@ fn read(dir: &Path, id: &str) -> Result<RunRecord> {
     let store = RunStore::new(dir)?;
     let mut record: RunRecord = store.read_run()?.context("missing run snapshot")?;
     let events = journal(dir)?;
+    let mut recovered = false;
     if let Some(last) = events.last() {
         ensure!(last.run_id == id, "event belongs to another run");
         if last.snapshot.run.events.len() > record.run.events.len() {
             record = last.snapshot.clone();
+            recovered = true;
         }
     }
     ensure!(
@@ -133,7 +135,7 @@ fn read(dir: &Path, id: &str) -> Result<RunRecord> {
             "template snapshot hash mismatch"
         );
     }
-    if events.len() != record.run.events.len() {
+    if recovered || events.len() != record.run.events.len() {
         save(dir, &record)?;
     }
     Ok(record)
@@ -323,6 +325,7 @@ fn request_stop(data: &Path, dir: &Path, record: &mut RunRecord) -> Result<()> {
         .active
         .as_ref()
         .context("missing cancelled attempt")?;
+    identifier(&attempt.step)?;
     let expected = dir
         .join("steps")
         .join(&attempt.step)
