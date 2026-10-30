@@ -1,0 +1,29 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.29s
+     Running tests/code_host_merge_receipt.rs (target/debug/deps/code_host_merge_receipt-49073d8463e986c4)
+
+running 2 tests
+test unverified_merge_does_not_persist_a_commit_receipt ... FAILED
+test verified_owner_merge_persists_exact_commit_for_docs_and_outcome ... FAILED
+
+failures:
+
+---- unverified_merge_does_not_persist_a_commit_receipt stdout ----
+
+thread 'unverified_merge_does_not_persist_a_commit_receipt' (95633023) panicked at crates/hermon-flow/tests/code_host_merge_receipt.rs:95:63:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "Operation not permitted (os error 1)" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- verified_owner_merge_persists_exact_commit_for_docs_and_outcome stdout ----
+
+thread 'verified_owner_merge_persists_exact_commit_for_docs_and_outcome' (95633024) panicked at crates/hermon-flow/tests/code_host_merge_receipt.rs:95:63:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "Operation not permitted (os error 1)" }
+
+
+failures:
+    unverified_merge_does_not_persist_a_commit_receipt
+    verified_owner_merge_persists_exact_commit_for_docs_and_outcome
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+error: test failed, to rerun pass `-p hermon-flow --test code_host_merge_receipt`

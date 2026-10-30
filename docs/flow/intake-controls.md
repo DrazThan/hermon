@@ -74,6 +74,17 @@ bindings use the existing [process adapter contract](process-supervision.md).
 Hermes profiles remain blocked by the existing unverified shared-gateway
 cancellation capability; a trivial prompt cannot waive that requirement.
 
+Check commands accept an optional `report` format: `Libtest`, `Json`, or
+`VitestJson`. The hosting adapter defaults the `test` command to `Libtest` for
+existing configurations. RummyRune explicitly uses `VitestJson` with Vitest's
+JSON reporter. RED requires expected new assertion failures, not merely a
+nonzero command exit; see the [SDLC pack contracts](sdlc-pilot.md).
+
+Optional `roles/<step>.md` files beside the workflow are read before allocation,
+snapshotted with hashes under `context/roles/` and `context/roles.json`, and
+verified before delivery in each attempt's task. Changes to a pack's role files
+cannot change an existing run's guidance.
+
 `env` is the complete child environment. Configure tool paths and any required
 authentication variables explicitly; GUI/launchd shells do not load shell
 startup files. The central Linear token is read from the host environment

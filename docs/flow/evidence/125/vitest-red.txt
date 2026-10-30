@@ -1,0 +1,48 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.41s
+     Running tests/flow_vitest.rs (target/debug/deps/flow_vitest-e73d25fc86c74929)
+
+running 3 tests
+test planner_expected_ids_cannot_be_replaced_by_unrelated_vitest_failure ... FAILED
+test newer_unaccepted_plan_directory_cannot_replace_accepted_test_expectations ... FAILED
+test accepted_plan_test_expectations_drive_vitest_red_without_manual_run_edits ... FAILED
+
+failures:
+
+---- planner_expected_ids_cannot_be_replaced_by_unrelated_vitest_failure stdout ----
+
+thread 'planner_expected_ids_cannot_be_replaced_by_unrelated_vitest_failure' (95488915) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpWgZpjf/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+---- newer_unaccepted_plan_directory_cannot_replace_accepted_test_expectations stdout ----
+
+thread 'newer_unaccepted_plan_directory_cannot_replace_accepted_test_expectations' (95488914) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpDTheSj/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- accepted_plan_test_expectations_drive_vitest_red_without_manual_run_edits stdout ----
+
+thread 'accepted_plan_test_expectations_drive_vitest_red_without_manual_run_edits' (95488913) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpBgl5wm/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+
+failures:
+    accepted_plan_test_expectations_drive_vitest_red_without_manual_run_edits
+    newer_unaccepted_plan_directory_cannot_replace_accepted_test_expectations
+    planner_expected_ids_cannot_be_replaced_by_unrelated_vitest_failure
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+
+error: test failed, to rerun pass `-p hermon --test flow_vitest`

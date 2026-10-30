@@ -1,0 +1,44 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
+     Running tests/flow_block_reason.rs (target/debug/deps/flow_block_reason-7737dd423c8c8e9b)
+
+running 1 test
+test routed_test_defect_delivers_exact_green_block_reason_to_red_fix ... FAILED
+
+failures:
+
+---- routed_test_defect_delivers_exact_green_block_reason_to_red_fix stdout ----
+
+thread 'routed_test_defect_delivers_exact_green_block_reason_to_red_fix' (95561363) panicked at crates/hermon/tests/flow_block_reason.rs:339:5:
+routed correction lost the exact GREEN defect reason: # TICKET-123 / red_fix
+
+Ticket: TICKET-123
+Bot: reviewer
+Attempt: 1
+Worktree: /private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpaXyOWF/fixture with spaces/worktrees/TICKET-123
+
+Complete this workflow step. Commit repository changes before reporting done. Write result.json to /private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpaXyOWF/fixture with spaces/data/runs/TICKET-123/steps/red_fix/1/result.json with all keys: {"schema":1,"status":"done","summary":"...","artifacts":[],"block":null,"verdict":null,"questions":[]}. For a block use status block and block {kind,reason}. Review verdict must be clean or changes_needed. Save produced artifacts beside result.json.
+
+Produces: []
+Checks: []
+
+Do not start other workflow steps, poll a board, pass owner gates, merge or deploy. Report questions and blocks through result.json; the hub routes them.
+
+## Ticket context
+# Fixture issue
+
+Implement the fixture ticket.
+
+
+## Input: block_reason
+
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    routed_test_defect_delivers_exact_green_block_reason_to_red_fix
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.27s
+
+error: test failed, to rerun pass `-p hermon --test flow_block_reason`

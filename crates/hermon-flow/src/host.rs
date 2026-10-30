@@ -8,14 +8,17 @@ use crate::{
     hub::{self, Agent, Block, BlockKind, CodeHost, Git, Poll, Settlement, StartRequest, Status},
     intake::{self, Project, identifier},
     templates::Templates,
+    tracker::LinearTracker,
     workflow::Workflow,
 };
 use anyhow::{Context, Result, ensure};
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     fs::{self, File},
     io::Write,
     path::{Component, Path, PathBuf},
+    rc::Rc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -152,7 +155,7 @@ impl Host {
             }
             return Ok(());
         }
-        if record.paused || record.run.paused || record.run.status == Status::Done {
+        if record.paused || record.run.paused {
             return Ok(());
         }
         let workflow = Workflow::from_str("run workflow snapshot", &record.workflow_source)?;
@@ -164,6 +167,9 @@ impl Host {
         control::flush_notices(dir, record)?;
         let templates = Templates::load(None, Some(&dir.join("context/templates")))?;
         let mut tracker = project.tracker(dir.join("tracker"), &record.ticket, templates)?;
+        if record.run.status == Status::Done {
+            return publish_outcome(&mut tracker, dir, record);
+        }
         let mut process = ProcessAgent::new(
             self.data.join("runs"),
             &record.worktree,
@@ -175,11 +181,13 @@ impl Host {
         if self.embedded {
             process = process.with_worker_subcommand("__flow-worker");
         }
+        let observations = Rc::new(RefCell::new(Observations::default()));
         let mut agent = PreparedAgent {
             process,
             dir,
             record,
             workflow: &workflow,
+            observations: observations.clone(),
         };
         let mut git = HostGit {
             project: &project,
@@ -192,6 +200,14 @@ impl Host {
             record,
             dir,
             host: None,
+            observations: observations.clone(),
+        };
+        let mut host_tracker = HostTracker {
+            inner: &mut tracker,
+            dir,
+            record,
+            workflow: &workflow,
+            observations,
         };
         // Adapters use immutable intake bindings while advance mutates the run.
         let mut run = record.run.clone();
@@ -200,14 +216,18 @@ impl Host {
             &workflow,
             &mut hub::Dependencies {
                 agent: &mut agent,
-                tracker: &mut tracker,
+                tracker: &mut host_tracker,
                 code_host: &mut code_host,
                 git: &mut git,
                 clock: &WallClock,
             },
         );
         record.run = run;
-        result
+        result?;
+        if record.run.status == Status::Done {
+            publish_outcome(&mut tracker, dir, record)?;
+        }
+        Ok(())
     }
 }
 struct WallClock;
@@ -253,14 +273,21 @@ fn artifact(dir: &Path, name: &str) -> Result<PathBuf> {
     );
     Ok(path)
 }
-fn latest(dir: &Path, step: &str) -> Result<PathBuf> {
-    identifier(step)?;
-    let number = fs::read_dir(dir.join("steps").join(step))?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
-        .max()
-        .context("missing step attempt")?;
-    attempt_dir(dir, step, number)
+/// Numeric directories and worker results do not establish acceptance. Match
+/// ordered hub start/completion events to the recorded attempts instead.
+fn accepted(dir: &Path, record: &RunRecord, step: &str) -> Result<PathBuf> {
+    let mut attempts = record.run.attempts.iter().filter(|a| a.step == step);
+    let mut current = None;
+    let mut accepted = None;
+    for event in record.run.events.iter().filter(|e| e.step == step) {
+        if event.kind == "started" {
+            current = attempts.next();
+        } else if event.kind == "step_done" {
+            accepted = current;
+        }
+    }
+    let attempt = accepted.context("missing accepted artifact attempt")?;
+    attempt_dir(dir, step, attempt.number)
 }
 fn read_text(path: &Path) -> Result<String> {
     ensure!(
@@ -269,11 +296,30 @@ fn read_text(path: &Path) -> Result<String> {
     );
     Ok(fs::read_to_string(path)?)
 }
+#[derive(Default)]
+struct Observations {
+    completed: BTreeMap<String, PathBuf>,
+    block_reason: Option<String>,
+}
+fn producer_dir(
+    dir: &Path,
+    record: &RunRecord,
+    observations: &Observations,
+    step: &str,
+) -> Result<PathBuf> {
+    match observations.completed.get(step) {
+        Some(directory) => Ok(directory.clone()),
+        None => accepted(dir, record, step),
+    }
+}
 struct PreparedAgent<'a> {
     process: ProcessAgent,
     dir: &'a Path,
     record: &'a RunRecord,
     workflow: &'a Workflow,
+    // A successor can start within the same advance call, before its producer's
+    // step_done event has been copied back into the durable run snapshot.
+    observations: Rc<RefCell<Observations>>,
 }
 impl PreparedAgent<'_> {
     fn prepare(&self, request: &StartRequest) -> Result<()> {
@@ -282,6 +328,24 @@ impl PreparedAgent<'_> {
             return Ok(());
         }
         let step = &self.workflow.steps[&request.step];
+        if step
+            .check
+            .iter()
+            .any(|check| check.starts_with("only_paths_changed:"))
+            && step
+                .tag
+                .as_ref()
+                .is_some_and(|tag| request.freezes.contains_key(tag))
+        {
+            let base = dir.join("base_commit");
+            if !base.exists() {
+                let head = crate::checks::worktree_head(&self.record.worktree)?;
+                let mut file = tempfile::NamedTempFile::new_in(&dir)?;
+                file.write_all(head.as_bytes())?;
+                file.as_file().sync_all()?;
+                file.persist(base)?;
+            }
+        }
         let mut task = format!(
             "# {} / {}\n\nTicket: {}\nBot: {}\nAttempt: {}\nWorktree: {}\n\nComplete this workflow step. Commit repository changes before reporting done. Write result.json to {} with all keys: {{\"schema\":1,\"status\":\"done\",\"summary\":\"...\",\"artifacts\":[],\"block\":null,\"verdict\":null,\"questions\":[]}}. For a block use status block and block {{kind,reason}}. Review verdict must be clean or changes_needed. Save produced artifacts beside result.json.\n\nProduces: {:?}\nChecks: {:?}\n",
             self.record.run.id,
@@ -290,24 +354,63 @@ impl PreparedAgent<'_> {
             request.bot,
             request.number,
             self.record.worktree.display(),
-            dir.display(),
+            dir.join("result.json").display(),
             step.produces,
             step.check
         );
+        task.push_str("\nDo not start other workflow steps, poll a board, pass owner gates, merge or deploy. Report questions and blocks through result.json; the hub routes them.\n");
+        let manifest = self.dir.join("context/roles.json");
+        match fs::read_to_string(&manifest) {
+            Ok(body) => {
+                let hashes: BTreeMap<String, String> =
+                    serde_json::from_str(&body).context("read role manifest")?;
+                if let Some(expected) = hashes.get(&request.step) {
+                    let role = read_text(
+                        &self
+                            .dir
+                            .join("context/roles")
+                            .join(format!("{}.md", request.step)),
+                    )
+                    .context("read frozen role guidance")?;
+                    ensure!(
+                        intake::hash(&role) == *expected,
+                        "role snapshot hash mismatch: {}",
+                        request.step
+                    );
+                    task.push_str(&format!("\n## Role guidance\n{role}\n"));
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && !self.dir.join("context/roles").exists() => {}
+            Err(error) => return Err(error).context("read role manifest"),
+        }
         if let Ok(issue) = read_text(&self.dir.join("context/issue.md")) {
             task.push_str(&format!("\n## Ticket context\n{issue}\n"));
         }
         for input in &step.inputs {
             let body = if input == "block_reason" {
-                self.record
-                    .run
-                    .block
-                    .as_ref()
-                    .map(|b| b.reason.clone())
+                self.observations
+                    .borrow()
+                    .block_reason
+                    .clone()
+                    .or_else(|| self.record.run.block.as_ref().map(|b| b.reason.clone()))
+                    .or_else(|| {
+                        self.record
+                            .run
+                            .events
+                            .iter()
+                            .rev()
+                            .find(|e| e.kind == "block")
+                            .map(|e| e.reason.clone())
+                    })
                     .unwrap_or_default()
             } else if let Some(reference) = request.freezes.get(input) {
                 reference.clone()
-            } else if input.starts_with("diff:") || input == "merge" {
+            } else if input == "merge" {
+                read_text(&self.dir.join("context/merge.json"))
+                    .context("missing verified merge receipt")?
+            } else if input.starts_with("diff:") {
                 format!(
                     "Resolve {input} from run evidence: {:?}; PR: {:?}",
                     request.freezes, self.record.run.pr
@@ -319,16 +422,19 @@ impl PreparedAgent<'_> {
                     .iter()
                     .find(|(name, step)| {
                         step.produces.contains(input)
-                            && self
-                                .record
-                                .run
-                                .events
-                                .iter()
-                                .any(|e| e.step == **name && e.kind == "step_done")
+                            && (self.observations.borrow().completed.contains_key(*name)
+                                || self
+                                    .record
+                                    .run
+                                    .events
+                                    .iter()
+                                    .any(|e| e.step == **name && e.kind == "step_done"))
                     })
                     .map(|(name, _)| name)
                     .with_context(|| format!("missing accepted input {input}"))?;
-                read_text(&artifact(&latest(self.dir, producer)?, input)?)?
+                let directory =
+                    producer_dir(self.dir, self.record, &self.observations.borrow(), producer)?;
+                read_text(&artifact(&directory, input)?)?
             };
             task.push_str(&format!("\n## Input: {input}\n{body}\n"));
         }
@@ -347,7 +453,13 @@ impl Agent for PreparedAgent<'_> {
         self.process.available(bot)
     }
     fn start(&mut self, request: &StartRequest) -> std::result::Result<String, Block> {
-        self.prepare(request).map_err(capability)?;
+        self.prepare(request).map_err(|error| {
+            eprintln!(
+                "hermon hub: {}: task preparation: {error:#}",
+                request.run_id
+            );
+            capability(error)
+        })?;
         self.process.start(request)
     }
     fn resume_after_answer(
@@ -356,11 +468,48 @@ impl Agent for PreparedAgent<'_> {
         request: &StartRequest,
         answer: &str,
     ) -> std::result::Result<String, Block> {
-        self.prepare(request).map_err(capability)?;
+        self.prepare(request).map_err(|error| {
+            eprintln!(
+                "hermon hub: {}: task preparation: {error:#}",
+                request.run_id
+            );
+            capability(error)
+        })?;
         self.process.resume_after_answer(previous, request, answer)
     }
     fn poll(&mut self, handle: &str) -> std::result::Result<Poll, Block> {
-        self.process.poll(handle)
+        let poll = self.process.poll(handle)?;
+        if matches!(
+            poll,
+            Poll::Finished {
+                process_success: true,
+                completion: true,
+                ..
+            }
+        ) && let Some(attempt) = self
+            .record
+            .run
+            .active
+            .as_ref()
+            .filter(|a| a.handle == handle)
+        {
+            let directory =
+                attempt_dir(self.dir, &attempt.step, attempt.number).map_err(capability)?;
+            let mut observations = self.observations.borrow_mut();
+            observations
+                .completed
+                .insert(attempt.step.clone(), directory);
+            if let Poll::Finished {
+                result: Some(ref body),
+                ..
+            } = poll
+            {
+                observations.block_reason = serde_json::from_str::<serde_json::Value>(body)
+                    .ok()
+                    .and_then(|v| v["block"]["reason"].as_str().map(str::to_owned));
+            }
+        }
+        Ok(poll)
     }
     fn stop(&mut self, handle: &str) -> std::result::Result<Settlement, Block> {
         self.process.stop(handle)
@@ -386,7 +535,15 @@ impl Git for HostGit<'_> {
         if checks.is_empty() && workflow.steps[step].tag.is_none() {
             return Ok(());
         }
-        let dir = latest(self.dir, step).map_err(capability)?;
+        let attempt = self
+            .record
+            .run
+            .active
+            .as_ref()
+            .filter(|attempt| attempt.step == step)
+            .context("missing checked attempt identity")
+            .map_err(capability)?;
+        let dir = attempt_dir(self.dir, step, attempt.number).map_err(capability)?;
         let number = dir
             .file_name()
             .and_then(|n| n.to_str())
@@ -411,19 +568,46 @@ impl Git for HostGit<'_> {
                         CheckCommand {
                             argv: c.argv.clone(),
                             timeout_seconds: c.timeout_seconds,
-                            report: (name == "test").then_some(TestReportFormat::Libtest),
+                            report: c
+                                .report
+                                .clone()
+                                .or_else(|| (name == "test").then_some(TestReportFormat::Libtest)),
                         },
                     )
                 })
                 .collect(),
         })?;
+        match fs::read_to_string(dir.join("base_commit")) {
+            Ok(base) => git.set_path_base(base),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(capability(error)),
+        }
         // Trusted expected new test IDs are supplied separately from agent output.
         let mut context = AttemptContext {
             number,
             bot,
             ..AttemptContext::default()
         };
-        let expected = self.dir.join("context/test-expectations.json");
+        let producer = workflow.steps.iter().find(|(_, spec)| {
+            spec.produces
+                .iter()
+                .any(|name| name == "test-expectations.json")
+        });
+        let expected = if let Some((producer, _)) = producer {
+            // Planner expectations are independent of the RED worker. Never
+            // replace them with a newer unaccepted directory or RED result.
+            if checks.iter().any(|check| check == "tests_fail") {
+                artifact(
+                    &accepted(self.dir, self.record, producer).map_err(capability)?,
+                    "test-expectations.json",
+                )
+                .map_err(capability)?
+            } else {
+                self.dir.join("context/test-expectations.json")
+            }
+        } else {
+            self.dir.join("context/test-expectations.json")
+        };
         if expected.exists() {
             let values: serde_json::Value =
                 serde_json::from_str(&read_text(&expected).map_err(capability)?)
@@ -455,14 +639,15 @@ struct HostCodeHost<'a> {
     record: &'a RunRecord,
     dir: &'a Path,
     host: Option<GithubCodeHost>,
+    observations: Rc<RefCell<Observations>>,
 }
 impl HostCodeHost<'_> {
     fn get(&mut self) -> std::result::Result<&mut GithubCodeHost, Block> {
         if self.host.is_none() {
-            let plan = latest(self.dir, "plan")
+            let plan = producer_dir(self.dir, self.record, &self.observations.borrow(), "plan")
                 .and_then(|dir| read_text(&artifact(&dir, "plan.md")?))
                 .unwrap_or_else(|_| self.record.ticket.clone());
-            let review = latest(self.dir, "review")
+            let review = producer_dir(self.dir, self.record, &self.observations.borrow(), "review")
                 .and_then(|dir| read_text(&dir.join("result.json")))
                 .unwrap_or_else(|_| "Workflow review completed".into());
             self.host = Some(GithubCodeHost::new(
@@ -489,6 +674,137 @@ impl CodeHost for HostCodeHost<'_> {
         self.get()?.open_pr(id)
     }
     fn merged(&mut self, pr: &str) -> std::result::Result<bool, Block> {
-        self.get()?.merged(pr)
+        let host = self.get()?;
+        if !host.merged(pr)? {
+            return Ok(false);
+        }
+        let commit = host
+            .merge_commit()
+            .context("missing verified merge SHA")
+            .map_err(capability)?
+            .to_owned();
+        let directory = self.dir.join("context");
+        fs::create_dir_all(&directory).map_err(capability)?;
+        let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(capability)?;
+        serde_json::to_writer(
+            &mut file,
+            &serde_json::json!({"pr":pr,"merge_commit":commit}),
+        )
+        .map_err(capability)?;
+        file.as_file().sync_all().map_err(capability)?;
+        file.persist(directory.join("merge.json"))
+            .map_err(capability)?;
+        Ok(true)
     }
+}
+
+struct HostTracker<'a> {
+    inner: &'a mut LinearTracker,
+    dir: &'a Path,
+    record: &'a RunRecord,
+    workflow: &'a Workflow,
+    observations: Rc<RefCell<Observations>>,
+}
+impl hub::Tracker for HostTracker<'_> {
+    fn gate_approved(
+        &mut self,
+        run: &str,
+        step: &str,
+        request: u32,
+    ) -> std::result::Result<bool, Block> {
+        let mut published = String::new();
+        let observations = self.observations.borrow();
+        for (producer, spec) in &self.workflow.steps {
+            if spec.publish.is_empty()
+                || !(observations.completed.contains_key(producer)
+                    || self
+                        .record
+                        .run
+                        .events
+                        .iter()
+                        .any(|e| e.step == *producer && e.kind == "step_done"))
+            {
+                continue;
+            }
+            let directory =
+                producer_dir(self.dir, self.record, &observations, producer).map_err(capability)?;
+            for name in &spec.publish {
+                let path = artifact(&directory, name).map_err(capability)?;
+                let body = read_text(&path).map_err(capability)?;
+                published.push_str(&format!("{name}\n{body}\n\n"));
+                if published.len() > 32 * 1024 {
+                    return Err(capability(
+                        "published plan exceeds 32 KiB; prepare a concise complete plan before requesting GO",
+                    ));
+                }
+            }
+        }
+        self.inner
+            .gate_with_artifacts(run, step, request, &published)
+    }
+    fn question(
+        &mut self,
+        run: &str,
+        step: &str,
+        request: u32,
+        bot: &str,
+        questions: &[String],
+    ) -> std::result::Result<(), Block> {
+        hub::Tracker::question(self.inner, run, step, request, bot, questions)
+    }
+    fn answer(
+        &mut self,
+        run: &str,
+        step: &str,
+        request: u32,
+    ) -> std::result::Result<Option<String>, Block> {
+        hub::Tracker::answer(self.inner, run, step, request)
+    }
+    fn alert(&mut self, run: &str, alert: &hub::Alert) -> Result<()> {
+        hub::Tracker::alert(self.inner, run, alert)
+    }
+}
+fn publish_outcome(tracker: &mut LinearTracker, dir: &Path, record: &RunRecord) -> Result<()> {
+    let summary = record
+        .run
+        .events
+        .iter()
+        .rev()
+        .find(|e| e.kind == "step_done")
+        .map(|e| e.reason.as_str())
+        .unwrap_or("Workflow completed");
+    let docs = record
+        .run
+        .events
+        .iter()
+        .rev()
+        .find(|e| e.step == "docs" && e.kind == "step_done")
+        .map(|e| e.reason.as_str())
+        .unwrap_or("");
+    let merge = match fs::read(dir.join("context/merge.json")) {
+        Ok(body) => serde_json::from_slice::<serde_json::Value>(&body)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Value::Null,
+        Err(error) => return Err(error.into()),
+    };
+    let mut values = crate::tracker::context_values(
+        &record.run.current,
+        "",
+        "All configured steps completed",
+        "",
+    );
+    for (key, value) in [
+        ("workflow", record.workflow_name.clone()),
+        ("summary", summary.to_owned()),
+        ("docs", docs.to_owned()),
+        ("pr", record.run.pr.clone().unwrap_or_default()),
+        (
+            "merge_commit",
+            merge["merge_commit"].as_str().unwrap_or("").to_owned(),
+        ),
+        ("run_status_cmd", format!("hermon status {}", record.run.id)),
+    ] {
+        values.insert(key.into(), value);
+    }
+    tracker.post_comment("outcome.md", &record.run.id, "outcome", &values)?;
+    Ok(())
 }

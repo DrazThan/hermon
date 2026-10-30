@@ -355,6 +355,30 @@ impl LinearTracker {
         }
         Ok(request.reply)
     }
+    /// The host supplies only artifacts already accepted by the hub. Rendering
+    /// still escapes their text and appends the immutable reply marker.
+    pub fn gate_with_artifacts(
+        &mut self,
+        run_id: &str,
+        step: &str,
+        request: u32,
+        artifacts: &str,
+    ) -> std::result::Result<bool, Block> {
+        let mut action = || -> Result<bool> {
+            ensure!(request > 0, "gate request numbers start at one");
+            let id = format!("gate:{step}:{request}");
+            let mut values = context_values(
+                step,
+                "",
+                &format!("Approval for step {step}, request {request}"),
+                "",
+            );
+            values.insert("artifact_links".into(), artifacts.into());
+            self.post_comment("go_request.md", run_id, &id, &values)?;
+            Ok(self.reply(run_id, &id, true)?.is_some())
+        };
+        action().map_err(tracker_block)
+    }
 }
 impl Tracker for LinearTracker {
     fn gate_approved(
@@ -363,23 +387,7 @@ impl Tracker for LinearTracker {
         step: &str,
         request: u32,
     ) -> std::result::Result<bool, Block> {
-        let mut action = || -> Result<bool> {
-            ensure!(request > 0, "gate request numbers start at one");
-            let id = format!("gate:{step}:{request}");
-            self.post_comment(
-                "go_request.md",
-                run_id,
-                &id,
-                &context_values(
-                    step,
-                    "",
-                    &format!("Approval for step {step}, request {request}"),
-                    "",
-                ),
-            )?;
-            Ok(self.reply(run_id, &id, true)?.is_some())
-        };
-        action().map_err(tracker_block)
+        self.gate_with_artifacts(run_id, step, request, "")
     }
     fn alert(&mut self, run_id: &str, alert: &Alert) -> Result<()> {
         let digest = Sha256::digest(format!("{}\n{}", alert.step, alert.reason));
@@ -440,7 +448,7 @@ fn tracker_block(error: anyhow::Error) -> Block {
     };
     Block::new(kind, reason)
 }
-fn context_values(
+pub(crate) fn context_values(
     step: &str,
     bot: &str,
     technical: &str,

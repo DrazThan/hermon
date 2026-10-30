@@ -3,7 +3,8 @@ name: sdlc
 steps:
   plan:
     bot: sdlc-planner
-    produces: [plan.md, test-brief.md, impl-brief.md]
+    inputs: [block_reason]
+    produces: [plan.md, test-brief.md, impl-brief.md, test-expectations.json]
     publish: [plan.md]
     next: owner_go
   owner_go:
@@ -15,6 +16,7 @@ steps:
     check: [only_paths_changed:tests, lint, tests_fail]
     tag: red
     next: green
+    on_block: {scope_change: plan}
   green:
     bot: sdlc-implementer
     inputs: [plan.md, impl-brief.md, red]
@@ -24,11 +26,12 @@ steps:
     on_block: {test_defect: red_fix, scope_change: plan}
   red_fix:
     bot: sdlc-test-writer
-    inputs: [block_reason, red]
+    inputs: [plan.md, test-brief.md, block_reason, red]
     check: [only_paths_changed:tests, lint, tests_fail]
     tag: red
     next: green
     max_runs: 2
+    on_block: {scope_change: plan}
   review:
     bot: sdlc-reviewer
     inputs: [plan.md, "diff:red..green"]

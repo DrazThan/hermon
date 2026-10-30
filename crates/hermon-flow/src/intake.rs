@@ -48,6 +48,7 @@ pub struct Project {
 pub struct ProjectCommand {
     pub argv: Vec<String>,
     pub timeout_seconds: u64,
+    pub report: Option<crate::checks::TestReportFormat>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -133,6 +134,40 @@ pub fn templates(project: &Project, workflow: &Workflow, path: &Path) -> Result<
 pub fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
+/// Role files are optional for generic packs. Existing entries must be readable,
+/// bounded files inside the pack; snapshot them before allocating a run.
+fn roles(workflow: &Workflow, path: &Path) -> Result<BTreeMap<String, String>> {
+    let root = fs::canonicalize(path)?
+        .parent()
+        .context("workflow directory")?
+        .to_owned();
+    let mut roles = BTreeMap::new();
+    for (name, step) in &workflow.steps {
+        if step.bot.is_none() {
+            continue;
+        }
+        identifier(name)?;
+        let path = root.join("roles").join(format!("{name}.md"));
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).context("read role metadata"),
+            Ok(_) => {}
+        }
+        let target = fs::canonicalize(&path).context("resolve role path")?;
+        ensure!(
+            target.starts_with(&root),
+            "role outside workflow pack: {name}"
+        );
+        ensure!(
+            target.is_file() && fs::metadata(&target)?.len() <= 1024 * 1024,
+            "role {name} must be a file of at most 1 MiB"
+        );
+        let body = fs::read_to_string(target).with_context(|| format!("read role {name}"))?;
+        ensure!(!body.trim().is_empty(), "role {name} must not be empty");
+        roles.insert(name.clone(), body);
+    }
+    Ok(roles)
+}
 pub(crate) fn identifier(id: &str) -> Result<()> {
     ensure!(
         !id.is_empty()
@@ -171,6 +206,7 @@ pub fn create(request: Request<'_>) -> Result<RunRecord> {
     let project = Project::load(request.project)?;
     let source = fs::read_to_string(request.workflow)?;
     let workflow = Workflow::from_str(&request.workflow.display().to_string(), &source)?;
+    let role_bodies = roles(&workflow, request.workflow)?;
     let start = request.start.unwrap_or(&project.start);
     ensure!(
         workflow.steps.contains_key(start),
@@ -308,6 +344,22 @@ pub fn create(request: Request<'_>) -> Result<RunRecord> {
         for (name, body) in &record.templates {
             fs::write(staging.path().join("context/templates").join(name), body)?;
         }
+        fs::create_dir_all(staging.path().join("context/roles"))?;
+        let mut role_hashes = BTreeMap::new();
+        for (name, body) in &role_bodies {
+            fs::write(
+                staging
+                    .path()
+                    .join("context/roles")
+                    .join(format!("{name}.md")),
+                body,
+            )?;
+            role_hashes.insert(name, hash(body));
+        }
+        fs::write(
+            staging.path().join("context/roles.json"),
+            serde_json::to_vec(&role_hashes)?,
+        )?;
         // Lock the inode before publication, retaining it through started
         // delivery and the final snapshot so controls cannot race intake.
         let run_lock = lock(&staging.path().join("run.lock"), false)?.context("run lock")?;

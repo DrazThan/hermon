@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running tests/code_host_merge_receipt.rs (target/debug/deps/code_host_merge_receipt-49073d8463e986c4)
+
+running 2 tests
+test unverified_merge_does_not_persist_a_commit_receipt ... ok
+test verified_owner_merge_persists_exact_commit_for_docs_and_outcome ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.18s
+
+     Running tests/sdlc_pack.rs (target/debug/deps/sdlc_pack-1190e71146a1f09c)
+
+running 3 tests
+test rummyrune_project_uses_supported_schema_and_honest_profile_bindings ... ok
+test shipped_sdlc_pack_keeps_gates_freeze_and_bounded_correction ... ok
+test shipped_templates_render_from_pack_with_mentions_and_marker ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
