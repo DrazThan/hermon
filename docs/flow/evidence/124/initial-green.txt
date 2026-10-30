@@ -1,0 +1,27 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.71s
+     Running tests/flow_host.rs (target/debug/deps/flow_host-334b4030497aa0e3)
+
+running 3 tests
+test foreground_hub_exposes_documented_control_flags ... ok
+test foreground_hub_once_accepts_empty_data_directory ... ok
+test foreground_hub_advances_queued_run_with_project_environment ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+     Running tests/flow_pipeline.rs (target/debug/deps/flow_pipeline-e4f5a6ac84b9c139)
+
+running 9 tests
+test alert_on_owner_needed ... ok
+test pipeline_missing_session_receipt_is_still_visible ... ok
+test pipeline_view_rows_from_events ... ok
+test hub_single_instance_lock ... ok
+test alert_on_stall ... ok
+test flow_alerts_honor_mute_config_and_terminal_states ... ok
+test tui_and_gui_open_running_pipeline_session_pane ... ok
+test pipeline_session_uses_recorded_id_and_running_step_only ... ok
+test foreground_hub_uses_same_single_instance_lock ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

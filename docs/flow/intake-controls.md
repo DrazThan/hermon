@@ -1,8 +1,8 @@
 # Intake, doctor and CLI controls
 
-Slice 8 adds CLI intake and durable controls. Runs are queued at their explicit
-starting step. The menubar/foreground hosting loop and pipeline UI are Slice 9
-(#124); this slice does not start a background hub.
+CLI intake queues runs at their explicit starting step. The menubar or
+foreground `hermon hub` advances them; the TUI and GUI expose pipeline views.
+See [hosting and pipelines](hosting-pipelines.md).
 
 ```sh
 hermon doctor workflows/sdlc --project projects/example/project.yaml --ticket EX-123

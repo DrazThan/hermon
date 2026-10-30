@@ -36,10 +36,10 @@ use crate::roster::RosterRow;
 use crate::ui::overlay::{Palette, PaletteFocus};
 use crate::view::{self, ViewState};
 
-const FOOTER_LIST: &str = "[q]uit [j/k]select [l]grid [p]in [s]ort [f]ilter [a]ttn [m]ute [?]help";
+const FOOTER_LIST: &str = "[q]uit [j/k]sel [v]flows [l]grid [p]in [s]ort [f]ilter [m]ute [?]help";
 const FOOTER_GRID: &str = "[q]uit [j/k]select [l]list [Tab]page [z]oom [x/o]close/open [p]in [s]ort [f]ilter [a]ttn [m]ute [?]help";
 const FOOTER_ZOOM: &str = "[q]uit [Esc]back [PgUp/PgDn]scroll [g/G]top/tail [m]ute [?]help";
-const HELP: &str = "q / Ctrl-C  quit\nj / \u{2193}       next\nk / \u{2191}       previous\nl           list / grid\np           pin / unpin\nTab         next page\n\u{21b5} / z       zoom\nEsc         leave zoom\nPgUp/PgDn   scroll pane\ng / G       top / follow tail\nx / o       close / reopen\nm           mute notifications\n?           toggle help";
+const HELP: &str = "q / Ctrl-C  quit\nj / \u{2193}       next\nk / \u{2191}       previous\nv           workflow pipelines\nEnter       open running step session (pipelines)\nl           list / grid\np           pin / unpin\nTab         next page\n\u{21b5} / z       zoom\nEsc         leave zoom\nPgUp/PgDn   scroll pane\ng / G       top / follow tail\nx / o       close / reopen\nm           mute notifications\n?           toggle help";
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const REDRAW_INTERVAL: Duration = Duration::from_millis(100);
 /// Preview box: four lines of session detail plus its border.
@@ -75,6 +75,10 @@ pub enum ViewMode {
 /// drive it without a terminal.
 #[derive(Debug, Default)]
 pub struct App {
+    pub pipelines: Vec<crate::flow_ui::PipelineRow>,
+    pub show_pipeline: bool,
+    pipeline_selected: usize,
+    pipeline_notice: String,
     pub roster: Vec<RosterRow>,
     pub context: RosterContext,
     pending_context: Option<RosterContext>,
@@ -175,6 +179,37 @@ impl App {
             self.resync_selection();
             self.sync_panes();
             return;
+        }
+        if key.code == KeyCode::Char('v') {
+            self.show_pipeline = !self.show_pipeline;
+            if !self.show_pipeline {
+                self.resync_selection();
+            }
+            self.sync_panes();
+            return;
+        }
+        if self.show_pipeline {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.pipeline_selected =
+                        (self.pipeline_selected + 1).min(self.pipelines.len().saturating_sub(1));
+                    return;
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.pipeline_selected = self.pipeline_selected.saturating_sub(1);
+                    return;
+                }
+                KeyCode::Enter => {
+                    self.select_pipeline(self.pipeline_selected);
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.show_pipeline = false;
+                    self.sync_panes();
+                    return;
+                }
+                _ => {}
+            }
         }
         match key.code {
             KeyCode::Char('b') => self.bot_menu = Some(0),
@@ -282,6 +317,18 @@ impl App {
 
     pub fn apply_event(&mut self, event: Event) {
         match event {
+            Event::Pipeline(rows) => {
+                let selected = self
+                    .pipelines
+                    .get(self.pipeline_selected)
+                    .map(|r| (&r.run_id, &r.step));
+                let index = selected.and_then(|(id, step)| {
+                    rows.iter().position(|r| &r.run_id == id && &r.step == step)
+                });
+                self.pipeline_selected =
+                    index.unwrap_or(self.pipeline_selected.min(rows.len().saturating_sub(1)));
+                self.pipelines = rows;
+            }
             Event::Context(context) => {
                 self.context_received = true;
                 self.pending_context = Some(context);
@@ -294,7 +341,7 @@ impl App {
                 context.retain_open_owners(&self.context, &self.open_panes, &rows);
                 self.context = context;
                 self.roster = rows;
-                if self.selected_row().is_none() {
+                if !self.show_pipeline && self.selected_row().is_none() {
                     self.select_at(position);
                 }
                 self.sync_panes();
@@ -352,6 +399,9 @@ impl App {
     /// The sessions the engine should be tailing: in list mode the selected
     /// one, in grid mode every session holding a slot on the visible page.
     fn wanted_panes(&self) -> Vec<String> {
+        if self.show_pipeline {
+            return self.selected_key().into_iter().collect();
+        }
         match self.mode {
             ViewMode::List => self.selected_key().into_iter().collect(),
             ViewMode::Grid => self.visible_slots(),
@@ -476,6 +526,33 @@ impl App {
     pub fn take_commands(&mut self) -> Vec<UiCmd> {
         std::mem::take(&mut self.cmds)
     }
+    pub fn select_pipeline(&mut self, index: usize) -> bool {
+        let Some(row) = self.pipelines.get(index) else {
+            return false;
+        };
+        self.pipeline_selected = index;
+        let Some(key) = crate::flow_ui::open_session(row, &self.roster) else {
+            self.pipeline_notice =
+                "Session unavailable: waiting for a recorded running session in the roster".into();
+            self.selected_id = None;
+            self.sync_panes();
+            return false;
+        };
+        let id = self
+            .roster
+            .iter()
+            .find(|r| routing_key(r) == key)
+            .map(|r| r.id.clone());
+        self.view.clear();
+        self.selected_store = None;
+        self.selected_id = id;
+        self.mode = ViewMode::List;
+        self.zoom = false;
+        self.closed.remove(&key);
+        self.pipeline_notice.clear();
+        self.sync_panes();
+        true
+    }
 
     /// The selected session, or `None` while the roster is empty or the
     /// filter hides it.
@@ -570,6 +647,13 @@ pub fn run_tui_options(
     config: EngineConfig,
     options: Option<MonitorOptions>,
 ) -> anyhow::Result<()> {
+    run_tui_data(config, options, crate::cli::default_flow_data())
+}
+pub fn run_tui_data(
+    config: EngineConfig,
+    options: Option<MonitorOptions>,
+    data: std::path::PathBuf,
+) -> anyhow::Result<()> {
     let (event_tx, event_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let mut app = App::new(&config);
@@ -578,7 +662,7 @@ pub fn run_tui_options(
             .set_filter(&format!("bot={bot}"))
             .map_err(anyhow::Error::msg)?;
     }
-    let engine = Engine::spawn_options(config, options, event_tx, cmd_rx);
+    let engine = Engine::spawn_flow(config, options, event_tx, cmd_rx, Some(data), false);
 
     install_panic_hook(restore_terminal);
     let result = run_terminal(app, &event_rx, &cmd_tx);
@@ -659,11 +743,22 @@ pub fn draw(frame: &mut Frame, app: &App) {
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(warning_lines), warnings);
-    match app.mode {
-        ViewMode::List => list::render(frame, body, app),
-        ViewMode::Grid => render_grid(frame, body, app),
+    if app.show_pipeline {
+        render_pipeline(frame, body, app);
+    } else {
+        match app.mode {
+            ViewMode::List => list::render(frame, body, app),
+            ViewMode::Grid => render_grid(frame, body, app),
+        }
     }
-    frame.render_widget(Paragraph::new(footer_line(app)), footer);
+    frame.render_widget(
+        Paragraph::new(if app.show_pipeline {
+            "[v/Esc]sessions [j/k]step [Enter]session [m]ute [q]uit".into()
+        } else {
+            footer_line(app)
+        }),
+        footer,
+    );
 
     if let Some(palette) = &app.palette {
         let (matched, total) = overlay::draft_matches_context(
@@ -713,6 +808,53 @@ pub fn draw(frame: &mut Frame, app: &App) {
         frame.render_widget(
             Paragraph::new(HELP).block(Block::bordered().title("help")),
             area,
+        );
+    }
+}
+
+fn render_pipeline(frame: &mut Frame, area: Rect, app: &App) {
+    let [rows, notice, pane_area] = Layout::vertical([
+        Constraint::Percentage(50),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(area);
+    let block = Block::bordered()
+        .title("Pipelines · run / step · bot · attempt · age · state · last block");
+    let inner = block.inner(rows);
+    frame.render_widget(block, rows);
+    let offset = (app.pipeline_selected + 1).saturating_sub(inner.height as usize);
+    let lines: Vec<Line> = if app.pipelines.is_empty() {
+        vec![Line::raw("No workflow runs. Start one with hermon run.")]
+    } else {
+        app.pipelines
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .map(|(i, row)| {
+                Line::styled(
+                    format!(
+                        "{} {}",
+                        if i == app.pipeline_selected { ">" } else { " " },
+                        row.label()
+                    ),
+                    if i == app.pipeline_selected {
+                        palette::border_selected()
+                    } else {
+                        palette::style(Sem::Plain)
+                    },
+                )
+            })
+            .collect()
+    };
+    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(app.pipeline_notice.as_str()), notice);
+    if let Some(row) = app.selected_row() {
+        pane::render_labeled(
+            frame,
+            pane_area,
+            &app.pane_for(row),
+            &app.context.label(row),
         );
     }
 }

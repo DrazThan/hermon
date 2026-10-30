@@ -1,0 +1,2 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.03s
