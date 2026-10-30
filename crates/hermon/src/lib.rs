@@ -8,6 +8,7 @@ pub mod cli;
 pub mod config;
 pub mod engine;
 mod flow_cli;
+pub mod flow_ui;
 pub mod gui;
 #[cfg(target_os = "macos")]
 pub mod login_item;
@@ -91,6 +92,8 @@ pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
+        Command::Hub(args) => flow_cli::hub(args),
+        Command::FlowWorker { directory } => hermon_flow::agent::worker_main_at(&directory),
         Command::Run(args) => flow_cli::intake(args),
         Command::Doctor(args) => flow_cli::doctor(args),
         Command::Status(args) => flow_cli::status(args),
@@ -160,6 +163,7 @@ pub fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Watch(args) => {
+            let data = args.flow_data.data_dir.clone();
             let options = args.monitor_options();
             // `watch` keeps the Python default 300s fresh window
             // (`hermon.py:1463`); only `ls` widens it to an hour.
@@ -192,13 +196,14 @@ pub fn run() -> anyhow::Result<()> {
                 remote_flags,
                 docker_auto: args.docker_auto,
             };
-            ui::run_tui_options(config, Some(options))
+            ui::run_tui_data(config, Some(options), data)
         }
         // The window is a second engine consumer, not a second engine
         // configuration: same flags and same 300s fresh window as `watch`.
         // Arbitrated the same way `watch` is (#72/#77): a running menubar
         // outranks it, so a `gui` alongside one silences its own banners.
         Command::Gui(args) => {
+            let data = args.flow_data.data_dir.clone();
             let options = args.monitor_options();
             let (remotes, remote_flags) = resolve_remotes(&args)?;
             let notify = arbitrated_notify_cfg(&args, UiKind::Gui);
@@ -229,11 +234,12 @@ pub fn run() -> anyhow::Result<()> {
                 remote_flags,
                 docker_auto: args.docker_auto,
             };
-            gui::run_gui_options(config, Some(options))
+            gui::run_gui_data(config, Some(options), data)
         }
         Command::Ls(args) => ls(&args),
         Command::Render(args) => render(&args),
         Command::Menubar(args) => {
+            let data = args.source.flow_data.data_dir.clone();
             if args.install_login_item {
                 #[cfg(target_os = "macos")]
                 {
@@ -291,7 +297,7 @@ pub fn run() -> anyhow::Result<()> {
                 remote_flags,
                 docker_auto: args.source.docker_auto,
             };
-            menubar::run_options(config, Some(options))
+            menubar::run_data(config, Some(options), data)
         }
         Command::Agent(args) => {
             let options = args.monitor_options();

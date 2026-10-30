@@ -1,0 +1,22 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.42s
+     Running unittests src/lib.rs (target/debug/deps/hermon-f13c5ede53e94a58)
+
+running 1 test
+test gui::tests::pipeline_tab_leaves_session_zoom_and_remains_visible ... FAILED
+
+failures:
+
+---- gui::tests::pipeline_tab_leaves_session_zoom_and_remains_visible stdout ----
+
+thread 'gui::tests::pipeline_tab_leaves_session_zoom_and_remains_visible' (95271116) panicked at crates/hermon/src/gui/mod.rs:1077:9:
+Pipelines must stay visible after a zoomed session
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    gui::tests::pipeline_tab_leaves_session_zoom_and_remains_visible
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 429 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p hermon --lib`

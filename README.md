@@ -599,6 +599,7 @@ hermon templates preview WORKFLOW TEMPLATE [--project-templates DIR]
 hermon doctor WORKFLOW --project PROJECT [--ticket TICKET] [--json]
 hermon run WORKFLOW TICKET --project PROJECT --confirm [--base BRANCH] [--start STEP]
 hermon status [RUN] [--json] [--data-dir DIR]
+hermon hub [--data-dir DIR] [--once] [--no-notify]
 hermon answer RUN TEXT | approve RUN | retry RUN STEP
 hermon override RUN STEP --reason TEXT
 hermon pause RUN | resume RUN | cancel RUN
@@ -612,8 +613,12 @@ Defaults make `hermon watch` correct with zero flags.
 Workflow intake runs doctor before creating a worktree or run. Controls and
 status accept `--data-dir`; answers and approvals are mirrored through the
 central tracker app. See [intake and CLI controls](docs/flow/intake-controls.md)
-for project configuration, environment checks and persistence. Runs queue for
-the hosting loop; menubar hosting and the pipeline UI are tracked in #124.
+for project configuration, environment checks and persistence. `hermon menubar`
+hosts queued runs; `hermon hub` runs the host in a terminal. Exactly one host
+owns each data directory. Use **v** in the TUI or **Pipelines** in the GUI to
+inspect runs and open a running step's recorded session. The three UIs also
+accept `--data-dir`. See [hosting and pipelines](docs/flow/hosting-pipelines.md)
+for alerts, locking, worker setup and the manual smoke checklist.
 
 | Flag | Default | Meaning |
 |---|---|---|

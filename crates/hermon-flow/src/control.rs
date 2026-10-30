@@ -109,7 +109,7 @@ pub fn save(dir: &Path, record: &RunRecord) -> Result<()> {
     }
     store.write_run(record)
 }
-fn read(dir: &Path, id: &str) -> Result<RunRecord> {
+pub(crate) fn read(dir: &Path, id: &str) -> Result<RunRecord> {
     let store = RunStore::new(dir)?;
     let mut record: RunRecord = store.read_run()?.context("missing run snapshot")?;
     let events = journal(dir)?;
@@ -140,7 +140,7 @@ fn read(dir: &Path, id: &str) -> Result<RunRecord> {
     }
     Ok(record)
 }
-fn directory(data: &Path, id: &str) -> Result<PathBuf> {
+pub(crate) fn directory(data: &Path, id: &str) -> Result<PathBuf> {
     identifier(id)?;
     let dir = data.join("runs").join(id);
     ensure!(
@@ -318,7 +318,7 @@ pub fn apply(data: &Path, id: &str, action: Action) -> Result<RunRecord> {
     flush_notices(&dir, &mut record).context("control recorded; tracker mirror remains pending")?;
     Ok(record)
 }
-fn request_stop(data: &Path, dir: &Path, record: &mut RunRecord) -> Result<()> {
+pub(crate) fn request_stop(data: &Path, dir: &Path, record: &mut RunRecord) -> Result<()> {
     use crate::hub::Agent;
     let attempt = record
         .run

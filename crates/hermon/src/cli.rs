@@ -17,6 +17,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Advance workflow runs in the foreground (one hub per data directory).
+    Hub(HubArgs),
+    #[command(name = "__flow-worker", hide = true)]
+    FlowWorker { directory: std::path::PathBuf },
     /// Start a workflow after confirming its base and passing doctor.
     Run(FlowRunArgs),
     /// Probe workflow bots, tracker authentication and project commands.
@@ -81,10 +85,21 @@ pub struct FlowData {
     #[arg(long, default_value_os_t = default_flow_data())]
     pub data_dir: std::path::PathBuf,
 }
-fn default_flow_data() -> std::path::PathBuf {
+pub fn default_flow_data() -> std::path::PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("hermon")
+}
+#[derive(Debug, Args)]
+pub struct HubArgs {
+    #[command(flatten)]
+    pub data: FlowData,
+    /// Reconcile once, then exit and release the hub lock.
+    #[arg(long)]
+    pub once: bool,
+    /// Disable workflow desktop banners.
+    #[arg(long)]
+    pub no_notify: bool,
 }
 #[derive(Debug, Args)]
 pub struct FlowRunArgs {
@@ -191,6 +206,8 @@ pub struct LsArgs {
 /// `--linger`). Defaults match the Python implementation's.
 #[derive(Debug, Args)]
 pub struct SourceArgs {
+    #[command(flatten)]
+    pub flow_data: FlowData,
     /// Claude Code transcript root.
     #[arg(long, default_value_t = default_claude_dir())]
     pub claude_dir: String,

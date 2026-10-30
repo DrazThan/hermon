@@ -48,6 +48,13 @@ pub fn run_options(
     config: EngineConfig,
     options: Option<crate::bots::MonitorOptions>,
 ) -> anyhow::Result<()> {
+    run_data(config, options, crate::cli::default_flow_data())
+}
+pub fn run_data(
+    config: EngineConfig,
+    options: Option<crate::bots::MonitorOptions>,
+    data: std::path::PathBuf,
+) -> anyhow::Result<()> {
     // The pidfile claims the notifier role, not merely "menubar is running":
     // a `menubar --no-notify` must leave `watch` notifying (#72).
     let pidfile = config.notify.any_enabled().then(claim_notifier).flatten();
@@ -62,7 +69,7 @@ pub fn run_options(
     let mut context = crate::bots::RosterContext::default();
     let mut fleet = Vec::new();
     let mut pending_context = None;
-    let engine = Engine::spawn_options(config, options, event_tx, cmd_rx);
+    let engine = Engine::spawn_flow(config, options, event_tx, cmd_rx, Some(data.clone()), true);
     let mut engine = Some(engine);
     let mut pidfile = pidfile;
 
@@ -131,7 +138,7 @@ pub fn run_options(
                             rows = selected_rows(&fleet, &view, &context);
                             fresh = true;
                         }
-                        ID_OPEN => open_watch(),
+                        ID_OPEN => open_watch(&data),
                         ID_QUIT => *control_flow = ControlFlow::Exit,
                         // Session and summary rows are readouts, not actions.
                         _ => {}
@@ -266,14 +273,20 @@ fn build_icon(state: IconState) -> Option<Icon> {
 /// subcommand, so it goes through AppleScript. Fire-and-forget, like
 /// [`crate::notify::deliver`]: a failure costs the user a menu click, not the
 /// menubar process.
-fn open_watch() {
+fn open_watch(data: &std::path::Path) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
+    let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let command = format!(
+        "{} watch --data-dir {}",
+        quote(&exe.to_string_lossy()),
+        quote(&data.to_string_lossy())
+    );
     let script = format!(
-        "tell application \"Terminal\" to do script \"{} watch\"\n\
+        "tell application \"Terminal\" to do script \"{}\"\n\
          tell application \"Terminal\" to activate",
-        crate::notify::applescript_escape(&exe.display().to_string())
+        crate::notify::applescript_escape(&command)
     );
     let _ = Command::new("osascript")
         .args(["-e", &script])
