@@ -42,6 +42,7 @@ pub const PANE_TICK: Duration = Duration::from_millis(300);
 /// diff — the UI is expected to redraw from it wholesale.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
+    Pipeline(Vec<crate::flow_ui::PipelineRow>),
     Context(RosterContext),
     Roster(Vec<RosterRow>),
     /// The newest Hermes API calls, refreshed with the roster.
@@ -311,7 +312,18 @@ impl Engine {
         tx: Sender<Event>,
         rx: Receiver<UiCmd>,
     ) -> JoinHandle<()> {
+        Self::spawn_flow(config, options, tx, rx, None, false)
+    }
+    pub fn spawn_flow(
+        config: EngineConfig,
+        options: Option<MonitorOptions>,
+        tx: Sender<Event>,
+        rx: Receiver<UiCmd>,
+        data: Option<std::path::PathBuf>,
+        host: bool,
+    ) -> JoinHandle<()> {
         thread::spawn(move || {
+            let mut flow = data.map(|data| crate::flow_ui::FlowFeed::new(data, host));
             let _diagnostics = crate::source::diagnostics::capture();
             let mut deck = Sources::new(
                 &config.claude_dir,
@@ -329,7 +341,7 @@ impl Engine {
                 deck = deck.with_remote(RemoteSource::new(spec.name.clone(), cmd));
             }
             let clock: Clock = Arc::new(now_secs);
-            run(&config, &mut deck, &clock, &tx, &rx);
+            run(&config, &mut deck, &clock, &tx, &rx, flow.as_mut());
         })
     }
 
@@ -356,7 +368,7 @@ impl Engine {
     ) -> JoinHandle<()> {
         thread::spawn(move || {
             let _diagnostics = crate::source::diagnostics::capture();
-            run(&config, &mut deck, &clock, &tx, &rx)
+            run(&config, &mut deck, &clock, &tx, &rx, None)
         })
     }
 }
@@ -371,6 +383,7 @@ fn run(
     clock: &Clock,
     tx: &Sender<Event>,
     rx: &Receiver<UiCmd>,
+    mut flow: Option<&mut crate::flow_ui::FlowFeed>,
 ) {
     let mut tracked: HashMap<String, Tracked> = HashMap::new();
     // Full session ids by roster key, refreshed each scan: a key carries
@@ -402,6 +415,22 @@ fn run(
 
     loop {
         if Instant::now() >= next_scan {
+            if let Some(flow) = flow.as_mut() {
+                match flow.poll(clock().max(0.0) as u64, &config.notify, hist.is_muted()) {
+                    Ok((rows, alerts)) => {
+                        if tx.send(Event::Pipeline(rows)).is_err() {
+                            return;
+                        }
+                        for alert in alerts {
+                            notify::deliver(&notifier, "hermon", &alert.label, &alert.detail);
+                            if tx.send(Event::Alert(alert)).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(error) => eprintln!("hermon pipeline: {error:#}"),
+                }
+            }
             if scan(
                 config,
                 deck,

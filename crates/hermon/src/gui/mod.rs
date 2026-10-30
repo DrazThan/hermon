@@ -64,6 +64,13 @@ pub fn run_gui_options(
     config: EngineConfig,
     options: Option<MonitorOptions>,
 ) -> anyhow::Result<()> {
+    run_gui_data(config, options, crate::cli::default_flow_data())
+}
+pub fn run_gui_data(
+    config: EngineConfig,
+    options: Option<MonitorOptions>,
+    data: std::path::PathBuf,
+) -> anyhow::Result<()> {
     // The store paths the engine is watching, for the empty state — taken
     // before `config` moves into the engine below.
     let paths = vec![
@@ -80,7 +87,7 @@ pub fn run_gui_options(
     let (event_tx, event_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let initial_bot = options.as_ref().and_then(|o| o.bot.clone());
-    let engine = Engine::spawn_options(config, options, event_tx, cmd_rx);
+    let engine = Engine::spawn_flow(config, options, event_tx, cmd_rx, Some(data), false);
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -161,6 +168,10 @@ fn wake(events: Receiver<Event>, ctx: egui::Context) -> Receiver<Event> {
 /// channel — [`App::apply_event`] is the whole update path, so tests drive
 /// it without a window.
 pub struct App {
+    pub pipelines: Vec<crate::flow_ui::PipelineRow>,
+    pub show_pipeline: bool,
+    pipeline_selected: Option<(String, String)>,
+    pipeline_notice: String,
     pub roster: Vec<RosterRow>,
     pub context: RosterContext,
     pending_context: Option<RosterContext>,
@@ -224,6 +235,10 @@ impl App {
         max_panes: usize,
     ) -> Self {
         App {
+            pipelines: vec![],
+            show_pipeline: false,
+            pipeline_selected: None,
+            pipeline_notice: String::new(),
             roster: Vec::new(),
             context: RosterContext::default(),
             pending_context: None,
@@ -303,6 +318,7 @@ impl App {
 
     pub fn apply_event(&mut self, event: Event) {
         match event {
+            Event::Pipeline(rows) => self.pipelines = rows,
             Event::Context(context) => self.pending_context = Some(context),
             Event::Roster(rows) => {
                 let mut context = self.pending_context.take().unwrap_or_default();
@@ -379,6 +395,9 @@ impl App {
     /// grid mode every session with a slot, capped at the `--max-panes` the
     /// engine would keep open anyway.
     fn wanted_panes(&self) -> Vec<String> {
+        if self.show_pipeline {
+            return self.selected_key().into_iter().collect();
+        }
         if !self.grid {
             return self.selected_key().into_iter().collect();
         }
@@ -432,6 +451,33 @@ impl App {
         .rows
         .into_iter()
         .find(|row| row.id == id)
+    }
+    pub fn select_pipeline(&mut self, index: usize) -> bool {
+        let Some(row) = self.pipelines.get(index) else {
+            return false;
+        };
+        self.pipeline_selected = Some((row.run_id.clone(), row.step.clone()));
+        let Some(key) = crate::flow_ui::open_session(row, &self.roster) else {
+            self.pipeline_notice =
+                "Session unavailable: waiting for a recorded running session in the roster".into();
+            self.selected_id = None;
+            self.sync_panes();
+            return false;
+        };
+        self.selected_id = self
+            .roster
+            .iter()
+            .find(|r| routing_key(r) == key)
+            .map(|r| r.id.clone());
+        self.view.clear();
+        self.selected_store = None;
+        self.filter_input.clear();
+        self.filter_error = None;
+        self.grid = false;
+        self.zoomed = false;
+        self.pipeline_notice.clear();
+        self.sync_panes();
+        true
     }
 
     fn selected_key(&self) -> Option<String> {
@@ -531,12 +577,18 @@ impl App {
     /// The body: the fleet table with the pane area under it, or a single
     /// zoomed pane with the window to itself.
     fn draw(&mut self, ui: &mut egui::Ui) {
-        if self.selected_row().is_none() {
+        egui::Panel::top("hermon-flow-tabs").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.show_pipeline, false, "Sessions");
+                ui.selectable_value(&mut self.show_pipeline, true, "Pipelines");
+            });
+        });
+        if !self.show_pipeline && self.selected_row().is_none() {
             self.select_at(0);
         }
         roster::render_warnings(ui, &self.context);
         self.handle_keys(ui.ctx());
-        if self.zoomed && self.selected_row().is_some() {
+        if !self.show_pipeline && self.zoomed && self.selected_row().is_some() {
             self.draw_panes(ui);
         } else {
             self.zoomed = false;
@@ -545,9 +597,40 @@ impl App {
                 .default_size(PANE_AREA_HEIGHT)
                 .min_size(PANE_AREA_MIN)
                 .show(ui, |ui| self.draw_panes(ui));
-            egui::CentralPanel::default().show(ui, |ui| roster::render(ui, self));
+            egui::CentralPanel::default().show(ui, |ui| {
+                if self.show_pipeline {
+                    self.draw_pipeline(ui);
+                } else {
+                    roster::render(ui, self);
+                }
+            });
         }
         self.sync_panes();
+    }
+    fn draw_pipeline(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Workflow pipelines");
+        ui.label("Run / step · bot · attempt · age · state · last block");
+        if self.pipelines.is_empty() {
+            ui.label("No workflow runs. Start one with hermon run.");
+        }
+        let mut clicked = None;
+        egui::ScrollArea::both().show(ui, |ui| {
+            for (index, row) in self.pipelines.iter().enumerate() {
+                let selected = self
+                    .pipeline_selected
+                    .as_ref()
+                    .is_some_and(|(id, step)| id == &row.run_id && step == &row.step);
+                if ui.selectable_label(selected, row.label()).clicked() {
+                    clicked = Some(index);
+                }
+            }
+        });
+        if let Some(index) = clicked {
+            self.select_pipeline(index);
+        }
+        if !self.pipeline_notice.is_empty() {
+            ui.label(&self.pipeline_notice);
+        }
     }
 
     /// The pane area: one pane for the selected session, or a tile per open
@@ -981,6 +1064,20 @@ mod tests {
         app.zoomed = true;
         pass(&ctx, |ui| app.draw(ui));
         assert!(!app.zoomed);
+    }
+
+    #[test]
+    fn pipeline_tab_leaves_session_zoom_and_remains_visible() {
+        let (_tx, mut app) = app();
+        app.apply_event(Event::Roster(vec![row("C:aaa", Liveness::Live)]));
+        app.selected_id = Some("C:aaa-id".into());
+        app.zoomed = true;
+        app.show_pipeline = true;
+        pass(&egui::Context::default(), |ui| app.draw(ui));
+        assert!(
+            !app.zoomed,
+            "Pipelines must stay visible after a zoomed session"
+        );
     }
 
     /// `Enter` zooms the selected pane and `Esc` comes back, through the

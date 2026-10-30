@@ -56,7 +56,7 @@ pub enum MenuRow {
 }
 
 #[cfg(target_os = "macos")]
-pub use mac::{run, run_options};
+pub use mac::{run, run_data, run_options};
 
 /// Non-macOS builds still expose the `menubar` subcommand (so `cargo build`
 /// succeeds everywhere) but refuse to run it — no tray backend exists there
@@ -72,6 +72,14 @@ pub fn run_options(
     _options: Option<crate::bots::MonitorOptions>,
 ) -> anyhow::Result<()> {
     run(config)
+}
+#[cfg(not(target_os = "macos"))]
+pub fn run_data(
+    config: crate::config::EngineConfig,
+    options: Option<crate::bots::MonitorOptions>,
+    _data: std::path::PathBuf,
+) -> anyhow::Result<()> {
+    run_options(config, options)
 }
 
 /// The status item's title: the live count always, `⏸ n` / `⚠ n` appended

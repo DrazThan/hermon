@@ -1,0 +1,50 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running tests/flow_host.rs (target/debug/deps/flow_host-334b4030497aa0e3)
+
+running 3 tests
+test foreground_hub_exposes_documented_control_flags ... FAILED
+test foreground_hub_once_accepts_empty_data_directory ... FAILED
+test foreground_hub_advances_queued_run_with_project_environment ... FAILED
+
+failures:
+
+---- foreground_hub_exposes_documented_control_flags stdout ----
+
+thread 'foreground_hub_exposes_documented_control_flags' (95210975) panicked at crates/hermon/tests/flow_host.rs:221:5:
+error: unrecognized subcommand 'hub'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- foreground_hub_once_accepts_empty_data_directory stdout ----
+
+thread 'foreground_hub_once_accepts_empty_data_directory' (95210976) panicked at crates/hermon/tests/flow_host.rs:198:5:
+error: unrecognized subcommand 'hub'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- foreground_hub_advances_queued_run_with_project_environment stdout ----
+
+thread 'foreground_hub_advances_queued_run_with_project_environment' (95210974) panicked at crates/hermon/tests/flow_host.rs:148:9:
+error: unrecognized subcommand 'hub'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+
+failures:
+    foreground_hub_advances_queued_run_with_project_environment
+    foreground_hub_exposes_documented_control_flags
+    foreground_hub_once_accepts_empty_data_directory
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.50s
+
+error: test failed, to rerun pass `-p hermon --test flow_host`

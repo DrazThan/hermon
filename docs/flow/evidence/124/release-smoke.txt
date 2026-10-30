@@ -1,0 +1,2 @@
+hermon hub --once --no-notify --data-dir <isolated temporary directory>
+exit: 0

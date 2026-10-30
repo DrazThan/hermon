@@ -1,0 +1,10 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.63s
+     Running tests/flow_host_isolation.rs (target/debug/deps/flow_host_isolation-c1feff51d0765291)
+
+running 1 test
+test invalid_run_lock_cannot_starve_other_runs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+

@@ -1,0 +1,30 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.71s
+     Running tests/flow_pipeline_visual.rs (target/debug/deps/flow_pipeline_visual-29688d307c5e4359)
+
+running 3 tests
+test tui_unavailable_pipeline_selection_does_not_show_unrelated_session ... FAILED
+test gui_unavailable_pipeline_selection_clears_unrelated_session_pane ... FAILED
+test tui_pipeline_keyboard_view_renders_run_step_bot_attempt_age_and_block ... ok
+
+failures:
+
+---- tui_unavailable_pipeline_selection_does_not_show_unrelated_session stdout ----
+
+thread 'tui_unavailable_pipeline_selection_does_not_show_unrelated_session' (95258473) panicked at crates/hermon/tests/flow_pipeline_visual.rs:90:5:
+unavailable pipeline receipt must not display a different session
+
+---- gui_unavailable_pipeline_selection_clears_unrelated_session_pane stdout ----
+
+thread 'gui_unavailable_pipeline_selection_clears_unrelated_session_pane' (95258471) panicked at crates/hermon/tests/flow_pipeline_visual.rs:118:5:
+unavailable pipeline receipt must not display a different session
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    gui_unavailable_pipeline_selection_clears_unrelated_session_pane
+    tui_unavailable_pipeline_selection_does_not_show_unrelated_session
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon --test flow_pipeline_visual`

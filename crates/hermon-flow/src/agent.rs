@@ -83,6 +83,8 @@ pub struct ProcessAgent {
     bots: BTreeMap<String, BotConfig>,
     timeout: Duration,
     resumes: BTreeMap<String, String>,
+    env: Option<BTreeMap<String, String>>,
+    worker_subcommand: Option<String>,
 }
 impl ProcessAgent {
     pub fn new(
@@ -103,7 +105,19 @@ impl ProcessAgent {
             bots,
             timeout,
             resumes: BTreeMap::new(),
+            env: None,
+            worker_subcommand: None,
         })
+    }
+    /// Complete host-configured child environment. It is never written to disk.
+    pub fn with_env(mut self, env: BTreeMap<String, String>) -> Self {
+        self.env = Some(env);
+        self
+    }
+    /// Use the installed hermon executable's embedded supervisor.
+    pub fn with_worker_subcommand(mut self, command: &str) -> Self {
+        self.worker_subcommand = Some(command.into());
+        self
     }
     fn directory(&self, request: &StartRequest) -> Result<PathBuf> {
         for part in [&request.run_id, &request.step] {
@@ -192,7 +206,11 @@ impl ProcessAgent {
             .iter()
             .map(|arg| substitute(arg, &task, &self.workdir, session.map(String::as_str)))
             .collect::<Result<_>>()?;
-        argv[0] = executable(&argv[0], &self.workdir)?
+        let path = self
+            .env
+            .as_ref()
+            .map(|env| env.get("PATH").map(String::as_str).unwrap_or(""));
+        argv[0] = executable_on_path(&argv[0], &self.workdir, path)?
             .to_str()
             .context("executable path must be UTF-8")?
             .to_owned();
@@ -207,6 +225,12 @@ impl ProcessAgent {
             created_ms: now_ms(),
         };
         let mut command = Command::new(&self.worker);
+        if let Some(subcommand) = &self.worker_subcommand {
+            command.arg(subcommand);
+        }
+        if let Some(env) = &self.env {
+            command.env_clear().envs(env);
+        }
         command
             .arg(&directory)
             .stdin(Stdio::null())
@@ -492,12 +516,15 @@ pub(crate) fn substitute(
     output.push_str(rest);
     Ok(output)
 }
-fn executable(program: &str, workdir: &Path) -> Result<PathBuf> {
+fn executable_on_path(program: &str, workdir: &Path, configured: Option<&str>) -> Result<PathBuf> {
+    let path = configured
+        .map(std::ffi::OsString::from)
+        .unwrap_or_else(|| std::env::var_os("PATH").unwrap_or_default());
     let candidates: Vec<PathBuf> =
         if Path::new(program).components().count() > 1 || Path::new(program).is_absolute() {
             vec![workdir.join(program)]
         } else {
-            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            std::env::split_paths(&path)
                 .map(|p| workdir.join(p).join(program))
                 .collect()
         };
@@ -689,11 +716,15 @@ impl Drop for OwnedChild {
 }
 #[doc(hidden)]
 pub fn worker_main() -> Result<()> {
-    let directory = fs::canonicalize(
-        std::env::args_os()
+    worker_main_at(Path::new(
+        &std::env::args_os()
             .nth(1)
             .context("missing attempt directory")?,
-    )?;
+    ))
+}
+#[doc(hidden)]
+pub fn worker_main_at(directory: &Path) -> Result<()> {
+    let directory = fs::canonicalize(directory)?;
     let _lock =
         lock(&directory.join("worker.lock"), true)?.context("worker already owns attempt")?;
     ensure!(

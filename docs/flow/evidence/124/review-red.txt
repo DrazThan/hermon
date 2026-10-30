@@ -1,0 +1,50 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests/flow_pipeline_review.rs (target/debug/deps/flow_pipeline_review-f495755214829d89)
+
+running 7 tests
+test pipeline_refuses_ambiguous_local_vendor_sessions ... ok
+test malformed_qualified_roster_id_is_not_navigation_authority ... FAILED
+test pipeline_opens_qualified_local_vendor_session ... FAILED
+test pipeline_never_routes_local_run_to_remote_store ... FAILED
+test both_uis_open_qualified_pipeline_session ... FAILED
+test busy_run_snapshot_does_not_block_other_run_or_transcript_polling ... ok
+test host_isolates_broken_run_and_does_not_dispatch_paused_or_cancelled ... ok
+
+failures:
+
+---- malformed_qualified_roster_id_is_not_navigation_authority stdout ----
+
+thread 'malformed_qualified_roster_id_is_not_navigation_authority' (95248252) panicked at crates/hermon/tests/flow_pipeline_review.rs:101:5:
+assertion failed: open_session(&receipt, &[invalid]).is_none()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- pipeline_opens_qualified_local_vendor_session stdout ----
+
+thread 'pipeline_opens_qualified_local_vendor_session' (95248254) panicked at crates/hermon/tests/flow_pipeline_review.rs:58:5:
+assertion `left == right` failed
+  left: None
+ right: Some("hr1::X:6c6f63616c2d636f6465782d73746f7265:6f70617175652d73657373696f6e")
+
+---- pipeline_never_routes_local_run_to_remote_store stdout ----
+
+thread 'pipeline_never_routes_local_run_to_remote_store' (95248253) panicked at crates/hermon/tests/flow_pipeline_review.rs:83:5:
+assertion `left == right` failed
+  left: None
+ right: Some("hr1::X:6c6f63616c2d73746f7265:6f70617175652d73657373696f6e")
+
+---- both_uis_open_qualified_pipeline_session stdout ----
+
+thread 'both_uis_open_qualified_pipeline_session' (95248249) panicked at crates/hermon/tests/flow_pipeline_review.rs:113:5:
+assertion failed: tui.select_pipeline(0)
+
+
+failures:
+    both_uis_open_qualified_pipeline_session
+    malformed_qualified_roster_id_is_not_navigation_authority
+    pipeline_never_routes_local_run_to_remote_store
+    pipeline_opens_qualified_local_vendor_session
+
+test result: FAILED. 3 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+error: test failed, to rerun pass `-p hermon --test flow_pipeline_review`

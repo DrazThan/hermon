@@ -7,6 +7,48 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub fn hub(args: crate::cli::HubArgs) -> Result<()> {
+    let mut host =
+        hermon_flow::host::Host::acquire(&args.data.data_dir, &std::env::current_exe()?)?
+            .ok_or_else(|| {
+                anyhow::anyhow!("hub already running for {}", args.data.data_dir.display())
+            })?
+            .embedded_worker();
+    let notifier = crate::notify::probe();
+    let mut alerts = crate::flow_ui::FlowAlerts::default();
+    let runtime = crate::arbitration::runtime_dir();
+    let flag = if args.no_notify {
+        crate::arbitration::NotifyFlag::ForceOff
+    } else {
+        crate::arbitration::NotifyFlag::Default
+    };
+    // The terminal host shares watch's notifier priority. Recheck each tick so
+    // a menubar started later can take over banners while this host keeps runs
+    // moving. The claim also expires automatically if this process crashes.
+    let _claim = runtime
+        .as_ref()
+        .filter(|_| !args.no_notify)
+        .and_then(|dir| crate::arbitration::claim(dir, crate::arbitration::UiKind::Watch).ok());
+    loop {
+        let decision =
+            crate::arbitration::decide(runtime.as_deref(), crate::arbitration::UiKind::Watch, flag);
+        let cfg = if decision.notify {
+            crate::notify::NotifyCfg::default()
+        } else {
+            crate::notify::NotifyCfg::default().silenced()
+        };
+        for record in host.tick()? {
+            for alert in alerts.poll(&record, hermon_flow::host::now(), &cfg, false)? {
+                crate::notify::deliver(&notifier, "hermon", &alert.label, &alert.detail);
+            }
+        }
+        if args.once {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
 fn workflow_path(path: &Path) -> std::path::PathBuf {
     if path.is_dir() {
         path.join("workflow.yaml")

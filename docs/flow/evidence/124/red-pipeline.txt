@@ -1,0 +1,46 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+error[E0432]: unresolved import `hermon::flow_ui`
+ --> crates/hermon/tests/flow_pipeline.rs:4:5
+  |
+4 |     flow_ui::{FlowAlerts, HubLock, open_session, pipeline_rows},
+  |     ^^^^^^^ could not find `flow_ui` in `hermon`
+
+error[E0599]: no variant, associated function, or constant named `Pipeline` found for enum `hermon::engine::Event` in the current scope
+   --> crates/hermon/tests/flow_pipeline.rs:227:28
+    |
+227 |     tui.apply_event(Event::Pipeline(rows.clone()));
+    |                            ^^^^^^^^ variant, associated function, or constant not found in `hermon::engine::Event`
+
+error[E0599]: no method named `select_pipeline` found for struct `hermon::ui::App` in the current scope
+   --> crates/hermon/tests/flow_pipeline.rs:228:17
+    |
+228 |     assert!(tui.select_pipeline(index));
+    |                 ^^^^^^^^^^^^^^^ method not found in `hermon::ui::App`
+
+error[E0599]: no method named `select_pipeline` found for struct `hermon::ui::App` in the current scope
+   --> crates/hermon/tests/flow_pipeline.rs:234:18
+    |
+234 |     assert!(!tui.select_pipeline(rows.len()));
+    |                  ^^^^^^^^^^^^^^^ method not found in `hermon::ui::App`
+
+error[E0599]: no variant, associated function, or constant named `Pipeline` found for enum `hermon::engine::Event` in the current scope
+   --> crates/hermon/tests/flow_pipeline.rs:240:28
+    |
+240 |     gui.apply_event(Event::Pipeline(rows));
+    |                            ^^^^^^^^ variant, associated function, or constant not found in `hermon::engine::Event`
+
+error[E0599]: no method named `select_pipeline` found for struct `hermon::gui::App` in the current scope
+   --> crates/hermon/tests/flow_pipeline.rs:241:17
+    |
+241 |     assert!(gui.select_pipeline(index));
+    |                 ^^^^^^^^^^^^^^^ method not found in `hermon::gui::App`
+
+error[E0599]: no method named `select_pipeline` found for struct `hermon::gui::App` in the current scope
+   --> crates/hermon/tests/flow_pipeline.rs:248:18
+    |
+248 |     assert!(!gui.select_pipeline(usize::MAX));
+    |                  ^^^^^^^^^^^^^^^ method not found in `hermon::gui::App`
+
+Some errors have detailed explanations: E0432, E0599.
+For more information about an error, try `rustc --explain E0432`.
+error: could not compile `hermon` (test "flow_pipeline") due to 7 previous errors
