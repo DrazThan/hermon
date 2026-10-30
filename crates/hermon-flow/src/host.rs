@@ -347,7 +347,7 @@ impl PreparedAgent<'_> {
             }
         }
         let mut task = format!(
-            "# {} / {}\n\nTicket: {}\nBot: {}\nAttempt: {}\nWorktree: {}\n\nComplete this workflow step. Commit repository changes before reporting done. Write result.json to {} with all keys: {{\"schema\":1,\"status\":\"done\",\"summary\":\"...\",\"artifacts\":[],\"block\":null,\"verdict\":null,\"questions\":[]}}. For a block use status block and block {{kind,reason}}. Review verdict must be clean or changes_needed. Save produced artifacts beside result.json.\n\nProduces: {:?}\nChecks: {:?}\n",
+            "# {} / {}\n\nTicket: {}\nBot: {}\nAttempt: {}\nWorktree: {}\n\nComplete this workflow step. Commit repository changes before reporting done. Write result.json to {} with all keys: {{\"schema\":1,\"status\":\"done\",\"summary\":\"...\",\"artifacts\":[],\"block\":null,\"verdict\":null,\"questions\":[]}}. For a block use status block and block {{kind,reason}}. The block kind must be one of: owner_question, test_defect, capability, transient, scope_change, unknown. Review verdict must be clean or changes_needed. Save produced artifacts beside result.json.\n\nProduces: {:?}\nChecks: {:?}\n",
             self.record.run.id,
             request.step,
             self.record.ticket,
