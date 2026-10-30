@@ -1,0 +1,106 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/flow_cli_regressions.rs (target/debug/deps/flow_cli_regressions-e0aff4a9844d7650)
+
+running 8 tests
+test paused_core_does_not_dispatch_a_new_worker ... ok
+test cancelled_core_reconciles_owned_worker_settlement_without_accepting_late_success ... FAILED
+test doctor_rejects_required_workflow_command_missing_from_project ... FAILED
+test doctor_checks_configured_code_host_repository_access ... FAILED
+test status_replays_committed_control_when_snapshot_rename_was_lost ... FAILED
+test status_discards_torn_tail_without_losing_committed_control ... ok
+test cancel_records_intent_without_stopping_a_foreign_attempt_handle ... ok
+test failed_answer_mirror_is_durable_and_retried_without_reapplying_answer ... ok
+
+failures:
+
+---- cancelled_core_reconciles_owned_worker_settlement_without_accepting_late_success stdout ----
+
+thread 'cancelled_core_reconciles_owned_worker_settlement_without_accepting_late_success' (95048975) panicked at crates/hermon/tests/flow_cli_regressions.rs:331:5:
+assertion `left == right` failed: cancelled handles still need settlement reconciliation
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- doctor_rejects_required_workflow_command_missing_from_project stdout ----
+
+thread 'doctor_rejects_required_workflow_command_missing_from_project' (95048977) panicked at crates/hermon/tests/flow_cli_regressions.rs:43:5:
+doctor passed without a command required by the workflow: {
+  "schema": 1,
+  "checks": [
+    {
+      "name": "bot reviewer",
+      "ok": true,
+      "fix": null
+    },
+    {
+      "name": "bot worker",
+      "ok": true,
+      "fix": null
+    },
+    {
+      "name": "gh auth",
+      "ok": true,
+      "fix": null
+    },
+    {
+      "name": "tracker auth",
+      "ok": true,
+      "fix": null
+    }
+  ]
+}
+
+
+---- doctor_checks_configured_code_host_repository_access stdout ----
+
+thread 'doctor_checks_configured_code_host_repository_access' (95048976) panicked at crates/hermon/tests/flow_cli_regressions.rs:76:5:
+authenticated gh cannot access the configured repository: {
+  "schema": 1,
+  "checks": [
+    {
+      "name": "bot reviewer",
+      "ok": true,
+      "fix": null
+    },
+    {
+      "name": "bot worker",
+      "ok": true,
+      "fix": null
+    },
+    {
+      "name": "command project_check",
+      "ok": true,
+      "fix": null
+    },
+    {
+      "name": "gh auth",
+      "ok": true,
+      "fix": null
+    },
+    {
+      "name": "tracker auth",
+      "ok": true,
+      "fix": null
+    }
+  ]
+}
+
+
+---- status_replays_committed_control_when_snapshot_rename_was_lost stdout ----
+
+thread 'status_replays_committed_control_when_snapshot_rename_was_lost' (95048981) panicked at crates/hermon/tests/flow_cli_regressions.rs:101:5:
+assertion `left == right` failed
+  left: Bool(false)
+ right: true
+
+
+failures:
+    cancelled_core_reconciles_owned_worker_settlement_without_accepting_late_success
+    doctor_checks_configured_code_host_repository_access
+    doctor_rejects_required_workflow_command_missing_from_project
+    status_replays_committed_control_when_snapshot_rename_was_lost
+
+test result: FAILED. 4 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.92s
+
+error: test failed, to rerun pass `-p hermon --test flow_cli_regressions`
