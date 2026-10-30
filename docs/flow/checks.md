@@ -21,7 +21,7 @@ hub can then call `check` and `evidence` through its existing `Git` trait.
 
 | Check | Accepted result |
 | --- | --- |
-| `only_paths_changed:<set>` | Every committed path changed from base to HEAD belongs to the configured named glob set. |
+| `only_paths_changed:<set>` | Every committed path changed from the selected check base to HEAD belongs to the configured named glob set. Initial RED uses intake base; a hosted superseding RED uses its recorded attempt-start commit. |
 | `frozen_unchanged:<tag>` | The supplied evidence reference belongs to this ticket/base, is an ancestor of HEAD, and all paths in its frozen RED delta remain unchanged. |
 | `lint` | The named `lint` command exits zero. |
 | `tests_fail` | The named `test` command exits nonzero, with a valid report identifying every expected new failing test. |
@@ -35,8 +35,12 @@ components. For example, `**/*.test.*` includes root and nested tests, and
 traversal, backslashes and bracket character classes are unsupported and rejected.
 Renames include both the removed and added paths. NUL-separated git output
 preserves spaces, newlines and pathspec metacharacters in filenames; paths must
-be UTF-8. Frozen paths are the complete base-to-RED delta, including deletions,
-and are verified against the tag's actual commit before use.
+be UTF-8. Hosted RED corrections snapshot their starting commit before dispatch, so prior
+GREEN production changes do not count as test-writer edits. Their superseding
+freeze contains the accumulated intake-to-RED test paths, including deletions,
+filtered by the recorded named path sets. Those sets and the complete filtered
+delta are checked against the project and tag commit before use. Older notes
+without named sets retain complete base-to-RED delta verification.
 
 Each `CheckCommand` supplies an argv vector and a positive `timeout_seconds`.
 There is no implicit shell; a project that needs one must explicitly configure
@@ -69,6 +73,11 @@ Set `CheckCommand.report` for the `test` command:
   Compiler errors alone do not
   establish RED. IDs must be unique across the reported test targets; use a
   JSON reporter with qualified IDs when target names would be ambiguous.
+
+- `VitestJson`: the complete JSON reporter document on stdout, bounded to
+  16 MiB. Assertion `fullName` values and passed/failed/pending/todo counts must
+  agree with the summary. Real Vitest `skipped` statuses count as pending/ignored.
+  Suite, collection and runtime errors cannot establish behavioral RED.
 
 `tests_fail` rejects empty expectations, expected new tests already present in
 the baseline failure set, missing expected failures, missing/invalid reports,

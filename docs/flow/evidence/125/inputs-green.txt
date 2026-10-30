@@ -1,0 +1,11 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.12s
+     Running tests/flow_inputs.rs (target/debug/deps/flow_inputs-1c687754495f0f16)
+
+running 2 tests
+test accepted_artifact_reaches_successor_in_same_reconciliation ... ok
+test successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.72s
+

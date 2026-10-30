@@ -84,17 +84,22 @@ the attempt's `result.json`; inputs cannot escape that attempt directory. The
 host uses the intake base/branch for git checks and PR publication. The owner
 merge gate continues to require observed merge ancestry; the host never merges.
 
-For `tests_fail`, the hosting adapter reads trusted new-test expectations from
-`runs/<id>/context/test-expectations.json`:
+For `tests_fail`, workflows can declare a planner-produced
+`test-expectations.json`. The host reads it from the planner attempt accepted by
+the hub, never from a newer unaccepted directory or the RED worker's result.
+The shipped SDLC pack uses this route so the owner need not edit run state.
+Older workflows without that output retain the trusted
+`runs/<id>/context/test-expectations.json` binding:
 
 ```json
 {"new_tests":["module::new_acceptance_case"],"baseline_failures":[]}
 ```
 
 These expectations must be supplied independently of the result being checked.
-The `test` project command currently uses Rust libtest report parsing; missing
-expectations or an incompatible report cannot satisfy RED. The pilot/config
-pack work is tracked separately by #125.
+The `test` project command defaults to Rust libtest report parsing and accepts
+an explicit `report: VitestJson` or `report: Json` override. Missing expectations
+or an incompatible report cannot satisfy RED. See the
+[SDLC pack and guided pilot](sdlc-pilot.md) for RummyRune's invocation and limits.
 
 ## Validation
 

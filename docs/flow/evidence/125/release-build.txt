@@ -1,0 +1,2 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `release` profile [optimized] target(s) in 1m 05s

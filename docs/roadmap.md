@@ -24,10 +24,15 @@ Full detail (issues, acceptance criteria) lives on the
 | [M8 — menu bar launch-at-login](https://github.com/DrazThan/hermon/milestone/8) | ✅ done | `--install-login-item` / `--uninstall-login-item` flags on `hermon menubar` to register with launchd ([#73](https://github.com/DrazThan/hermon/issues/73)); formula update, README docs. |
 | [M9 — Hermon.app: bundle, icon, release CI, brew cask](https://github.com/DrazThan/hermon/milestone/9) | ✅ done | GUI shell (`hermon gui`, [#74](https://github.com/DrazThan/hermon/issues/74)–[#77](https://github.com/DrazThan/hermon/issues/77)) ships as `Hermon.app`: `.icns` from the repo logo, `cargo-bundle` producing a Dock app that launches `gui`, release CI attaching a zipped bundle, `Casks/hermon-app.rb` in the tap alongside the CLI formula ([#78](https://github.com/DrazThan/hermon/issues/78)). Unsigned for now — README documents the right-click-open first launch. |
 | [M10 — remote agents: containers, hosts](https://github.com/DrazThan/hermon/milestone/10) | ✅ done | `hermon agent` streams sessions over stdio to a host `hermon` ([#88](https://github.com/DrazThan/hermon/issues/88)–[#89](https://github.com/DrazThan/hermon/issues/89)); host-side `RemoteSource` treats the stream as untrusted input — framed, capped, sanitized ([#90](https://github.com/DrazThan/hermon/issues/90), [#95](https://github.com/DrazThan/hermon/issues/95)); `--remote docker:`/`ssh:`/`cmd:` and `--docker-auto` label discovery attach one ([#91](https://github.com/DrazThan/hermon/issues/91), [#92](https://github.com/DrazThan/hermon/issues/92)); release CI cross-compiles static `x86_64`/`aarch64-unknown-linux-musl` agent binaries and attaches them to the release, README documents the architecture, transports, version/clock-skew UX, and security posture ([#93](https://github.com/DrazThan/hermon/issues/93)). |
+| [M11 — bot pipelines](https://github.com/DrazThan/hermon/milestone/11) | 🚧 in progress | [Plan #114](https://github.com/DrazThan/hermon/issues/114): workspace split, strict YAML workflows, durable hub, owned process supervision, git checks, central Linear app, GitHub PRs, intake/controls and pipeline views ([#115](https://github.com/DrazThan/hermon/issues/115)–[#124](https://github.com/DrazThan/hermon/issues/124)). [Slice 10 #125](https://github.com/DrazThan/hermon/issues/125) ships the SDLC pack and RummyRune config. Profile migration and controller pause are owner-approved; the guided live pilot and post-owner-merge Docs acceptance remain pending. |
 
 ## Sequencing notes
 
-- Every milestone is closed. M8 brings launch-at-login support to the menu bar
+- M1–M10 are closed. M11 adds opt-in workflow execution alongside monitoring;
+  it remains open until the guided RummyRune pilot records its live gates and
+  owner merge/Docs outcome. The shipped Hermes profile bindings retain the
+  cancellation capability gate; fixture success does not waive it.
+- M8 brings launch-at-login support to the menu bar
   via `--install-login-item` / `--uninstall-login-item`, shipping with a formula
   update in the tap and README documentation. M9 closes out the desktop app:
   `Hermon.app` wraps the M8-era `hermon gui` window in a proper macOS bundle,

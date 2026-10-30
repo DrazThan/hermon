@@ -1,0 +1,69 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running tests/flow_block_reason.rs (target/debug/deps/flow_block_reason-7737dd423c8c8e9b)
+
+running 1 test
+test routed_test_defect_delivers_exact_green_block_reason_to_red_fix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.98s
+
+     Running tests/flow_inputs.rs (target/debug/deps/flow_inputs-1c687754495f0f16)
+
+running 2 tests
+test accepted_artifact_reaches_successor_in_same_reconciliation ... ok
+test successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.69s
+
+     Running tests/flow_publication.rs (target/debug/deps/flow_publication-3b1bcf7cc8fcb9ef)
+
+running 2 tests
+test final_docs_completion_publishes_one_central_outcome_after_restart ... ok
+test owner_go_comment_contains_accepted_published_plan_without_owner_nudge ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.65s
+
+     Running tests/flow_red_fix.rs (target/debug/deps/flow_red_fix-65caf9ee1acab509)
+
+running 1 test
+test test_correction_uses_own_delta_and_refreezes_only_tests_after_partial_green ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.95s
+
+     Running tests/flow_roles.rs (target/debug/deps/flow_roles-0a69f0cc4d8234b7)
+
+running 3 tests
+test intake_rejects_unreadable_role_before_allocating_run ... ok
+test intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit ... ok
+test host_rejects_tampered_role_snapshot_before_dispatch ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.53s
+
+     Running tests/flow_vitest.rs (target/debug/deps/flow_vitest-e73d25fc86c74929)
+
+running 3 tests
+test newer_unaccepted_plan_directory_cannot_replace_accepted_test_expectations ... ok
+test accepted_plan_test_expectations_drive_vitest_red_without_manual_run_edits ... ok
+test planner_expected_ids_cannot_be_replaced_by_unrelated_vitest_failure ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.10s
+
+     Running tests/flow_vitest_errors.rs (target/debug/deps/flow_vitest_errors-df347896663a1a0f)
+
+running 7 tests
+test vitest_success_exit_cannot_pass_red_even_when_json_contains_failures ... ok
+test vitest_failed_suite_without_failed_assertions_cannot_pass_red ... ok
+test vitest_suite_error_cannot_pass_red_with_an_expected_failed_assertion ... ok
+test vitest_failure_named_only_in_summary_cannot_pass_red ... ok
+test vitest_pending_and_todo_counts_survive_into_red_evidence ... ok
+test vitest_baseline_failure_cannot_be_reclassified_as_new_red ... ok
+test vitest_inconsistent_assertion_counts_cannot_pass_red ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.91s
+
+     Running tests/flow_vitest_skipped.rs (target/debug/deps/flow_vitest_skipped-902700f0ce2943c5)
+
+running 1 test
+test real_vitest_skipped_status_counts_as_pending_ignored_evidence ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.90s
+

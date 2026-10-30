@@ -1,0 +1,54 @@
+{
+  "owner_approval": "2026-10-29: Approve all five profile revisions and cron pause",
+  "profiles": [
+    {
+      "profile": "sdlc-planner",
+      "target": "/Users/taloz/.hermes/profiles/sdlc-planner/skills/sdlc/sdlc-planner/SKILL.md",
+      "backup": "/Users/taloz/.hermes/backups/hermon-125-2026-10-29/sdlc-planner/SKILL.md",
+      "before_sha256": "1a5ee453c40f59332e94a949db3c9dbcaed147e7f589fde626bdeada693ec56d",
+      "after_sha256": "37cc12fe9cbf3b4251e937382d557cc8fb4851b020ff5fd2c20fd04d480cd522"
+    },
+    {
+      "profile": "sdlc-test-writer",
+      "target": "/Users/taloz/.hermes/profiles/sdlc-test-writer/skills/sdlc/sdlc-test-writer/SKILL.md",
+      "backup": "/Users/taloz/.hermes/backups/hermon-125-2026-10-29/sdlc-test-writer/SKILL.md",
+      "before_sha256": "8d8753231663d8965b5ebedd86a819112809d08cdc46ae0f67138d09d0ab7678",
+      "after_sha256": "7f28f949340e3481dc75320e2e9e79811eac439312775f028f5c5b48a1c7dea9"
+    },
+    {
+      "profile": "sdlc-implementer",
+      "target": "/Users/taloz/.hermes/profiles/sdlc-implementer/skills/sdlc/sdlc-implementer/SKILL.md",
+      "backup": "/Users/taloz/.hermes/backups/hermon-125-2026-10-29/sdlc-implementer/SKILL.md",
+      "before_sha256": "cc48608e24143e9f0ec1ea0cdbb7db3f26c2308f74b0ec53444da25f856d3223",
+      "after_sha256": "c6457ce43401a87686291a81638af9a993105bfdd5dd88b76ab019ca7f265b0e"
+    },
+    {
+      "profile": "sdlc-reviewer",
+      "target": "/Users/taloz/.hermes/profiles/sdlc-reviewer/skills/sdlc/sdlc-reviewer/SKILL.md",
+      "backup": "/Users/taloz/.hermes/backups/hermon-125-2026-10-29/sdlc-reviewer/SKILL.md",
+      "before_sha256": "cbc0aa5349ad8a75762d0a1766f516c0b478be778b51670bd853a78ac672021f",
+      "after_sha256": "4580230edc9d464412545d2ec0812fada8642f12957702105a9441f86ff0395a"
+    },
+    {
+      "profile": "sdlc-docs",
+      "target": "/Users/taloz/.hermes/profiles/sdlc-docs/skills/sdlc/sdlc-docs/SKILL.md",
+      "backup": "/Users/taloz/.hermes/backups/hermon-125-2026-10-29/sdlc-docs/SKILL.md",
+      "before_sha256": "1737b6e3d85058fd9f0a3678fb502fa59293caad7ad52006a98673341ccdc344",
+      "after_sha256": "a6fa7e33dcda8a9a4513b677ede1ee250472df6190266dacacc24e307e858a82"
+    }
+  ],
+  "cron": {
+    "id": "dcc9fbf66967",
+    "name": "SDLC public controller",
+    "enabled": false,
+    "state": "paused",
+    "paused_at": "2026-10-29T23:12:14.949328-04:00"
+  },
+  "sdlc_reliability": {
+    "path": "/Users/taloz/.hermes/plugins/sdlc-reliability",
+    "before_sha256": "eb90a6a16c121f3022dc94cb4904e95a6b1a73a0860b432be0fb2832c0f205cc",
+    "after_sha256": "eb90a6a16c121f3022dc94cb4904e95a6b1a73a0860b432be0fb2832c0f205cc",
+    "modified": false
+  },
+  "pilot": "Deferred by owner until code is finished; guided live pilot not started"
+}
