@@ -47,7 +47,13 @@ commands:
     argv: [pnpm, lint]
     timeout_seconds: 600
   test:
-    argv: [pnpm, exec, vitest, run, --workspace, tests/vitest.workspace.ts, --no-file-parallelism, --reporter=json]
+    argv:
+      - /bin/sh
+      - -c
+      - |
+        exec 3>&1
+        exec 1>&2
+        exec node node_modules/vitest/vitest.mjs run --workspace tests/vitest.workspace.ts --no-file-parallelism --reporter=json --outputFile=/dev/fd/3
     report: VitestJson
     timeout_seconds: 1800
   project_check:

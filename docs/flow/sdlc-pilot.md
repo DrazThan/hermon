@@ -52,6 +52,14 @@ ignored evidence. `Libtest` remains the default for older project files;
 `Json` supports the existing normalized report contract. Reports must be clean
 JSON on captured output and fit the 16 MiB parsing bound.
 
+The ACP pilot configuration separates raw server logs from the JSON report.
+It runs the same installed Vitest CLI through Node, duplicates the report stream
+to descriptor 3, redirects normal stdout to stderr, and selects
+`--outputFile=/dev/fd/3`. This preserves the complete report and actual exit
+status while keeping direct `process.stdout.write` diagnostics out of the parser.
+Pass/fail fixtures and a real local-Postgres test verified this configuration;
+see [report-stream evidence](evidence/hermes-acp/report-stream.md).
+
 Every bot step has a short `roles/<step>.md` prompt. Intake snapshots readable
 role files and their SHA-256 hashes into `context/roles/` and
 `context/roles.json` before publishing the run. Existing unreadable, empty,
