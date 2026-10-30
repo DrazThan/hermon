@@ -1,0 +1,3 @@
+f57c676e585dcf68e70382eb8e411cd82c1fb0510291f9fafd69bd24fb0e5ec1  crates/hermon/tests/flow_vitest.rs
+1018ab0ce0e416f71b208965a3b021bca9c7612116821021ed275c2058894721  crates/hermon/tests/support/vitest_fixture.rs
+a697aaa10409769b0fce493db791bda9b0298a98f60c7ad230dd5b4c8e97d666  docs/flow/evidence/125/vitest-acceptance.md

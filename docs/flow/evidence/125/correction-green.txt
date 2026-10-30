@@ -1,0 +1,49 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+warning: function `latest` is never used
+   --> crates/hermon-flow/src/host.rs:276:4
+    |
+276 | fn latest(dir: &Path, step: &str) -> Result<PathBuf> {
+    |    ^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+warning: `hermon-flow` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.33s
+     Running tests/flow_block_reason.rs (target/debug/deps/flow_block_reason-7737dd423c8c8e9b)
+
+running 1 test
+test routed_test_defect_delivers_exact_green_block_reason_to_red_fix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.65s
+
+     Running tests/flow_publication.rs (target/debug/deps/flow_publication-3b1bcf7cc8fcb9ef)
+
+running 2 tests
+test final_docs_completion_publishes_one_central_outcome_after_restart ... ok
+test owner_go_comment_contains_accepted_published_plan_without_owner_nudge ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.37s
+
+     Running tests/flow_red_fix.rs (target/debug/deps/flow_red_fix-65caf9ee1acab509)
+
+running 1 test
+test test_correction_uses_own_delta_and_refreezes_only_tests_after_partial_green ... FAILED
+
+failures:
+
+---- test_correction_uses_own_delta_and_refreezes_only_tests_after_partial_green stdout ----
+
+thread 'test_correction_uses_own_delta_and_refreezes_only_tests_after_partial_green' (95588204) panicked at crates/hermon/tests/flow_red_fix.rs:407:5:
+assertion `left == right` failed: test-only correction must not be rejected for GREEN's existing production commit: {"base":"main","base_commit":"963c896c9a20afeb18260838bda784d289df549a","branch":"flow/TICKET-123","cancelled":false,"notices":[],"paused":false,"project":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/project.json","run":{"active":null,"alert_keys":["green:19:freeze paths differ from the recorded RED delta"],"alerts":[{"reason":"freeze paths differ from the recorded RED delta","step":"green"}],"attempts":[{"family":"fixture","freezes":{},"handle":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/data/runs/TICKET-123/steps/plan/1","number":1,"started_at":1793331040,"step":"plan"},{"family":"fixture","freezes":{},"handle":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/data/runs/TICKET-123/steps/red/1","number":1,"started_at":1793331040,"step":"red"},{"family":"fixture","freezes":{"red":"hermon/TICKET-123/red"},"handle":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/data/runs/TICKET-123/steps/green/1","number":1,"started_at":1793331041,"step":"green"},{"family":"fixture","freezes":{"red":"hermon/TICKET-123/red"},"handle":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/data/runs/TICKET-123/steps/red_fix/1","number":1,"started_at":1793331041,"step":"red_fix"},{"family":"fixture","freezes":{"red":"hermon/TICKET-123/red.2"},"handle":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/data/runs/TICKET-123/steps/green/2","number":2,"started_at":1793331042,"step":"green"},{"family":"fixture","freezes":{"red":"hermon/TICKET-123/red.2"},"handle":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/data/runs/TICKET-123/steps/green/3","number":3,"started_at":1793331042,"step":"green"}],"block":{"kind":"unknown","reason":"freeze paths differ from the recorded RED delta"},"cancelled":false,"check_failures":{"green":2},"current":"green","events":[{"kind":"intake","reason":"Confirmed correction-fixture on main after doctor passed","step":"plan"},{"kind":"started","reason":"worker","step":"plan"},{"kind":"step_done","reason":"independent test IDs","step":"plan"},{"kind":"route","reason":"red","step":"plan"},{"kind":"started","reason":"worker","step":"red"},{"kind":"evidence","reason":"hermon/TICKET-123/red","step":"red"},{"kind":"step_done","reason":"behavioral RED","step":"red"},{"kind":"route","reason":"green","step":"red"},{"kind":"started","reason":"reviewer","step":"green"},{"kind":"block","reason":"fixture requires a narrow independent correction","step":"green"},{"kind":"route","reason":"red_fix","step":"green"},{"kind":"started","reason":"worker","step":"red_fix"},{"kind":"evidence","reason":"hermon/TICKET-123/red.2","step":"red_fix"},{"kind":"step_done","reason":"corrected behavioral RED","step":"red_fix"},{"kind":"route","reason":"green","step":"red_fix"},{"kind":"started","reason":"reviewer","step":"green"},{"kind":"check_retry","reason":"step checks failed; retrying once","step":"green"},{"kind":"started","reason":"reviewer","step":"green"},{"kind":"blocked","reason":"freeze paths differ from the recorded RED delta","step":"green"}],"evidence_revisions":{"red":2},"freezes":{"red":"hermon/TICKET-123/red.2"},"gate_requests":{},"id":"TICKET-123","owner_question":null,"paused":false,"pr":null,"retries":{},"runs":{"green":3,"plan":1,"red":1,"red_fix":1},"status":"Blocked","unsettled":false},"schema":1,"started":true,"template_hashes":{"alert.md":"c983d5859f368ce8148ff242a0bf329515ce4efee8471b67c47dd885113c219b","answer_ack.md":"8a4f48ec06c31733860fe707a8d90281b8fbfe2dc70fc6147b6dae55de515499","go_request.md":"64ecb522233db5a71f63ce5d9af80562d45ae80a2a8ede8884cc3e1528068fe2","outcome.md":"9b469ca2d51cfa1dfb68a5aa461e4c21736756f8a232e8874d85c00ab97dbc05","question.md":"078b1d6d362b151d63cd52e61bc20cded4895f1636aac2d4d060fd5c73ef90b7","started.md":"e3fae0d99a021186b8a95ead7d80d266429487f4df511fec6d9060e4ab5e25e7","step_done.md":"5b5de37810a6199a038b456a1b9a3e167d10395f9f61f7085654a6639dadf547"},"templates":{"alert.md":"{{owner_mention}} The run needs attention.\n\nTechnical: {{technical}}\n{{run_status_cmd}}\n","answer_ack.md":"Applied your answer to {{step}}.\n\nTechnical: {{technical}}\n","go_request.md":"{{owner_mention}} Please review the plan and reply GO to continue.\n\nTechnical: {{technical}}\n{{artifact_links}}\n","outcome.md":"{{summary}}\n\nTechnical: {{technical}}\n{{artifact_links}}\n","question.md":"{{owner_mention}} {{question}}\n\nTechnical: {{bot}} / {{step}}: {{technical}}\n{{options}}\n","started.md":"Started {{workflow}} on {{branch}}.\n\nTechnical: base {{base_branch}}; {{run_status_cmd}}\n","step_done.md":"{{step}} is complete.\n\nTechnical: {{technical}}\n"},"ticket":"TICKET-123","workflow_hash":"d23acce7aadeec43dbbaf5f5c13d6ad2b3571e18f9693c0d522f1e13f49eece9","workflow_name":"correction-fixture","workflow_source":"version: 1\nname: correction-fixture\nsteps:\n  plan:\n    bot: worker\n    produces: [test-expectations.json]\n    next: red\n  red:\n    bot: worker\n    check: [only_paths_changed:tests, tests_fail]\n    tag: red\n    next: green\n  green:\n    bot: reviewer\n    check: [frozen_unchanged:red, project_check]\n    tag: green\n    next: finished\n    on_block: {test_defect: red_fix}\n  red_fix:\n    bot: worker\n    check: [only_paths_changed:tests, tests_fail]\n    tag: red\n    next: green\n    max_runs: 2\n  finished:\n    gate: owner_go\n","worktree":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmphO6ttx/fixture with spaces/worktrees/TICKET-123"}
+  left: String("Blocked")
+ right: "Gate"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_correction_uses_own_delta_and_refreezes_only_tests_after_partial_green
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.81s
+
+error: test failed, to rerun pass `-p hermon --test flow_red_fix`

@@ -1,0 +1,53 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running tests/flow_inputs.rs (target/debug/deps/flow_inputs-1c687754495f0f16)
+
+running 2 tests
+test accepted_artifact_reaches_successor_in_same_reconciliation ... FAILED
+test successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory ... FAILED
+
+failures:
+
+---- accepted_artifact_reaches_successor_in_same_reconciliation stdout ----
+
+thread 'accepted_artifact_reaches_successor_in_same_reconciliation' (95511491) panicked at crates/hermon/tests/flow_inputs.rs:354:5:
+assertion `left == right` failed: accepted artifact must immediately feed successor without an owner retry: {"base":"main","base_commit":"0d190485a7323469a2b6b42152906a5456d2204f","branch":"flow/TICKET-123","cancelled":false,"notices":[],"paused":false,"project":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpRalV1m/fixture with spaces/project.json","run":{"active":null,"alert_keys":["red:6:missing accepted input plan.md"],"alerts":[{"reason":"missing accepted input plan.md","step":"red"}],"attempts":[{"family":"fixture","freezes":{},"handle":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpRalV1m/fixture with spaces/data/runs/TICKET-123/steps/work/1","number":1,"started_at":1793330396,"step":"work"}],"block":{"kind":"capability","reason":"missing accepted input plan.md"},"cancelled":false,"check_failures":{},"current":"red","events":[{"kind":"intake","reason":"Confirmed artifact-fixture on main after doctor passed","step":"work"},{"kind":"started","reason":"worker","step":"work"},{"kind":"step_done","reason":"plan ready","step":"work"},{"kind":"route","reason":"red","step":"work"},{"kind":"block","reason":"missing accepted input plan.md","step":"red"},{"kind":"blocked","reason":"missing accepted input plan.md","step":"red"}],"evidence_revisions":{},"freezes":{},"gate_requests":{},"id":"TICKET-123","owner_question":null,"paused":false,"pr":null,"retries":{},"runs":{"red":1,"work":1},"status":"Blocked","unsettled":false},"schema":1,"started":true,"template_hashes":{"alert.md":"c983d5859f368ce8148ff242a0bf329515ce4efee8471b67c47dd885113c219b","answer_ack.md":"8a4f48ec06c31733860fe707a8d90281b8fbfe2dc70fc6147b6dae55de515499","go_request.md":"64ecb522233db5a71f63ce5d9af80562d45ae80a2a8ede8884cc3e1528068fe2","outcome.md":"9b469ca2d51cfa1dfb68a5aa461e4c21736756f8a232e8874d85c00ab97dbc05","question.md":"078b1d6d362b151d63cd52e61bc20cded4895f1636aac2d4d060fd5c73ef90b7","started.md":"e3fae0d99a021186b8a95ead7d80d266429487f4df511fec6d9060e4ab5e25e7","step_done.md":"5b5de37810a6199a038b456a1b9a3e167d10395f9f61f7085654a6639dadf547"},"templates":{"alert.md":"{{owner_mention}} The run needs attention.\n\nTechnical: {{technical}}\n{{run_status_cmd}}\n","answer_ack.md":"Applied your answer to {{step}}.\n\nTechnical: {{technical}}\n","go_request.md":"{{owner_mention}} Please review the plan and reply GO to continue.\n\nTechnical: {{technical}}\n{{artifact_links}}\n","outcome.md":"{{summary}}\n\nTechnical: {{technical}}\n{{artifact_links}}\n","question.md":"{{owner_mention}} {{question}}\n\nTechnical: {{bot}} / {{step}}: {{technical}}\n{{options}}\n","started.md":"Started {{workflow}} on {{branch}}.\n\nTechnical: base {{base_branch}}; {{run_status_cmd}}\n","step_done.md":"{{step}} is complete.\n\nTechnical: {{technical}}\n"},"ticket":"TICKET-123","workflow_hash":"38e0eb35c47774b1c401a7f98582ea1be62611d895a1836e6e13153b35811fc6","workflow_name":"artifact-fixture","workflow_source":"version: 1\nname: artifact-fixture\nsteps:\n  work:\n    bot: worker\n    produces: [plan.md]\n    next: red\n  red:\n    bot: reviewer\n    inputs: [plan.md]\n","worktree":"/private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpRalV1m/fixture with spaces/worktrees/TICKET-123"}
+  left: String("Blocked")
+ right: "Running"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory stdout ----
+
+thread 'successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory' (95511492) panicked at crates/hermon/tests/flow_inputs.rs:387:5:
+an unrelated numeric directory cannot supersede an accepted attempt: # TICKET-123 / red
+
+Ticket: TICKET-123
+Bot: reviewer
+Attempt: 1
+Worktree: /private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmptf9PF4/fixture with spaces/worktrees/TICKET-123
+
+Complete this workflow step. Commit repository changes before reporting done. Write result.json to /private/var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmptf9PF4/fixture with spaces/data/runs/TICKET-123/steps/red/1/result.json with all keys: {"schema":1,"status":"done","summary":"...","artifacts":[],"block":null,"verdict":null,"questions":[]}. For a block use status block and block {kind,reason}. Review verdict must be clean or changes_needed. Save produced artifacts beside result.json.
+
+Produces: []
+Checks: []
+
+Do not start other workflow steps, poll a board, pass owner gates, merge or deploy. Report questions and blocks through result.json; the hub routes them.
+
+## Ticket context
+# Fixture issue
+
+Implement the fixture ticket.
+
+
+## Input: plan.md
+UNACCEPTED PLANNER ARTIFACT 125
+
+
+
+failures:
+    accepted_artifact_reaches_successor_in_same_reconciliation
+    successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.76s
+
+error: test failed, to rerun pass `-p hermon --test flow_inputs`

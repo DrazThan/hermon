@@ -1,0 +1,17 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.41s
+     Running tests/flow_red_fix.rs (target/debug/deps/flow_red_fix-65caf9ee1acab509)
+
+running 1 test
+test test_correction_uses_own_delta_and_refreezes_only_tests_after_partial_green ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.13s
+
+     Running tests/flow_vitest_skipped.rs (target/debug/deps/flow_vitest_skipped-902700f0ce2943c5)
+
+running 1 test
+test real_vitest_skipped_status_counts_as_pending_ignored_evidence ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+

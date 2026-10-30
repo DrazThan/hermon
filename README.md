@@ -4,7 +4,7 @@
 
 # hermon
 
-**Live monitor deck for Claude Code, Hermes, OpenCode, Codex, Grok Build, and Gemini CLI sessions.**
+**Live agent monitor and opt-in workflow hub for development pipelines.**
 *Hermes + monitor — and the mountain.*
 
 </div>
@@ -15,10 +15,39 @@ on your machine — Hermes TUI/CLI/gateway sessions, sub-agents, small one-shot
 calls, `claude -p` invocations, `opencode run`, Codex interactive/exec,
 Grok Build and Gemini CLI sessions, calls to any provider — shows up live, with its own tail pane.
 
-hermon is read-only and needs zero changes to Hermes or your orchestration:
-it watches the on-disk stores those tools already write to, so nothing has to
-be instrumented, wrapped, or run through hermon to be seen. It never sends
-input to a session and never kills one.
+The monitor needs zero changes to Hermes or your orchestration: it watches the
+on-disk stores those tools already write to. Monitoring is read-only and never
+sends input to or kills a session. The opt-in hub carries explicitly queued
+workflow runs through checks, owner gates and PR publication. It starts,
+resumes and stops only processes it launched for a run; merge stays with the owner.
+
+## Development workflows
+
+The shipped [SDLC pack](workflows/sdlc/workflow.yaml) defines Plan → Owner GO →
+RED → GREEN → Review → PR → owner Merge → Docs, with independent tests, frozen
+acceptance, a different-family reviewer and bounded correction routes. The hub
+posts questions and progress through one central Linear app using editable
+[comment templates](workflows/sdlc/templates). Role prompts are frozen at intake
+and delivered in each worker's task file.
+
+```sh
+hermon templates preview workflows/sdlc go_request.md
+hermon doctor workflows/sdlc --project projects/rummyrune/project.yaml
+# After configuring capabilities and choosing an owner-approved ticket:
+hermon run workflows/sdlc RUM-123 --project projects/rummyrune/project.yaml --confirm
+hermon hub
+hermon status --json
+hermon answer RUN-ID 'Use the existing API'
+hermon approve RUN-ID
+```
+
+The [RummyRune configuration](projects/rummyrune/project.yaml) uses the owner's
+local paths and named Hermes profiles. Hermes dispatch remains blocked until
+owned-worker cancellation is verified; the guided live pilot is pending.
+See the [pilot and migration runbook](docs/flow/sdlc-pilot.md) for prerequisites,
+the approved profile migration, controls and acceptance evidence. A configured
+project alone does not create a run. The menubar hosts queued runs; `watch` and
+`gui` expose their pipeline views.
 
 ## Screenshots
 
@@ -693,9 +722,11 @@ just less precise about mid-turn silence.
 
 ## Non-goals
 
-Not a session manager — read-only, never sends input, never kills a session.
-No web UI, no persistence or analytics beyond what's on screen. No Windows
-(macOS primary, Linux best-effort); no plans to change that.
+The monitor does not control sessions it discovers. The opt-in hub controls
+only its own run processes and persists run state, events and git evidence.
+It never merges, deploys or force-pushes a protected branch. General session
+management, cross-host bot execution, a web UI and historical usage analytics
+remain out of scope. No Windows (macOS primary, Linux best-effort).
 
 ## Tests
 

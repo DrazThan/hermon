@@ -43,6 +43,8 @@ struct State {
     binding: String,
     remote_hash: String,
     pr: Option<String>,
+    #[serde(default)]
+    merge_commit: Option<String>,
 }
 #[derive(Deserialize)]
 struct Owner {
@@ -128,6 +130,7 @@ impl GithubCodeHost {
                     binding: String::new(),
                     remote_hash: String::new(),
                     pr: None,
+                    merge_commit: None,
                 },
                 marker: String::new(),
             };
@@ -161,6 +164,7 @@ impl GithubCodeHost {
                 binding: binding.clone(),
                 remote_hash,
                 pr: None,
+                merge_commit: None,
             });
             ensure!(
                 host.state.schema == 1 && host.state.binding == binding,
@@ -180,6 +184,9 @@ impl GithubCodeHost {
             "Run: {}\n\n## Plan\n\n{}\n\n## Review summary\n\n{}\n\n{}\n",
             self.config.run_id, self.config.plan, self.config.review_summary, self.marker
         )
+    }
+    pub fn merge_commit(&self) -> Option<&str> {
+        self.state.merge_commit.as_deref()
     }
     fn remote_hash(&self) -> Result<String> {
         // Git fetch uses the fetch URL, while push can use one or more separate
@@ -500,7 +507,13 @@ impl CodeHost for GithubCodeHost {
             &["merge-base", "--is-ancestor", &commit.oid, &target],
         )?;
         match status.code() {
-            Some(0) => Ok(true),
+            Some(0) => {
+                self.state.merge_commit = Some(commit.oid);
+                self.store
+                    .write_run(&self.state)
+                    .map_err(|e| block(BlockKind::Unknown, e))?;
+                Ok(true)
+            }
             Some(1) => Ok(false),
             _ => Err(Block::new(
                 BlockKind::Unknown,

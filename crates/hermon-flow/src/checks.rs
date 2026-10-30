@@ -17,12 +17,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TestReportFormat {
     /// Last nonempty stdout line: {passed, failed, ignored, failures: [test IDs]}.
     Json,
     /// Rust's ordinary libtest output, including each `test ID ... FAILED` line.
     Libtest,
+    /// Vitest's JSON reporter on stdout, with per-assertion IDs and counts.
+    VitestJson,
 }
 #[derive(Debug, Clone)]
 pub struct CheckCommand {
@@ -90,17 +92,21 @@ struct EvidenceNote {
     commit: String,
     commands: Vec<CommandEvidence>,
     frozen_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    frozen_path_sets: BTreeMap<String, Vec<String>>,
 }
 struct Receipt {
     step: String,
     head: String,
     commands: Vec<CommandEvidence>,
     paths: Vec<String>,
+    path_sets: BTreeMap<String, Vec<String>>,
 }
 pub struct GitChecks {
     config: CheckConfig,
     context: AttemptContext,
     receipt: Option<Receipt>,
+    path_base: Option<String>,
 }
 impl GitChecks {
     pub fn new(mut config: CheckConfig) -> std::result::Result<Self, Block> {
@@ -145,12 +151,19 @@ impl GitChecks {
             config: prepare().map_err(|e| block(BlockKind::Capability, e))?,
             context: AttemptContext::default(),
             receipt: None,
+            path_base: None,
         })
     }
     /// The host binds metadata and independent test expectations before advancing
     /// this attempt. Changing context revokes any prior successful check receipt.
     pub fn set_attempt(&mut self, context: AttemptContext) {
         self.context = context;
+        self.receipt = None;
+    }
+    /// Restrict this attempt's edits while retaining the intake base for git
+    /// binding and the full accumulated test freeze after a RED correction.
+    pub fn set_path_base(&mut self, base: String) {
+        self.path_base = Some(base);
         self.receipt = None;
     }
     fn git(&self, args: &[&str]) -> Result<Vec<u8>> {
@@ -206,8 +219,17 @@ impl GitChecks {
         );
         let commit = self.text(&["rev-parse", "--verify", &format!("{tag_ref}^{{commit}}")])?;
         ensure!(note.commit == commit, "freeze target differs from its note");
+        let mut expected_paths = self.paths_between(&self.config.base, &commit)?;
+        for (name, patterns) in &note.frozen_path_sets {
+            ensure!(
+                self.config.paths.get(name) == Some(patterns),
+                "freeze path set differs from project configuration"
+            );
+            expected_paths
+                .retain(|path| patterns.iter().any(|pattern| glob_matches(pattern, path)));
+        }
         ensure!(
-            note.frozen_paths == self.paths_between(&self.config.base, &commit)?,
+            note.frozen_paths == expected_paths,
             "freeze paths differ from the recorded RED delta"
         );
         self.git(&["merge-base", "--is-ancestor", &commit, head])?;
@@ -424,6 +446,7 @@ impl GitChecks {
             commit: head,
             commands: receipt.commands.clone(),
             frozen_paths: receipt.paths.clone(),
+            frozen_path_sets: receipt.path_sets.clone(),
         };
         let text = serde_json::to_string(&note)?;
         ensure!(
@@ -456,16 +479,25 @@ impl Git for GitChecks {
         let head = self
             .bound_head()
             .map_err(|e| block(BlockKind::Unknown, e))?;
-        let paths = self
+        let mut paths = self
             .paths_between(&self.config.base, &head)
             .map_err(|e| block(BlockKind::Unknown, e))?;
+        let changed = if let Some(base) = &self.path_base {
+            self.git(&["merge-base", "--is-ancestor", base, &head])
+                .map_err(|e| block(BlockKind::Unknown, e))?;
+            self.paths_between(base, &head)
+                .map_err(|e| block(BlockKind::Unknown, e))?
+        } else {
+            paths.clone()
+        };
         let mut commands = Vec::new();
+        let mut path_sets = BTreeMap::new();
         for check in checks {
             if let Some(set) = check.strip_prefix("only_paths_changed:") {
                 let patterns = self.config.paths.get(set).ok_or_else(|| {
                     Block::new(BlockKind::Capability, format!("unknown path set {set}"))
                 })?;
-                if let Some(path) = paths
+                if let Some(path) = changed
                     .iter()
                     .find(|path| !patterns.iter().any(|pattern| glob_matches(pattern, path)))
                 {
@@ -474,6 +506,10 @@ impl Git for GitChecks {
                         format!("path {path:?} is outside {set}"),
                     ));
                 }
+                // A superseding RED freezes all accumulated test changes,
+                // excluding production already present before this attempt.
+                paths.retain(|path| patterns.iter().any(|pattern| glob_matches(pattern, path)));
+                path_sets.insert(set.to_owned(), patterns.clone());
             } else if let Some(tag) = check.strip_prefix("frozen_unchanged:") {
                 let reference = freezes.get(tag).ok_or_else(|| {
                     Block::new(BlockKind::Unknown, format!("missing freeze {tag}"))
@@ -545,6 +581,7 @@ impl Git for GitChecks {
             head,
             commands,
             paths,
+            path_sets,
         });
         Ok(())
     }
@@ -597,6 +634,9 @@ fn git_at(workdir: &Path, args: &[&str]) -> Result<Vec<u8>> {
 fn git_text(workdir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(git_at(workdir, args)?)?.trim().into())
 }
+pub(crate) fn worktree_head(workdir: &Path) -> Result<String> {
+    git_text(workdir, &["rev-parse", "--verify", "HEAD^{commit}"])
+}
 fn resolve_executable(binary: &str, config: &CheckConfig) -> Result<PathBuf> {
     let paths = if binary.contains('/') {
         vec![config.workdir.join(binary)]
@@ -633,6 +673,16 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<TestReport> {
     const MAX_LINE: u64 = 1024 * 1024;
     let mut file = File::open(path)?;
     let report: TestReport = match format {
+        TestReportFormat::VitestJson => {
+            // The JSON reporter emits one complete document. Reject truncated,
+            // mixed diagnostic output rather than guessing at assertion data.
+            ensure!(
+                file.metadata()?.len() <= 16 * MAX_LINE,
+                "Vitest report exceeds 16 MiB"
+            );
+            let source: VitestReport = serde_json::from_reader(file)?;
+            source.checked()?
+        }
         TestReportFormat::Json => {
             // JSON reports occupy the final nonempty line; earlier output is
             // diagnostic. Read only a bounded tail, never half of a report.
@@ -728,6 +778,81 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<TestReport> {
         "test counts and unique failure IDs disagree"
     );
     Ok(report)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VitestReport {
+    num_passed_tests: u64,
+    num_failed_tests: u64,
+    num_pending_tests: u64,
+    #[serde(default)]
+    num_todo_tests: u64,
+    num_total_tests: u64,
+    #[serde(default)]
+    num_runtime_error_test_suites: u64,
+    test_results: Vec<VitestFile>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VitestFile {
+    #[serde(default)]
+    message: String,
+    assertion_results: Vec<VitestAssertion>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VitestAssertion {
+    full_name: String,
+    status: String,
+}
+impl VitestReport {
+    fn checked(self) -> Result<TestReport> {
+        ensure!(
+            self.num_runtime_error_test_suites == 0,
+            "Vitest runtime errors are not behavioral RED"
+        );
+        let mut report = TestReport {
+            passed: 0,
+            failed: 0,
+            ignored: 0,
+            failures: vec![],
+        };
+        let mut pending = 0_u64;
+        let mut todo = 0_u64;
+        for file in self.test_results {
+            ensure!(
+                file.message.trim().is_empty(),
+                "Vitest suite/collection error is not behavioral RED"
+            );
+            for assertion in file.assertion_results {
+                ensure!(
+                    !assertion.full_name.trim().is_empty(),
+                    "missing Vitest fullName"
+                );
+                match assertion.status.as_str() {
+                    "passed" => report.passed += 1,
+                    "failed" => {
+                        report.failed += 1;
+                        report.failures.push(assertion.full_name);
+                    }
+                    "pending" | "skipped" => pending += 1,
+                    "todo" => todo += 1,
+                    other => anyhow::bail!("unsupported Vitest assertion status {other}"),
+                }
+            }
+        }
+        report.ignored = pending + todo;
+        ensure!(
+            report.passed == self.num_passed_tests
+                && report.failed == self.num_failed_tests
+                && pending == self.num_pending_tests
+                && todo == self.num_todo_tests
+                && report.passed + report.failed + report.ignored == self.num_total_tests,
+            "Vitest assertion counts disagree with summary"
+        );
+        Ok(report)
+    }
 }
 fn glob_matches(pattern: &str, path: &str) -> bool {
     let pattern: Vec<_> = pattern.split('/').collect();

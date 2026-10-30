@@ -1,0 +1,59 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling num-traits v0.2.19
+   Compiling hashbrown v0.17.1
+   Compiling miniz_oxide v0.9.1
+   Compiling crc32fast v1.5.1
+   Compiling errno v0.3.14
+   Compiling serde_json v1.0.151
+   Compiling ureq-proto v0.6.5
+   Compiling rustls v0.23.46
+   Compiling serde_path_to_error v0.1.20
+   Compiling rustix v1.1.4
+   Compiling flate2 v1.1.10
+   Compiling quote v1.0.47
+   Compiling hashlink v0.12.1
+   Compiling syn v3.0.4
+   Compiling yaml-rust2 v0.13.0
+   Compiling tempfile v3.27.0
+   Compiling chrono v0.4.45
+   Compiling serde_derive v1.0.229
+   Compiling serde v1.0.229
+   Compiling ureq v3.5.0
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.35s
+     Running tests/sdlc_pack.rs (target/debug/deps/sdlc_pack-1190e71146a1f09c)
+
+running 3 tests
+test rummyrune_project_uses_supported_schema_and_honest_profile_bindings ... FAILED
+test shipped_templates_render_from_pack_with_mentions_and_marker ... FAILED
+test shipped_sdlc_pack_keeps_gates_freeze_and_bounded_correction ... FAILED
+
+failures:
+
+---- rummyrune_project_uses_supported_schema_and_honest_profile_bindings stdout ----
+
+thread 'rummyrune_project_uses_supported_schema_and_honest_profile_bindings' (95468550) panicked at crates/hermon-flow/tests/sdlc_pack.rs:120:85:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- shipped_templates_render_from_pack_with_mentions_and_marker stdout ----
+
+thread 'shipped_templates_render_from_pack_with_mentions_and_marker' (95468552) panicked at crates/hermon-flow/tests/sdlc_pack.rs:93:56:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+
+---- shipped_sdlc_pack_keeps_gates_freeze_and_bounded_correction stdout ----
+
+thread 'shipped_sdlc_pack_keeps_gates_freeze_and_bounded_correction' (95468551) panicked at crates/hermon-flow/tests/sdlc_pack.rs:36:5:
+assertion `left == right` failed
+  left: ["plan.md", "test-brief.md", "impl-brief.md"]
+ right: ["plan.md", "test-brief.md", "impl-brief.md", "test-expectations.json"]
+
+
+failures:
+    rummyrune_project_uses_supported_schema_and_honest_profile_bindings
+    shipped_sdlc_pack_keeps_gates_freeze_and_bounded_correction
+    shipped_templates_render_from_pack_with_mentions_and_marker
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test sdlc_pack`

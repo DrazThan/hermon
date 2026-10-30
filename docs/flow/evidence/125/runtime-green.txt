@@ -1,0 +1,34 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.58s
+     Running tests/flow_roles.rs (target/debug/deps/flow_roles-0a69f0cc4d8234b7)
+
+running 3 tests
+test intake_rejects_unreadable_role_before_allocating_run ... ok
+test host_rejects_tampered_role_snapshot_before_dispatch ... ok
+test intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.61s
+
+     Running tests/flow_vitest.rs (target/debug/deps/flow_vitest-e73d25fc86c74929)
+
+running 3 tests
+test newer_unaccepted_plan_directory_cannot_replace_accepted_test_expectations ... ok
+test accepted_plan_test_expectations_drive_vitest_red_without_manual_run_edits ... ok
+test planner_expected_ids_cannot_be_replaced_by_unrelated_vitest_failure ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.79s
+
+     Running tests/flow_vitest_errors.rs (target/debug/deps/flow_vitest_errors-df347896663a1a0f)
+
+running 7 tests
+test vitest_baseline_failure_cannot_be_reclassified_as_new_red ... ok
+test vitest_pending_and_todo_counts_survive_into_red_evidence ... ok
+test vitest_failure_named_only_in_summary_cannot_pass_red ... ok
+test vitest_inconsistent_assertion_counts_cannot_pass_red ... ok
+test vitest_suite_error_cannot_pass_red_with_an_expected_failed_assertion ... ok
+test vitest_success_exit_cannot_pass_red_even_when_json_contains_failures ... ok
+test vitest_failed_suite_without_failed_assertions_cannot_pass_red ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.12s
+

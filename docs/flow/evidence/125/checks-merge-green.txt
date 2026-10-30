@@ -1,0 +1,50 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.18s
+     Running tests/checks.rs (target/debug/deps/checks-5683ce7f895eb1f2)
+
+running 17 tests
+test check_frozen_missing_reference_fails_closed ... ok
+test check_paths_include_deleted_and_renamed_sources ... ok
+test check_commands_preserve_argv_cwd_and_environment ... ok
+test check_tests_fail_supports_native_libtest ... ok
+test check_tests_fail_requires_expected_test_identity ... ok
+test check_only_paths_changed ... ok
+test checks_and_evidence_reject_dirty_frozen_paths ... ok
+test check_missing_binary_is_capability ... ok
+test evidence_metadata_overflow_never_publishes_partial_authority ... ok
+test evidence_failed_recheck_revokes_success_receipt ... ok
+test check_frozen_unchanged_detects_edit ... ok
+test evidence_tag_note_under_limit ... ok
+test check_timeout_is_bounded_and_blocks_evidence ... ok
+test evidence_requires_successful_checks_at_current_head_and_branch ... ok
+test check_tests_fail_requires_new_failures ... ok
+test check_command_builtins_pass_and_fail ... ok
+test evidence_records_test_counts_and_is_idempotent_across_restart ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+
+     Running tests/checks_regressions.rs (target/debug/deps/checks_regressions-d5b75c409438e987)
+
+running 11 tests
+test check_command_dirty_mutation_cannot_receive_evidence ... ok
+test evidence_rejects_removed_check_log ... ok
+test evidence_rejects_modified_check_log ... ok
+test hub_real_checks_publish_only_successful_evidence ... ok
+test evidence_binds_step_and_attempt_context ... ok
+test check_libtest_tail_cannot_silently_drop_earlier_failures ... ok
+test frozen_check_rejects_another_evidence_kind ... ok
+test frozen_check_rejects_mismatched_annotation_and_explicit_note ... ok
+test evidence_retry_repairs_missing_explicit_note ... ok
+test check_relative_path_and_clean_environment ... ok
+test check_timeout_settles_owned_descendants_only ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.78s
+
+     Running tests/code_host_merge_receipt.rs (target/debug/deps/code_host_merge_receipt-49073d8463e986c4)
+
+running 2 tests
+test unverified_merge_does_not_persist_a_commit_receipt ... ok
+test verified_owner_merge_persists_exact_commit_for_docs_and_outcome ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.32s
+

@@ -1,0 +1,42 @@
+# Owner-local configuration. See docs/flow/sdlc-pilot.md before live intake.
+# Hermes dispatch remains gated until owned-worker cancellation is verified.
+repo: /Users/taloz/code/rummyrune
+worktree_root: /Users/taloz/.local/share/hermon/worktrees
+branch_prefix: oztal000
+base: qa
+start: plan
+env:
+  HOME: /Users/taloz
+  PATH: /Users/taloz/.local/bin:/Users/taloz/.local/share/mise/installs/pnpm/9.15.2:/Users/taloz/.local/share/mise/installs/node/26/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+bots:
+  sdlc-planner:
+    Hermes: {profile: sdlc-planner}
+  sdlc-test-writer:
+    Hermes: {profile: sdlc-test-writer}
+  sdlc-implementer:
+    Hermes: {profile: sdlc-implementer}
+  sdlc-reviewer:
+    Hermes: {profile: sdlc-reviewer}
+  sdlc-docs:
+    Hermes: {profile: sdlc-docs}
+paths:
+  tests: ['**/*.test.*', '**/*.spec.*', 'tests/**']
+commands:
+  lint:
+    argv: [pnpm, lint]
+    timeout_seconds: 600
+  test:
+    argv: [pnpm, exec, vitest, run, --workspace, tests/vitest.workspace.ts, --no-file-parallelism, --reporter=json]
+    report: VitestJson
+    timeout_seconds: 1800
+  project_check:
+    argv: [pnpm, check]
+    timeout_seconds: 3600
+tracker:
+  endpoint: https://api.linear.app/graphql
+  token_env: HERMON_LINEAR_TOKEN
+  owner_ids: [d1b6fd6b-baa5-43c6-8e72-6cdf6dc162a0]
+  owner_mention: '[tal oz](https://linear.app/rummyrune/profiles/oz.tal000)'
+code_host:
+  repo: DrazThan/RummiRune
+  remote: origin
