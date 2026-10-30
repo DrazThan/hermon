@@ -1,0 +1,30 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.97s
+     Running tests/flow_roles.rs (target/debug/deps/flow_roles-0a69f0cc4d8234b7)
+
+running 2 tests
+test intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit ... FAILED
+test intake_rejects_unreadable_role_before_allocating_run ... FAILED
+
+failures:
+
+---- intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit stdout ----
+
+thread 'intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit' (95469683) panicked at crates/hermon/tests/flow_roles.rs:34:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- intake_rejects_unreadable_role_before_allocating_run stdout ----
+
+thread 'intake_rejects_unreadable_role_before_allocating_run' (95469684) panicked at crates/hermon/tests/flow_roles.rs:34:57:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+
+failures:
+    intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit
+    intake_rejects_unreadable_role_before_allocating_run
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+error: test failed, to rerun pass `-p hermon --test flow_roles`

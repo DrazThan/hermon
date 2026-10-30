@@ -1,0 +1,36 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running tests/flow_roles.rs (target/debug/deps/flow_roles-0a69f0cc4d8234b7)
+
+running 3 tests
+test intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit ... FAILED
+test host_rejects_tampered_role_snapshot_before_dispatch ... FAILED
+test intake_rejects_unreadable_role_before_allocating_run ... FAILED
+
+failures:
+
+---- intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit stdout ----
+
+thread 'intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit' (95477878) panicked at crates/hermon/tests/flow_roles.rs:299:39:
+intake must snapshot role guidance: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- host_rejects_tampered_role_snapshot_before_dispatch stdout ----
+
+thread 'host_rejects_tampered_role_snapshot_before_dispatch' (95477877) panicked at crates/hermon/tests/flow_roles.rs:362:5:
+intake must preserve the role snapshot
+
+---- intake_rejects_unreadable_role_before_allocating_run stdout ----
+
+thread 'intake_rejects_unreadable_role_before_allocating_run' (95477879) panicked at crates/hermon/tests/flow_roles.rs:340:5:
+existing but unreadable role guidance must not be silently ignored
+
+
+failures:
+    host_rejects_tampered_role_snapshot_before_dispatch
+    intake_freezes_role_guidance_and_host_delivers_it_after_pack_edit
+    intake_rejects_unreadable_role_before_allocating_run
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.04s
+
+error: test failed, to rerun pass `-p hermon --test flow_roles`
