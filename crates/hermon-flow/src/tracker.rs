@@ -238,6 +238,12 @@ impl LinearTracker {
         )?;
         issue(&data["issue"])
     }
+    /// Verify the configured central app can authenticate, before intake.
+    pub fn authenticate(&self) -> Result<()> {
+        let data = self.graphql("query HermonDoctor { viewer { id } }", json!({}))?;
+        string(&data["viewer"], "id")?;
+        Ok(())
+    }
     pub fn find_labeled(&mut self, label: &str) -> Result<Vec<Issue>> {
         let mut result = vec![];
         let mut after = None::<String>;

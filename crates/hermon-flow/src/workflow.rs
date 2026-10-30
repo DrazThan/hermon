@@ -76,27 +76,7 @@ impl Workflow {
         Self::parse(text).map_err(|error| anyhow!("{path_label}: {error:#}"))
     }
     fn parse(text: &str) -> Result<Self> {
-        let mut yaml = StrictYaml {
-            parser: Parser::new_from_str(text),
-            nodes: 0,
-        };
-        ensure!(
-            yaml.next("$")? == Event::StreamStart,
-            "expected YAML stream"
-        );
-        ensure!(
-            yaml.next("$")? == Event::DocumentStart,
-            "expected one YAML document"
-        );
-        let value = yaml.value("$", 0)?;
-        ensure!(
-            yaml.next("$")? == Event::DocumentEnd,
-            "expected document end"
-        );
-        ensure!(
-            yaml.next("$")? == Event::StreamEnd,
-            "multiple YAML documents are not allowed"
-        );
+        let value = yaml_value(text)?;
         let workflow: Self = serde_path_to_error::deserialize(value)
             .map_err(|error| anyhow!("{}: {}", error.path(), error.inner()))?;
         workflow.validate()?;
@@ -257,6 +237,31 @@ impl Step {
 
 // Events preserve duplicate keys and reject anchors/tags before expansion.
 // Bounds limit recursion and allocation for configuration files.
+pub(crate) fn yaml_value(text: &str) -> Result<Value> {
+    let mut yaml = StrictYaml {
+        parser: Parser::new_from_str(text),
+        nodes: 0,
+    };
+    ensure!(
+        yaml.next("$")? == Event::StreamStart,
+        "expected YAML stream"
+    );
+    ensure!(
+        yaml.next("$")? == Event::DocumentStart,
+        "expected one YAML document"
+    );
+    let value = yaml.value("$", 0)?;
+    ensure!(
+        yaml.next("$")? == Event::DocumentEnd,
+        "expected document end"
+    );
+    ensure!(
+        yaml.next("$")? == Event::StreamEnd,
+        "multiple YAML documents are not allowed"
+    );
+    Ok(value)
+}
+
 struct StrictYaml<'a> {
     parser: Parser<std::str::Chars<'a>>,
     nodes: usize,

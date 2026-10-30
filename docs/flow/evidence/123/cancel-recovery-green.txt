@@ -1,0 +1,11 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.74s
+     Running tests/flow_cancel_recovery.rs (target/debug/deps/flow_cancel_recovery-ec5157920d00737a)
+
+running 2 tests
+test cancelled_core_clears_handle_after_stop_confirms_settlement ... ok
+test cancelled_core_retries_owned_stop_after_crash_before_stop_request ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

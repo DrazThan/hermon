@@ -69,6 +69,10 @@ pub struct OwnerQuestion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
     pub id: String,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub cancelled: bool,
     pub current: String,
     pub status: Status,
     pub active: Option<Attempt>,
@@ -95,6 +99,8 @@ impl Run {
     pub fn new(id: impl Into<String>, start: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            paused: false,
+            cancelled: false,
             current: start.into(),
             status: Status::Ready,
             active: None,
@@ -229,6 +235,25 @@ pub struct Dependencies<'a> {
 /// The host owns per-run locking and durable snapshots. No wall clock, process,
 /// filesystem or network calls are made except through the supplied interfaces.
 pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) -> Result<()> {
+    if run.cancelled {
+        // Cancellation is terminal for acceptance, not for supervision. Keep
+        // observing the owned handle until the worker confirms settlement.
+        if let Some(attempt) = &run.active {
+            let settled = matches!(deps.agent.poll(&attempt.handle), Ok(Poll::Finished { .. }))
+                || matches!(deps.agent.stop(&attempt.handle), Ok(Settlement::Confirmed));
+            // Repeating stop is intentional: the host may have crashed after
+            // persisting cancellation, before asking the owned worker to stop.
+            if settled {
+                run.active = None;
+                run.unsettled = false;
+                event(run, "settled", "cancelled worker settlement confirmed");
+            }
+        }
+        return Ok(());
+    }
+    if run.paused {
+        return Ok(());
+    }
     // A very large configured retry limit must not monopolize the host loop.
     // Ready remains an automatic route if this cooperative budget is exhausted.
     let budget = workflow.steps.len().saturating_mul(4).max(16);

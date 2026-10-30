@@ -1,0 +1,134 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running tests/flow_cli.rs (target/debug/deps/flow_cli-bd8f1da68607fc1b)
+
+running 10 tests
+test doctor_reports_missing_bot ... FAILED
+test doctor_rejects_failed_command_and_code_host_auth ... FAILED
+test intake_refuses_on_doctor_failure ... FAILED
+test doctor_reports_command_not_on_path ... FAILED
+test intake_snapshots_workflow_and_templates_without_credentials ... FAILED
+test doctor_probes_every_bot_auth_and_project_commands_under_hub_env ... FAILED
+test doctor_requires_bot_completion_not_just_exit_zero ... FAILED
+test cli_controls_reject_stale_targets_and_merge_bypass ... FAILED
+test cli_status_json_schema ... FAILED
+test cli_controls_append_events ... FAILED
+
+failures:
+
+---- doctor_reports_missing_bot stdout ----
+
+thread 'doctor_reports_missing_bot' (94995697) panicked at crates/hermon/tests/flow_cli.rs:327:5:
+error: unrecognized subcommand 'doctor'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- doctor_rejects_failed_command_and_code_host_auth stdout ----
+
+thread 'doctor_rejects_failed_command_and_code_host_auth' (94995695) panicked at crates/hermon/tests/flow_cli.rs:381:5:
+error: unrecognized subcommand 'doctor'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- intake_refuses_on_doctor_failure stdout ----
+
+thread 'intake_refuses_on_doctor_failure' (94995699) panicked at crates/hermon/tests/flow_cli.rs:295:5:
+error: unrecognized subcommand 'run'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- doctor_reports_command_not_on_path stdout ----
+
+thread 'doctor_reports_command_not_on_path' (94995696) panicked at crates/hermon/tests/flow_cli.rs:342:5:
+error: unrecognized subcommand 'doctor'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- intake_snapshots_workflow_and_templates_without_credentials stdout ----
+
+thread 'intake_snapshots_workflow_and_templates_without_credentials' (94995700) panicked at crates/hermon/tests/flow_cli.rs:244:9:
+intake must succeed: error: unrecognized subcommand 'run'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- doctor_probes_every_bot_auth_and_project_commands_under_hub_env stdout ----
+
+thread 'doctor_probes_every_bot_auth_and_project_commands_under_hub_env' (94995694) panicked at crates/hermon/tests/flow_cli.rs:354:5:
+error: unrecognized subcommand 'doctor'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- doctor_requires_bot_completion_not_just_exit_zero stdout ----
+
+thread 'doctor_requires_bot_completion_not_just_exit_zero' (94995698) panicked at crates/hermon/tests/flow_cli.rs:403:5:
+error: unrecognized subcommand 'doctor'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- cli_controls_reject_stale_targets_and_merge_bypass stdout ----
+
+thread 'cli_controls_reject_stale_targets_and_merge_bypass' (94995692) panicked at crates/hermon/tests/flow_cli.rs:244:9:
+intake must succeed: error: unrecognized subcommand 'run'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- cli_status_json_schema stdout ----
+
+thread 'cli_status_json_schema' (94995693) panicked at crates/hermon/tests/flow_cli.rs:244:9:
+intake must succeed: error: unrecognized subcommand 'run'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+
+---- cli_controls_append_events stdout ----
+
+thread 'cli_controls_append_events' (94995691) panicked at crates/hermon/tests/flow_cli.rs:244:9:
+intake must succeed: error: unrecognized subcommand 'run'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cli_controls_append_events
+    cli_controls_reject_stale_targets_and_merge_bypass
+    cli_status_json_schema
+    doctor_probes_every_bot_auth_and_project_commands_under_hub_env
+    doctor_rejects_failed_command_and_code_host_auth
+    doctor_reports_command_not_on_path
+    doctor_reports_missing_bot
+    doctor_requires_bot_completion_not_just_exit_zero
+    intake_refuses_on_doctor_failure
+    intake_snapshots_workflow_and_templates_without_credentials
+
+test result: FAILED. 0 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s
+
+error: test failed, to rerun pass `-p hermon --test flow_cli`
