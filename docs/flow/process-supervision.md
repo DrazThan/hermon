@@ -46,8 +46,15 @@ cannot establish completion. Full stdout/stderr logs remain on disk.
 The Hermes command builder preserves Slice 0's exact
 `hermes -p <profile> chat -Q --query-file <task>` argv and explicit
 `--resume <session>`. Its parser takes the final opaque `session_id:` trailer
-from stderr. Actual Hermes launches remain a capability block: the installed
+from stderr. These legacy Hermes launches remain a capability block: the installed
 CLI delegates to a shared gateway, and Slice 0 did not establish a supported
 scoped cancellation mechanism during active tools. This slice adds no dependency
 on the internal cleanup RPC and never stops the gateway. See
 [the recorded supervision gate](agent-contracts.md).
+
+The separate opt-in `HermesAcp` binding uses the public ACP v1 transport. Its
+exact-session cancellation waits for the submitted prompt's terminal response;
+transport death leaves gateway work unsettled and retains capacity. A pinned
+version/current model and read-only main-call usage establish model-family
+provenance before accepting a result. See [Hermes ACP](hermes-acp.md) for the
+configuration, permissions and live evidence.

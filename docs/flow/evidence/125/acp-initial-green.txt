@@ -1,0 +1,46 @@
+    Blocking waiting for file lock on build directory
+   Compiling rusqlite v0.40.2
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.69s
+     Running tests/acp_provenance.rs (target/debug/deps/acp_provenance-db7948f64f12070d)
+
+running 9 tests
+test acp_missing_vendor_db_is_a_capability_block_without_creating_it ... ok
+test acp_known_provider_model_pairs_supply_real_model_families ... ok
+test acp_unknown_provider_model_pair_never_launches_or_claims_family ... ok
+test acp_end_turn_accepts_only_recorded_main_model_usage_and_preserves_readonly_db ... ok
+test acp_initialize_version_mismatch_cannot_start_a_session_or_prompt ... ok
+test acp_current_model_mismatch_cannot_send_a_prompt ... ok
+test acp_main_usage_can_follow_only_compression_parent_lineage ... ok
+test acp_compression_lineage_limit_and_cycles_cannot_become_usage_evidence ... ok
+test acp_end_turn_rejects_missing_auxiliary_zero_foreign_or_mixed_main_usage ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.73s
+
+     Running tests/hermes_acp.rs (target/debug/deps/hermes_acp-172eb002ae464a02)
+
+running 6 tests
+test acp_viewer_exit_without_terminal_response_remains_uncertain ... ok
+test acp_late_end_turn_cannot_override_persisted_cancellation ... ok
+test acp_dangerous_permission_request_is_denied_by_default ... ok
+test acp_start_records_runtime_session_and_preserves_profile_argv ... FAILED
+test acp_owner_answer_loads_exact_prior_acp_session_and_delivers_answer ... ok
+test acp_deadline_cancels_exact_session_and_leaves_unrelated_session_running ... ok
+
+failures:
+
+---- acp_start_records_runtime_session_and_preserves_profile_argv stdout ----
+
+thread 'acp_start_records_runtime_session_and_preserves_profile_argv' (96242173) panicked at crates/hermon-flow/tests/hermes_acp.rs:216:5:
+assertion failed: events.iter().any(|e|
+        e["event"] == "new" && e["cwd"] == fixture.workdir.to_str().unwrap()
+            && e["mcpServers"] == json!([]))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    acp_start_records_runtime_session_and_preserves_profile_argv
+
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+
+error: test failed, to rerun pass `-p hermon-flow --test hermes_acp`

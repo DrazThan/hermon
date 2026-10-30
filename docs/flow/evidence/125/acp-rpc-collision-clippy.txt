@@ -1,0 +1,2 @@
+    Checking hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.73s

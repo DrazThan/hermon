@@ -16,6 +16,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) mod hermes_acp;
+pub use hermes_acp::HermesAcpConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Protocol {
     ResultFile,
@@ -34,6 +37,7 @@ pub struct CommandConfig {
 pub enum BotConfig {
     Command(CommandConfig),
     Hermes { profile: String },
+    HermesAcp(HermesAcpConfig),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessAttempt {
@@ -65,6 +69,10 @@ struct Launch {
     protocol: Protocol,
     timeout_ms: u64,
     created_ms: u64,
+    #[serde(default)]
+    hermes_acp: Option<HermesAcpConfig>,
+    #[serde(default)]
+    resume_session: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 struct State {
@@ -74,6 +82,8 @@ struct State {
     completion: bool,
     result: Option<String>,
     exit_code: Option<i32>,
+    #[serde(default)]
+    hermes: Option<hermes_acp::Receipt>,
 }
 
 pub struct ProcessAgent {
@@ -186,8 +196,28 @@ impl ProcessAgent {
                 .collect::<String>()
         ));
         let _capacity = lock(&bot_lock, false)?.context("bot capacity lock")?;
+        let acp = match self.bots.get(&request.bot).context("unknown bot")? {
+            BotConfig::HermesAcp(config) => {
+                config.validate()?;
+                Some(config.clone())
+            }
+            _ => None,
+        };
+        let acp_command = acp.as_ref().map(|config| CommandConfig {
+            start: vec![
+                "hermes".into(),
+                "-p".into(),
+                config.profile.clone(),
+                "acp".into(),
+            ],
+            resume: None,
+            task_stdin: false,
+            protocol: Protocol::ResultFile,
+            family: hermes_acp::family(&config.model_id).into(),
+        });
         let config = match self.bots.get(&request.bot).context("unknown bot")? {
             BotConfig::Command(config) => config,
+            BotConfig::HermesAcp(_) => acp_command.as_ref().unwrap(),
             BotConfig::Hermes { .. } => bail!(
                 "Hermes requires a verified scoped cancellation capability; shared gateway supervision is unavailable"
             ),
@@ -223,6 +253,8 @@ impl ProcessAgent {
             protocol: config.protocol.clone(),
             timeout_ms: u64::try_from(self.timeout.as_millis())?.max(1),
             created_ms: now_ms(),
+            hermes_acp: acp,
+            resume_session: session.cloned(),
         };
         let mut command = Command::new(&self.worker);
         if let Some(subcommand) = &self.worker_subcommand {
@@ -309,11 +341,17 @@ impl ProcessAgent {
                 !directory.join("launch.json").exists(),
                 "cannot add an answer to an already launched attempt"
             );
-            let resumable = matches!(self.bots.get(&request.bot), Some(BotConfig::Command(config)) if config.resume.is_some());
-            let session = self
-                .attempt(previous_handle)?
-                .session_id
-                .filter(|_| resumable);
+            let session = match self.bots.get(&request.bot) {
+                Some(BotConfig::HermesAcp(_)) => {
+                    read_json::<State>(&previous.join("process.json"))?
+                        .hermes
+                        .map(|receipt| receipt.acp_session_id)
+                }
+                Some(BotConfig::Command(config)) if config.resume.is_some() => {
+                    self.attempt(previous_handle)?.session_id
+                }
+                _ => None,
+            };
             let mut task = fs::read_to_string(directory.join("task.md"))?;
             if session.is_none() {
                 task.push_str("\n\n## Prior task context\n");
@@ -395,6 +433,7 @@ impl Agent for ProcessAgent {
         match self.bots.get(bot) {
             Some(BotConfig::Command(config)) => config.family.clone(),
             Some(BotConfig::Hermes { .. }) => "hermes".into(),
+            Some(BotConfig::HermesAcp(config)) => hermes_acp::family(&config.model_id).into(),
             None => String::new(),
         }
     }
@@ -747,6 +786,7 @@ pub fn worker_main_at(directory: &Path) -> Result<()> {
         completion: false,
         result: None,
         exit_code: None,
+        hermes: None,
     };
     write_json(&directory.join("process.json"), &state)?;
     // A fresh launch must earn fresh result evidence. Keep any file left in
@@ -759,6 +799,9 @@ pub fn worker_main_at(directory: &Path) -> Result<()> {
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error).context("archive pre-existing result"),
+    }
+    if launch.hermes_acp.is_some() {
+        return hermes_acp::run(&directory, &launch, &mut state, None);
     }
     let mut command = Command::new(&launch.argv[0]);
     command

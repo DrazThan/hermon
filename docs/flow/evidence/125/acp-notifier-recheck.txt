@@ -1,0 +1,9 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.37s
+     Running unittests src/lib.rs (target/debug/deps/hermon-18a1fd736ff12339)
+
+running 1 test
+test notify::delivery_tests::deliver_invokes_terminal_notifier_with_the_banner_fields ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 429 filtered out; finished in 0.16s

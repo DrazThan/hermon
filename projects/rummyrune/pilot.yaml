@@ -1,0 +1,63 @@
+# ACP example: replace operator paths, owner identity and repository before use.
+# Public transport contract evidence: docs/flow/evidence/hermes-acp/.
+repo: /absolute/path/to/repository
+worktree_root: /absolute/path/to/worktrees
+branch_prefix: codex
+base: staging
+start: plan
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+  HOME: /absolute/path/to/home
+  PATH: /path/to/hermes/bin:/path/to/pnpm/bin:/path/to/node/bin:/path/to/postgres/bin:/usr/bin:/bin
+bots:
+  sdlc-planner:
+    HermesAcp:
+      profile: sdlc-planner
+      model_id: 'openai-codex:gpt-6-astra-900k'
+      version: '0.22.5'
+      state_db: /absolute/path/to/hermes/profiles/sdlc-planner/state.db
+  sdlc-test-writer:
+    HermesAcp:
+      profile: sdlc-test-writer
+      model_id: 'xai-oauth:grok-4.7'
+      version: '0.22.5'
+      state_db: /absolute/path/to/hermes/profiles/sdlc-test-writer/state.db
+  sdlc-implementer:
+    HermesAcp:
+      profile: sdlc-implementer
+      model_id: 'openai-codex:gpt-6.1-sol-900k'
+      version: '0.22.5'
+      state_db: /absolute/path/to/hermes/profiles/sdlc-implementer/state.db
+  sdlc-reviewer:
+    HermesAcp:
+      profile: sdlc-reviewer
+      model_id: 'claude-subscription-directsdk-experimental:opus'
+      version: '0.22.5'
+      state_db: /absolute/path/to/hermes/profiles/sdlc-reviewer/state.db
+  sdlc-docs:
+    HermesAcp:
+      profile: sdlc-docs
+      model_id: 'xai-oauth:grok-4.7'
+      version: '0.22.5'
+      state_db: /absolute/path/to/hermes/profiles/sdlc-docs/state.db
+paths:
+  tests: ['**/*.test.*', '**/*.spec.*', 'tests/**']
+commands:
+  lint:
+    argv: [pnpm, lint]
+    timeout_seconds: 600
+  test:
+    argv: [pnpm, exec, vitest, run, --workspace, tests/vitest.workspace.ts, --no-file-parallelism, --reporter=json]
+    report: VitestJson
+    timeout_seconds: 1800
+  project_check:
+    argv: [pnpm, check]
+    timeout_seconds: 3600
+tracker:
+  endpoint: https://api.linear.app/graphql
+  token_env: HERMON_LINEAR_TOKEN
+  owner_ids: [replace-with-owner-user-id]
+  owner_mention: '@owner'
+code_host:
+  repo: your-org/your-repo
+  remote: origin
