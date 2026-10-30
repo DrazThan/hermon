@@ -42,6 +42,5 @@ and usage without allocating a run or worktree.
 
 No remaining material issue was identified in this adapter review. The live
 five-profile and scoped active-tool cancellation probes are separate evidence.
-These synthetic results establish the adapter contracts tested here; the live
-the owner-selected pilot workflow, its owner gates, PR, owner merge and Docs still need their own
-run evidence.
+These synthetic results establish the adapter contracts tested here. The live
+workflow, owner gates, PR, owner merge and Docs still need their own run evidence.

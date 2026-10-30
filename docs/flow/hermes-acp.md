@@ -48,6 +48,6 @@ files or exported receipts.
 [Independent validation](evidence/125/acp-independent-validation.md) covers 22
 frozen acceptance tests. The [live prerequisite record](evidence/hermes-acp/live-contract.md)
 covers five-profile result/provenance probes and cancellation during active
-tools with an unrelated control. These are prerequisites to the guided the owner-selected pilot
+tools with an unrelated control. These are prerequisites to the guided pilot
 workflow. Owner GO, product acceptance, PR, owner merge and Docs require their
 own live evidence.

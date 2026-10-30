@@ -32,4 +32,4 @@ Live five-profile result/provenance and two-session active-tool cancellation
 probes passed on Hermes 0.22.4 and were repeated successfully on 0.22.5 after the
 first integrated doctor detected a version change before submitting any prompt.
 The pilot configuration pins 0.22.5. These prerequisite results do not complete
-the live the owner-selected pilot workflow or its owner gates.
+the live workflow or its owner gates.
