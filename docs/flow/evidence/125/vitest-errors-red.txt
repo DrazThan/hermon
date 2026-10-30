@@ -1,0 +1,92 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running tests/flow_vitest_errors.rs (target/debug/deps/flow_vitest_errors-df347896663a1a0f)
+
+running 7 tests
+test vitest_pending_and_todo_counts_survive_into_red_evidence ... FAILED
+test vitest_failure_named_only_in_summary_cannot_pass_red ... FAILED
+test vitest_inconsistent_assertion_counts_cannot_pass_red ... FAILED
+test vitest_baseline_failure_cannot_be_reclassified_as_new_red ... FAILED
+test vitest_success_exit_cannot_pass_red_even_when_json_contains_failures ... FAILED
+test vitest_suite_error_cannot_pass_red_with_an_expected_failed_assertion ... FAILED
+test vitest_failed_suite_without_failed_assertions_cannot_pass_red ... FAILED
+
+failures:
+
+---- vitest_pending_and_todo_counts_survive_into_red_evidence stdout ----
+
+thread 'vitest_pending_and_todo_counts_survive_into_red_evidence' (95488448) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpzplLhA/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+---- vitest_failure_named_only_in_summary_cannot_pass_red stdout ----
+
+thread 'vitest_failure_named_only_in_summary_cannot_pass_red' (95488446) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpZ5iox1/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+---- vitest_inconsistent_assertion_counts_cannot_pass_red stdout ----
+
+thread 'vitest_inconsistent_assertion_counts_cannot_pass_red' (95488447) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpCKJt35/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+---- vitest_baseline_failure_cannot_be_reclassified_as_new_red stdout ----
+
+thread 'vitest_baseline_failure_cannot_be_reclassified_as_new_red' (95488444) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpnZo9uQ/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- vitest_success_exit_cannot_pass_red_even_when_json_contains_failures stdout ----
+
+thread 'vitest_success_exit_cannot_pass_red_even_when_json_contains_failures' (95488449) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpfQJnRR/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+---- vitest_suite_error_cannot_pass_red_with_an_expected_failed_assertion stdout ----
+
+thread 'vitest_suite_error_cannot_pass_red_with_an_expected_failed_assertion' (95488450) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpKbK9xf/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+---- vitest_failed_suite_without_failed_assertions_cannot_pass_red stdout ----
+
+thread 'vitest_failed_suite_without_failed_assertions_cannot_pass_red' (95488445) panicked at crates/hermon/tests/support/vitest_fixture.rs:245:9:
+intake must succeed: Error: /var/folders/jt/wvl63qxs5714108c28kp3z2m0000gn/T/.tmpwRkByt/fixture with spaces/project.json: invalid project
+
+Caused by:
+    commands.test.report: unknown field `report`, expected `argv` or `timeout_seconds`
+
+
+
+failures:
+    vitest_baseline_failure_cannot_be_reclassified_as_new_red
+    vitest_failed_suite_without_failed_assertions_cannot_pass_red
+    vitest_failure_named_only_in_summary_cannot_pass_red
+    vitest_inconsistent_assertion_counts_cannot_pass_red
+    vitest_pending_and_todo_counts_survive_into_red_evidence
+    vitest_success_exit_cannot_pass_red_even_when_json_contains_failures
+    vitest_suite_error_cannot_pass_red_with_an_expected_failed_assertion
+
+test result: FAILED. 0 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.53s
+
+error: test failed, to rerun pass `-p hermon --test flow_vitest_errors`
