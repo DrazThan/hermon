@@ -39,6 +39,8 @@ fn foreground_hub_advances_queued_run_with_project_environment() {
                 }
                 Err(error) => panic!("accept tracker fixture: {error}"),
             };
+            // macOS inherits the listener's nonblocking flag on accept.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
