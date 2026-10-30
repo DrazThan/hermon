@@ -1,0 +1,57 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running tests/hermes_acp.rs (target/debug/deps/hermes_acp-12073f57c379b8a0)
+
+running 6 tests
+test acp_late_end_turn_cannot_override_persisted_cancellation ... FAILED
+test acp_dangerous_permission_request_is_denied_by_default ... FAILED
+test acp_viewer_exit_without_terminal_response_remains_uncertain ... FAILED
+test acp_deadline_cancels_exact_session_and_leaves_unrelated_session_running ... FAILED
+test acp_owner_answer_loads_exact_prior_acp_session_and_delivers_answer ... FAILED
+test acp_start_records_runtime_session_and_preserves_profile_argv ... FAILED
+
+failures:
+
+---- acp_late_end_turn_cannot_override_persisted_cancellation stdout ----
+
+thread 'acp_late_end_turn_cannot_override_persisted_cancellation' (96212344) panicked at crates/hermon-flow/tests/hermes_acp.rs:56:157:
+verified public ACP must be an explicit supported opt-in binding: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_dangerous_permission_request_is_denied_by_default stdout ----
+
+thread 'acp_dangerous_permission_request_is_denied_by_default' (96212342) panicked at crates/hermon-flow/tests/hermes_acp.rs:56:157:
+verified public ACP must be an explicit supported opt-in binding: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_viewer_exit_without_terminal_response_remains_uncertain stdout ----
+
+thread 'acp_viewer_exit_without_terminal_response_remains_uncertain' (96212347) panicked at crates/hermon-flow/tests/hermes_acp.rs:56:157:
+verified public ACP must be an explicit supported opt-in binding: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_deadline_cancels_exact_session_and_leaves_unrelated_session_running stdout ----
+
+thread 'acp_deadline_cancels_exact_session_and_leaves_unrelated_session_running' (96212343) panicked at crates/hermon-flow/tests/hermes_acp.rs:56:157:
+verified public ACP must be an explicit supported opt-in binding: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_owner_answer_loads_exact_prior_acp_session_and_delivers_answer stdout ----
+
+thread 'acp_owner_answer_loads_exact_prior_acp_session_and_delivers_answer' (96212345) panicked at crates/hermon-flow/tests/hermes_acp.rs:56:157:
+verified public ACP must be an explicit supported opt-in binding: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_start_records_runtime_session_and_preserves_profile_argv stdout ----
+
+thread 'acp_start_records_runtime_session_and_preserves_profile_argv' (96212346) panicked at crates/hermon-flow/tests/hermes_acp.rs:56:157:
+verified public ACP must be an explicit supported opt-in binding: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    acp_dangerous_permission_request_is_denied_by_default
+    acp_deadline_cancels_exact_session_and_leaves_unrelated_session_running
+    acp_late_end_turn_cannot_override_persisted_cancellation
+    acp_owner_answer_loads_exact_prior_acp_session_and_delivers_answer
+    acp_start_records_runtime_session_and_preserves_profile_argv
+    acp_viewer_exit_without_terminal_response_remains_uncertain
+
+test result: FAILED. 0 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+error: test failed, to rerun pass `-p hermon-flow --test hermes_acp`

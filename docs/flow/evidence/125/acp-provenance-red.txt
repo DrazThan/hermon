@@ -1,0 +1,72 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests/acp_provenance.rs (target/debug/deps/acp_provenance-761461fd130e226d)
+
+running 9 tests
+test acp_missing_vendor_db_is_a_capability_block_without_creating_it ... FAILED
+test acp_known_provider_model_pairs_supply_real_model_families ... FAILED
+test acp_unknown_provider_model_pair_never_launches_or_claims_family ... ok
+test acp_end_turn_rejects_missing_auxiliary_zero_foreign_or_mixed_main_usage ... FAILED
+test acp_end_turn_accepts_only_recorded_main_model_usage_and_preserves_readonly_db ... FAILED
+test acp_main_usage_can_follow_only_compression_parent_lineage ... FAILED
+test acp_initialize_version_mismatch_cannot_start_a_session_or_prompt ... FAILED
+test acp_current_model_mismatch_cannot_send_a_prompt ... FAILED
+test acp_compression_lineage_limit_and_cycles_cannot_become_usage_evidence ... FAILED
+
+failures:
+
+---- acp_missing_vendor_db_is_a_capability_block_without_creating_it stdout ----
+
+thread 'acp_missing_vendor_db_is_a_capability_block_without_creating_it' (96211122) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_known_provider_model_pairs_supply_real_model_families stdout ----
+
+thread 'acp_known_provider_model_pairs_supply_real_model_families' (96211120) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- acp_end_turn_rejects_missing_auxiliary_zero_foreign_or_mixed_main_usage stdout ----
+
+thread 'acp_end_turn_rejects_missing_auxiliary_zero_foreign_or_mixed_main_usage' (96211118) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_end_turn_accepts_only_recorded_main_model_usage_and_preserves_readonly_db stdout ----
+
+thread 'acp_end_turn_accepts_only_recorded_main_model_usage_and_preserves_readonly_db' (96211117) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_main_usage_can_follow_only_compression_parent_lineage stdout ----
+
+thread 'acp_main_usage_can_follow_only_compression_parent_lineage' (96211121) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_initialize_version_mismatch_cannot_start_a_session_or_prompt stdout ----
+
+thread 'acp_initialize_version_mismatch_cannot_start_a_session_or_prompt' (96211119) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_current_model_mismatch_cannot_send_a_prompt stdout ----
+
+thread 'acp_current_model_mismatch_cannot_send_a_prompt' (96211116) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+---- acp_compression_lineage_limit_and_cycles_cannot_become_usage_evidence stdout ----
+
+thread 'acp_compression_lineage_limit_and_cycles_cannot_become_usage_evidence' (96211115) panicked at crates/hermon-flow/tests/acp_provenance.rs:105:14:
+explicit opt-in ACP configuration must load: Error("unknown variant `HermesAcp`, expected `Command` or `Hermes`", line: 0, column: 0)
+
+
+failures:
+    acp_compression_lineage_limit_and_cycles_cannot_become_usage_evidence
+    acp_current_model_mismatch_cannot_send_a_prompt
+    acp_end_turn_accepts_only_recorded_main_model_usage_and_preserves_readonly_db
+    acp_end_turn_rejects_missing_auxiliary_zero_foreign_or_mixed_main_usage
+    acp_initialize_version_mismatch_cannot_start_a_session_or_prompt
+    acp_known_provider_model_pairs_supply_real_model_families
+    acp_main_usage_can_follow_only_compression_parent_lineage
+    acp_missing_vendor_db_is_a_capability_block_without_creating_it
+
+test result: FAILED. 1 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+error: test failed, to rerun pass `-p hermon-flow --test acp_provenance`
