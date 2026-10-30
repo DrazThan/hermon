@@ -1,0 +1,37 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.75s
+     Running tests/flow_publication.rs (target/debug/deps/flow_publication-3b1bcf7cc8fcb9ef)
+
+running 2 tests
+test owner_go_comment_contains_accepted_published_plan_without_owner_nudge ... FAILED
+test final_docs_completion_publishes_one_central_outcome_after_restart ... FAILED
+
+failures:
+
+---- owner_go_comment_contains_accepted_published_plan_without_owner_nudge stdout ----
+
+thread 'owner_go_comment_contains_accepted_published_plan_without_owner_nudge' (95558117) panicked at crates/hermon/tests/flow_publication.rs:365:5:
+GO must carry the accepted published plan so the owner can review it: [Owner](https://linear.app/fixture/profiles/owner-123) Please review the plan and reply GO to continue.
+
+Technical: Approval for step owner\_go, request 1
+
+
+
+<!-- hermon:run=TICKET-123;request=gate:owner_go:1 -->
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- final_docs_completion_publishes_one_central_outcome_after_restart stdout ----
+
+thread 'final_docs_completion_publishes_one_central_outcome_after_restart' (95558116) panicked at crates/hermon/tests/flow_publication.rs:420:5:
+assertion `left == right` failed: Done must publish one final central outcome: ["Started published\\-outcome on flow/TICKET\\-123.\n\nTechnical: base main; hermon status TICKET\\-123\n\n\n<!-- hermon:run=TICKET-123;request=started -->"]
+  left: 0
+ right: 1
+
+
+failures:
+    final_docs_completion_publishes_one_central_outcome_after_restart
+    owner_go_comment_contains_accepted_published_plan_without_owner_nudge
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.55s
+
+error: test failed, to rerun pass `-p hermon --test flow_publication`
