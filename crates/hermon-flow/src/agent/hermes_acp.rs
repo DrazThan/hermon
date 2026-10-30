@@ -463,30 +463,59 @@ pub(super) fn run(
         // retained as uncertain; no other worker can resend this attempt.
         write_json(&directory.join("process.json"), state)?;
         submitted = true;
-        let id = client.request(
-            "session/prompt",
-            json!({"sessionId":sid,"prompt":[{"type":"text","text":task}]}),
-        )?;
-        let result = client.wait(id, directory, launch, state, true)?;
-        let reason = result["stopReason"]
-            .as_str()
-            .context("missing ACP terminal stopReason")?;
-        ensure!(
-            [
-                "end_turn",
-                "cancelled",
-                "max_tokens",
-                "max_turn_requests",
-                "refusal"
-            ]
-            .contains(&reason),
-            "unknown ACP terminal stopReason"
-        );
-        terminal = true;
-        state.hermes.as_mut().unwrap().settled = true;
-        write_json(&directory.join("process.json"), state)?;
-        if reason != "end_turn" || state.attempt.cancelled || state.attempt.timed_out {
-            return Ok(());
+        let mut prompt = task;
+        for turn in 0..4 {
+            if turn > 0 {
+                state.attempt.cancelled |= directory.join("cancel").exists();
+                state.attempt.timed_out |=
+                    now_ms().saturating_sub(launch.created_ms) >= launch.timeout_ms;
+                if state.attempt.cancelled || state.attempt.timed_out {
+                    client.cancel(&sid)?;
+                    return Ok(());
+                }
+            }
+            // A model may end a conversational turn while a background check
+            // is still running. Keep the same owned attempt and session until
+            // it delivers the file contract, without resetting its deadline.
+            terminal = false;
+            state.hermes.as_mut().unwrap().settled = false;
+            write_json(&directory.join("process.json"), state)?;
+            let id = client.request(
+                "session/prompt",
+                json!({"sessionId":sid,"prompt":[{"type":"text","text":prompt}]}),
+            )?;
+            let result = client.wait(id, directory, launch, state, true)?;
+            let reason = result["stopReason"]
+                .as_str()
+                .context("missing ACP terminal stopReason")?;
+            ensure!(
+                [
+                    "end_turn",
+                    "cancelled",
+                    "max_tokens",
+                    "max_turn_requests",
+                    "refusal"
+                ]
+                .contains(&reason),
+                "unknown ACP terminal stopReason"
+            );
+            terminal = true;
+            state.hermes.as_mut().unwrap().settled = true;
+            write_json(&directory.join("process.json"), state)?;
+            if reason != "end_turn" || state.attempt.cancelled || state.attempt.timed_out {
+                return Ok(());
+            }
+            if directory.join("result.json").try_exists()? {
+                break;
+            }
+            ensure!(
+                turn < 3,
+                "Hermes ended four turns without the assigned result.json; inspect existing background jobs before retrying"
+            );
+            prompt = format!(
+                "Continue only the current workflow step and its existing task contract. The assigned result.json at {} is still missing. If a background job is running, wait on its existing process handle for the actual outcome; do not relaunch it. Complete and validate the declared artifacts, then write result.json using the task's schema. Report any block or owner question through that file. No owner approval is implied: do not pass gates, start successor steps, merge or deploy.",
+                directory.join("result.json").display()
+            );
         }
         let refreshed = client.rpc(
             "session/load",
