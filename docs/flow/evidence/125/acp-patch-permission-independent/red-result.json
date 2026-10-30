@@ -1,0 +1,17 @@
+{
+  "base_commit": "585c3f258a5adbfac58f6ad60679efbf0f7eb076",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "hermon-flow",
+    "--test",
+    "acp_patch_permission_independent",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 101,
+  "passed": 3,
+  "failed": 1,
+  "note": "Compiled behavioral RED: safe owned updates are denied; denial matrix already passes."
+}

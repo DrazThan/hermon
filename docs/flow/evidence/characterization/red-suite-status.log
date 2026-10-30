@@ -1,0 +1,30 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/characterization.rs (target/debug/deps/characterization-b84c6c41fce2987d)
+
+running 9 tests
+test characterization_pack_keeps_owner_gates_test_scope_freeze_and_independent_review ... ok
+test counts_only_report_cannot_prove_named_passing_assertions ... ok
+test named_passes_accept_unrelated_skips_and_duplicate_baseline_names ... ok
+test failed_suite_cannot_be_hidden_by_passing_assertions ... FAILED
+test no_expectations_or_baseline_failures_cannot_authorize_characterization ... ok
+test strict_red_still_rejects_characterization_and_accepts_expected_failures ... ok
+test exit_and_report_success_are_both_required ... ok
+test runtime_collection_count_and_unrelated_failures_remain_blocks ... ok
+test required_assertions_must_all_exist_pass_and_be_unambiguous ... ok
+
+failures:
+
+---- failed_suite_cannot_be_hidden_by_passing_assertions stdout ----
+
+thread 'failed_suite_cannot_be_hidden_by_passing_assertions' (97467613) panicked at crates/hermon-flow/tests/characterization.rs:183:5:
+assertion failed: !positive(suite, &["required"])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    failed_suite_cannot_be_hidden_by_passing_assertions
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+
+error: test failed, to rerun pass `-p hermon-flow --test characterization`

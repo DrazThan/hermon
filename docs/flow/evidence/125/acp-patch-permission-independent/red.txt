@@ -1,0 +1,27 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.81s
+     Running tests/acp_patch_permission_independent.rs (target/debug/deps/acp_patch_permission_independent-051eab5cdfdd7521)
+
+running 4 tests
+test canonical_single_and_multiple_owned_updates_receive_allow_once ... FAILED
+test protected_hidden_lock_targets_and_wrong_session_are_denied ... ok
+test path_boundaries_and_mixed_targets_follow_raw_arguments_not_cosmetic_diff ... ok
+test non_update_operations_malformed_headers_and_unknown_modes_are_denied ... ok
+
+failures:
+
+---- canonical_single_and_multiple_owned_updates_receive_allow_once stdout ----
+
+thread 'canonical_single_and_multiple_owned_updates_receive_allow_once' (fixture-thread) panicked at crates/hermon-flow/tests/acp_patch_permission_independent.rs:194:9:
+assertion `left == right` failed
+  left: String("cancelled")
+ right: "selected"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    canonical_single_and_multiple_owned_updates_receive_allow_once
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.97s
+
+error: test failed, to rerun pass `-p hermon-flow --test acp_patch_permission_independent`

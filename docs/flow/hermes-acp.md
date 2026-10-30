@@ -14,12 +14,22 @@ and the configured direct-SDK Anthropic `opus`/`claude-*` provider.
 The public transport retains profile skills, credentials and configured MCP
 servers. Hermon supplies the worktree as cwd and selects `accept_edits` mode.
 Incoming client capability requests are denied. Permission requests can receive
-only an offered `allow_once` for `write_file` inside the exact owned attempt
-directory. The session, absolute path, canonical parent, existing file type and
-protected metadata names must match. Other tools, outside paths, relative paths,
-symlinks, hidden files and locks are denied. Workspace edits use Hermes' own
-`accept_edits` policy. No blanket approval or dangerous-command permission is
-granted by the client.
+only an offered `allow_once` for `write_file` or narrowly scoped `patch` updates
+inside the exact owned attempt directory. The session, absolute path, canonical
+parent, existing file type and protected metadata names must match.
+
+Patch approval reads raw arguments, requires `mode: patch` and accepts only
+canonical `*** Begin Patch` / `*** Update File: <absolute path>` /
+`*** End Patch` framing with explicit, nonempty hunks. Each target must already
+be a regular file; every target must pass before a multi-file patch is approved.
+Add, Delete, Move, unknown operations, malformed headers, trailing path
+whitespace, traversal, symlinks beneath the attempt, hidden paths and locks are
+denied. Displayed titles and diffs do not establish scope. The original
+`write_file` creation policy is unchanged.
+
+Other tools, outside paths and relative paths are denied. Workspace edits use
+Hermes' own `accept_edits` policy. No blanket approval or dangerous-command
+permission is granted by the client.
 
 Before submission, `process.json` records both stable ACP identity and current
 Hermes session identity. An owner answer explicitly loads the recorded ACP

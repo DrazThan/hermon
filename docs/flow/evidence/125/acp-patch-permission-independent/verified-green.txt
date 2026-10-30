@@ -1,0 +1,12 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.19s
+     Running tests/acp_patch_permission_independent.rs (target/debug/deps/acp_patch_permission_independent-051eab5cdfdd7521)
+
+running 4 tests
+test canonical_single_and_multiple_owned_updates_receive_allow_once ... ok
+test protected_hidden_lock_targets_and_wrong_session_are_denied ... ok
+test path_boundaries_and_mixed_targets_follow_raw_arguments_not_cosmetic_diff ... ok
+test non_update_operations_malformed_headers_and_unknown_modes_are_denied ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.16s
+

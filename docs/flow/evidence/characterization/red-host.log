@@ -1,0 +1,46 @@
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running tests/flow_characterization.rs (target/debug/deps/flow_characterization-ebd28bb6403cc178)
+
+running 4 tests
+test newer_unaccepted_characterization_plan_cannot_replace_required_ids ... FAILED
+test accepted_plan_drives_characterization_and_records_required_passing_ids ... FAILED
+test doctor_requires_test_command_for_positive_gate ... FAILED
+test passing_unrelated_tests_cannot_satisfy_accepted_characterization_plan ... FAILED
+
+failures:
+
+---- newer_unaccepted_characterization_plan_cannot_replace_required_ids stdout ----
+
+thread 'newer_unaccepted_characterization_plan_cannot_replace_required_ids' (97460703) panicked at crates/hermon/tests/support/characterization_fixture.rs:245:9:
+intake must succeed: Error: <temp>/fixture with spaces/workflow.yaml: steps.characterize.check[0]: unknown check or invalid parameter "tests_pass"
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- accepted_plan_drives_characterization_and_records_required_passing_ids stdout ----
+
+thread 'accepted_plan_drives_characterization_and_records_required_passing_ids' (97460701) panicked at crates/hermon/tests/support/characterization_fixture.rs:245:9:
+intake must succeed: Error: <temp>/fixture with spaces/workflow.yaml: steps.characterize.check[0]: unknown check or invalid parameter "tests_pass"
+
+
+---- doctor_requires_test_command_for_positive_gate stdout ----
+
+thread 'doctor_requires_test_command_for_positive_gate' (97460702) panicked at crates/hermon/tests/support/characterization_fixture.rs:306:44:
+called `Result::unwrap()` on an `Err` value: Error("EOF while parsing a value", line: 1, column: 0)
+
+---- passing_unrelated_tests_cannot_satisfy_accepted_characterization_plan stdout ----
+
+thread 'passing_unrelated_tests_cannot_satisfy_accepted_characterization_plan' (97460704) panicked at crates/hermon/tests/support/characterization_fixture.rs:245:9:
+intake must succeed: Error: <temp>/fixture with spaces/workflow.yaml: steps.characterize.check[0]: unknown check or invalid parameter "tests_pass"
+
+
+
+failures:
+    accepted_plan_drives_characterization_and_records_required_passing_ids
+    doctor_requires_test_command_for_positive_gate
+    newer_unaccepted_characterization_plan_cannot_replace_required_ids
+    passing_unrelated_tests_cannot_satisfy_accepted_characterization_plan
+
+test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.55s
+
+error: test failed, to rerun pass `-p hermon --test flow_characterization`

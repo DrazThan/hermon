@@ -28,6 +28,10 @@ Full detail (issues, acceptance criteria) lives on the
 
 ## Sequencing notes
 
+- The [characterization pack](flow/characterization.md) adds an opt-in test-only
+  path for existing behavior, with named passing assertions, owner gates and
+  independent review. The guided live pilot remains pending.
+
 - M1–M10 are closed. M11 adds opt-in workflow execution alongside monitoring;
   it remains open until the guided RummyRune pilot records its live gates and
   owner merge/Docs outcome. The shipped Hermes profile bindings retain the

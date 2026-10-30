@@ -17,6 +17,11 @@ an owner approval, live workflow, merge or Docs success.
 
 ## Pack contracts
 
+Test-only verification of existing behavior uses the separate
+[`sdlc-characterization` pack](characterization.md), selected at new-run intake
+with fresh Plan and Owner GO. Its named passing assertion gate preserves the
+strict RED workflow described below.
+
 Plan produces `plan.md`, `test-brief.md`, `impl-brief.md` and
 `test-expectations.json` beside its attempt's `result.json`. The plan names exact
 new acceptance test IDs and verified baseline failures, for example:
@@ -66,6 +71,22 @@ role files and their SHA-256 hashes into `context/roles/` and
 out-of-pack or oversized files fail intake before worktree allocation. The host
 checks the snapshot hash before writing the task. Later source edits affect only
 new runs; older packs without role files keep their existing behavior.
+
+An ACP `end_turn` can be an interim message while a tracked background check is
+still running. If `result.json` is missing, the adapter permits at most three
+follow-ups in the same owned attempt and session. Each reminder stays within
+the current file contract and tells the worker to wait on its existing job.
+The original deadline and cancellation scope remain in force. An existing
+result file stops continuation immediately and goes through strict validation;
+it is never rewritten into success. Four turns without a result produce a
+capability block, with existing background jobs to inspect before retrying.
+No reminder supplies an owner answer or passes a gate.
+
+Use the configured project environment for agent-run checks too. A terminal
+service can add ambient deployment variables or impose a shorter foreground
+deadline. A local wrapper with an explicit environment and tracked background
+execution preserves the command's actual exit result. When fixtures rebuild
+shared output, serialize packages and test workers without removing tests.
 
 The Owner GO comment includes the accepted published plan body (at most 32 KiB),
 so the owner can review it in the request thread. Oversized or unreadable plans

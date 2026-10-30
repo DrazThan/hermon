@@ -1,0 +1,11 @@
+{
+  "frozen_packet_passed": 4,
+  "doctor_regressions_passed": 3,
+  "additional_parser_unit_tests_passed": 3,
+  "format": "passed",
+  "strict_all_target_clippy": "passed",
+  "frozen_source_hashes": "unchanged",
+  "write_file_policy": "unchanged",
+  "release_build": "passed",
+  "acp_integration_tests_passed": 28
+}

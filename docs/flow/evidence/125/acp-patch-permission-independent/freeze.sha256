@@ -1,0 +1,3 @@
+80c78823c891a950c64f4165299280efb4f40bfc83075e74a34dd5608a8e19ab  crates/hermon-flow/tests/acp_patch_permission_independent.rs
+fd24e6c5bae42281c992648593de68bf3864df5d268e92ed75eeb37280f33080  crates/hermon-flow/tests/fixtures/hermes-acp-patch-permission.py
+5dc1f8c15e5a83c70e9752a1d7f08676d52d7c4cf1388fe9677c60c3801e9931  docs/flow/evidence/125/acp-patch-permission-independent/acceptance.md

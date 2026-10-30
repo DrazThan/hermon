@@ -1,0 +1,9 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests/characterization_pack_independent.rs (target/debug/deps/characterization_pack_independent-ad374449bc272180)
+
+running 2 tests
+test shipped_strict_sdlc_pack_still_requires_behavioral_red ... ok
+test shipped_characterization_pack_keeps_owner_gates_and_bounded_independent_review ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

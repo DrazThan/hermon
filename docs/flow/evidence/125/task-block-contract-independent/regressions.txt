@@ -1,0 +1,44 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.84s
+     Running tests/characterization.rs (target/debug/deps/characterization-b84c6c41fce2987d)
+
+running 9 tests
+test characterization_pack_keeps_owner_gates_test_scope_freeze_and_independent_review ... ok
+test counts_only_report_cannot_prove_named_passing_assertions ... ok
+test named_passes_accept_unrelated_skips_and_duplicate_baseline_names ... ok
+test no_expectations_or_baseline_failures_cannot_authorize_characterization ... ok
+test failed_suite_cannot_be_hidden_by_passing_assertions ... ok
+test strict_red_still_rejects_characterization_and_accepts_expected_failures ... ok
+test exit_and_report_success_are_both_required ... ok
+test runtime_collection_count_and_unrelated_failures_remain_blocks ... ok
+test required_assertions_must_all_exist_pass_and_be_unambiguous ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.05s
+
+     Running tests/characterization_independent.rs (target/debug/deps/characterization_independent-b71488a068b225cf)
+
+running 12 tests
+test duplicate_expected_id_is_ambiguous_even_when_all_copies_pass ... ok
+test missing_expected_id_rejects_counts_that_otherwise_pass ... ok
+test inconsistent_assertion_counts_cannot_prove_named_passes ... ok
+test failed_expected_id_never_establishes_pass_even_with_exit_zero ... ok
+test original_red_still_requires_real_expected_failures ... ok
+test accepted_named_passing_ids_are_recorded_without_unrelated_names ... ok
+test empty_expected_ids_and_declared_baseline_failures_are_rejected ... ok
+test counts_only_and_incompatible_report_formats_cannot_prove_named_passes ... ok
+test nonzero_and_signal_exit_cannot_prove_named_passes ... ok
+test skipped_pending_and_todo_expected_ids_never_establish_pass ... ok
+test suite_and_runtime_errors_cannot_prove_named_passes ... ok
+test characterization_freeze_forbids_test_edits_and_verification_forbids_production_edits ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.61s
+
+     Running tests/sdlc_pack.rs (target/debug/deps/sdlc_pack-5e72da7eb6c7c182)
+
+running 3 tests
+test rummyrune_project_uses_supported_schema_and_honest_profile_bindings ... ok
+test shipped_templates_render_from_pack_with_mentions_and_marker ... ok
+test shipped_sdlc_pack_keeps_gates_freeze_and_bounded_correction ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

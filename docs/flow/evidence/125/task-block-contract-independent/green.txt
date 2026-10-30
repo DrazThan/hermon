@@ -1,0 +1,30 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.58s
+     Running tests/characterization_cli_independent.rs (target/debug/deps/characterization_cli_independent-c38564d380a1ee71)
+
+running 3 tests
+test passing_unrelated_ids_cannot_replace_missing_planner_acceptance ... ok
+test tests_pass_uses_accepted_planner_ids_without_manual_run_edits ... ok
+test newer_unaccepted_planner_directory_cannot_replace_required_passing_ids ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.47s
+
+     Running tests/flow_characterization.rs (target/debug/deps/flow_characterization-ebd28bb6403cc178)
+
+running 5 tests
+test doctor_requires_test_command_for_positive_gate ... ok
+test doctor_rejects_counts_only_report_before_allocating_a_run ... ok
+test accepted_plan_drives_characterization_and_records_required_passing_ids ... ok
+test newer_unaccepted_characterization_plan_cannot_replace_required_ids ... ok
+test passing_unrelated_tests_cannot_satisfy_accepted_characterization_plan ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.34s
+
+     Running tests/task_block_contract_independent.rs (target/debug/deps/task_block_contract_independent-d15ffe8d837fe2ff)
+
+running 1 test
+test generated_task_enumerates_every_legal_block_kind_for_the_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
