@@ -1,0 +1,22 @@
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.35s
+     Running unittests src/lib.rs (target/debug/deps/hermon-18a1fd736ff12339)
+
+running 1 test
+test notify::delivery_tests::shim_publishes_complete_argv_before_reader_can_observe_it ... FAILED
+
+failures:
+
+---- notify::delivery_tests::shim_publishes_complete_argv_before_reader_can_observe_it stdout ----
+
+thread 'notify::delivery_tests::shim_publishes_complete_argv_before_reader_can_observe_it' (96675270) panicked at crates/hermon/src/notify.rs:312:9:
+a partial argument capture must not be visible to read_eventually
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    notify::delivery_tests::shim_publishes_complete_argv_before_reader_can_observe_it
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 430 filtered out; finished in 0.15s
+
+error: test failed, to rerun pass `-p hermon --lib`
