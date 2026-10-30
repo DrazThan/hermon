@@ -1,0 +1,17 @@
+{
+  "base_commit": "e18dec8153621cb5b07f02cab926c9c2589bc116",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "hermon-flow",
+    "--test",
+    "acp_continuation_independent",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 101,
+  "passed": 1,
+  "failed": 4,
+  "note": "Compiled behavioral RED; existing invalid result still stops immediately."
+}

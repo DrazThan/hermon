@@ -1,0 +1,50 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.69s
+     Running tests/acp_continuation_independent.rs (target/debug/deps/acp_continuation_independent-a4e4bd1a815b21eb)
+
+running 5 tests
+test existing_invalid_result_stops_without_another_prompt_or_synthetic_success ... ok
+test interim_end_turn_continues_same_contract_and_stops_when_result_appears ... FAILED
+test missing_result_exhausts_exactly_three_followups_as_a_capability_block ... FAILED
+test cancellation_during_followup_targets_the_same_owned_session ... FAILED
+test followup_uses_the_original_overall_deadline_instead_of_a_new_budget ... FAILED
+
+failures:
+
+---- interim_end_turn_continues_same_contract_and_stops_when_result_appears stdout ----
+
+thread 'interim_end_turn_continues_same_contract_and_stops_when_result_appears' (fixture-thread) panicked at crates/hermon-flow/tests/acp_continuation_independent.rs:203:5:
+assertion `left == right` failed
+  left: String("block")
+ right: "done"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- missing_result_exhausts_exactly_three_followups_as_a_capability_block stdout ----
+
+thread 'missing_result_exhausts_exactly_three_followups_as_a_capability_block' (fixture-thread) panicked at crates/hermon-flow/tests/acp_continuation_independent.rs:222:5:
+assertion `left == right` failed: one initial turn and at most three reminders
+  left: 1
+ right: 4
+
+---- cancellation_during_followup_targets_the_same_owned_session stdout ----
+
+thread 'cancellation_during_followup_targets_the_same_owned_session' (fixture-thread) panicked at crates/hermon-flow/tests/acp_continuation_independent.rs:145:17:
+assertion `left != right` failed: adapter stopped after interim end_turn without continuing the same contract
+  left: Bool(true)
+ right: true
+
+---- followup_uses_the_original_overall_deadline_instead_of_a_new_budget stdout ----
+
+thread 'followup_uses_the_original_overall_deadline_instead_of_a_new_budget' (fixture-thread) panicked at crates/hermon-flow/tests/acp_continuation_independent.rs:189:14:
+cancellation/timeout must remain failed
+
+
+failures:
+    cancellation_during_followup_targets_the_same_owned_session
+    followup_uses_the_original_overall_deadline_instead_of_a_new_budget
+    interim_end_turn_continues_same_contract_and_stops_when_result_appears
+    missing_result_exhausts_exactly_three_followups_as_a_capability_block
+
+test result: FAILED. 1 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.05s
+
+error: test failed, to rerun pass `-p hermon-flow --test acp_continuation_independent`
