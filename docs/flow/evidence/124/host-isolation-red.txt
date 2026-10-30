@@ -1,0 +1,23 @@
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.13s
+     Running tests/flow_host_isolation.rs (target/debug/deps/flow_host_isolation-c1feff51d0765291)
+
+running 1 test
+test invalid_run_lock_cannot_starve_other_runs ... FAILED
+
+failures:
+
+---- invalid_run_lock_cannot_starve_other_runs stdout ----
+hermon hub: 00-broken-lock: Is a directory (os error 21)
+
+thread 'invalid_run_lock_cannot_starve_other_runs' (95273663) panicked at crates/hermon/tests/flow_host_isolation.rs:54:14:
+one run lock error must be isolated to that run: Is a directory (os error 21)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    invalid_run_lock_cannot_starve_other_runs
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `-p hermon --test flow_host_isolation`
