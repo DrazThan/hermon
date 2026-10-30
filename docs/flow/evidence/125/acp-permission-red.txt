@@ -1,0 +1,27 @@
+    Blocking waiting for file lock on package cache
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s
+     Running tests/acp_permission_scope.rs (target/debug/deps/acp_permission_scope-222537f1d1eb3d3a)
+
+running 3 tests
+test acp_allows_only_once_for_owned_result_and_artifact_file_writes ... FAILED
+test acp_rejects_outside_relative_cross_attempt_and_symlink_write_targets ... ok
+test acp_rejects_hub_metadata_control_locks_and_hidden_output_basenames ... ok
+
+failures:
+
+---- acp_allows_only_once_for_owned_result_and_artifact_file_writes stdout ----
+
+thread 'acp_allows_only_once_for_owned_result_and_artifact_file_writes' (96296007) panicked at crates/hermon-flow/tests/acp_permission_scope.rs:214:9:
+assertion `left == right` failed: owned output must receive an explicit one-time decision
+  left: String("cancelled")
+ right: "selected"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    acp_allows_only_once_for_owned_result_and_artifact_file_writes
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.19s
+
+error: test failed, to rerun pass `-p hermon-flow --test acp_permission_scope`

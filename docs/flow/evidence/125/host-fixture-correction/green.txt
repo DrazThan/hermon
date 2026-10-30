@@ -1,0 +1,10 @@
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.64s
+     Running tests/flow_host.rs (target/debug/deps/flow_host-d5f42638fe028794)
+
+running 3 tests
+test foreground_hub_exposes_documented_control_flags ... ok
+test foreground_hub_once_accepts_empty_data_directory ... ok
+test foreground_hub_advances_queued_run_with_project_environment ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.78s

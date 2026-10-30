@@ -1,0 +1,591 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.26s
+     Running unittests src/lib.rs (target/debug/deps/hermon-18a1fd736ff12339)
+
+running 430 tests
+test arbitration::tests::no_runtime_dir_means_no_arbitration ... ok
+test arbitration::tests::explicit_no_notify_beats_an_empty_field ... ok
+test arbitration::tests::a_missing_pidfile_is_not_running ... ok
+test arbitration::tests::release_is_idempotent ... ok
+test arbitration::tests::explicit_notify_beats_a_running_menubar ... ok
+test arbitration::tests::watch_ignores_a_stale_menubar_pidfile ... ok
+test arbitration::tests::gui_yields_up_but_not_down ... ok
+test arbitration::tests::a_malformed_pidfile_is_not_running ... ok
+test arbitration::tests::watch_notifies_when_nothing_else_does ... ok
+test arbitration::tests::watch_yields_to_a_running_menubar ... ok
+test arbitration::tests::the_menubar_outranks_the_gui_as_the_reported_owner ... ok
+test arbitration::tests::the_menubar_never_yields_to_a_lesser_ui ... ok
+test engine::tests::a_new_key_is_started ... ok
+test engine::tests::a_vanished_attention_key_finishes_as_a_timeout ... ok
+test engine::tests::an_already_done_vanished_key_fires_nothing_again ... ok
+test engine::tests::a_key_missing_from_the_roster_is_a_vanished_finish ... ok
+test engine::tests::a_key_still_on_the_roster_never_vanishes ... ok
+test engine::tests::a_brand_new_key_starting_in_attention_fires_it_too ... ok
+test engine::tests::apply_lifecycle_cleared_stops_the_clock ... ok
+test engine::tests::apply_lifecycle_attention_starts_the_clock ... ok
+test engine::tests::apply_lifecycle_attention_resets_the_clock_on_re_entry ... ok
+test engine::tests::apply_lifecycle_finish_clears_the_attention_clock ... ok
+test engine::tests::apply_lifecycle_finish_starts_the_linger_clock_and_clears_killed ... ok
+test engine::tests::apply_lifecycle_resume_clears_the_linger_clock_and_killed ... ok
+test engine::tests::apply_lifecycle_starts_a_fresh_key_at_its_row_state ... ok
+test engine::tests::apply_lifecycle_starts_a_key_already_done_with_the_linger_clock_running ... ok
+test engine::tests::attention_counts_as_live_for_the_done_boundary ... ok
+test engine::tests::attention_to_live_is_cleared ... ok
+test engine::tests::attn_elapsed_is_none_outside_attention ... ok
+test engine::tests::attn_elapsed_reflects_time_since_the_tracked_clock_started ... ok
+test engine::tests::build_transitions_defaults_from_to_the_current_state_for_a_brand_new_key ... ok
+test engine::tests::build_transitions_covers_every_row_using_prev_liveness_as_from ... ok
+test engine::tests::build_transitions_derives_started_at_and_state_since_from_the_row ... ok
+test engine::tests::build_transitions_drains_a_recorded_error_line ... ok
+test engine::tests::build_transitions_leaves_done_cause_none_without_a_done_boundary ... ok
+test engine::tests::build_transitions_maps_clean_and_timeout_finishes_to_done_cause ... ok
+test engine::tests::done_to_live_is_resumed ... ok
+test engine::tests::elapsed_in_state_resets_on_re_entry_end_to_end ... ok
+test engine::tests::finishing_from_attention_is_a_timeout ... ok
+test engine::tests::forget_drops_a_killed_key_once_it_leaves_the_roster ... ok
+test engine::tests::forget_keeps_a_gone_key_that_was_never_killed ... ok
+test engine::tests::forget_keeps_a_killed_key_still_on_the_roster ... ok
+test engine::tests::linger_expire_closes_a_pane_once_it_has_been_done_long_enough ... ok
+test engine::tests::linger_expire_leaves_a_pane_that_has_not_yet_aged_out ... ok
+test engine::tests::linger_expire_never_touches_a_live_session ... ok
+test engine::tests::linger_zero_never_expires_a_pane ... ok
+test engine::tests::live_to_attention_fires_the_reason ... ok
+test engine::tests::live_to_done_is_finished_cleanly ... ok
+test engine::tests::refresh_liveness_ignores_keys_no_longer_on_the_roster ... ok
+test engine::tests::refresh_liveness_syncs_a_state_change_that_fired_no_event ... ok
+test engine::tests::switching_attention_reason_fires_again ... ok
+test engine::tests::pump_panes_leaves_errors_untouched_with_no_error_line_this_tick ... ok
+test engine::tests::pump_panes_records_the_latest_error_line_per_key ... ok
+test engine::tests::try_open_evicts_the_oldest_finished_pane_when_full ... ok
+test engine::tests::try_open_never_evicts_a_pinned_key_even_when_it_is_oldest ... ok
+test engine::tests::try_open_evicts_nobody_when_the_source_refuses_the_new_key ... ok
+test engine::tests::try_open_opens_directly_under_the_cap ... ok
+test engine::tests::try_open_skips_an_unknown_key_without_touching_the_deck ... ok
+test engine::tests::try_open_skips_when_every_occupied_slot_is_live ... ok
+test engine::tests::try_open_skips_when_every_finished_slot_is_pinned ... ok
+test engine::tests::unchanged_attention_emits_nothing ... ok
+test engine::tests::unchanged_liveness_emits_nothing ... ok
+test gui::palette::tests::liveness_glyphs_are_colored_by_severity ... ok
+test gui::palette::tests::sem_colors_match_the_shared_palette ... ok
+test gui::pane::tests::a_fresh_pane_follows_its_tail_with_no_badge ... ok
+test arbitration::tests::each_kind_has_its_own_pidfile ... ok
+test arbitration::tests::a_live_pid_is_running ... ok
+test gui::pane::tests::a_live_pane_has_no_status_line ... ok
+test arbitration::tests::claim_writes_our_pid_and_the_guard_removes_it ... ok
+test gui::pane::tests::scrolling_away_pauses_the_follow_and_counts_what_arrives ... ok
+test gui::pane::tests::a_re_wrap_only_happens_when_the_buffer_or_width_changes ... ok
+test gui::pane::tests::scrolling_back_to_the_bottom_resumes_the_follow ... ok
+test gui::pane::tests::the_border_takes_the_session_state_unless_the_pane_is_selected ... ok
+test gui::roster::tests::inout_text_combines_commas_in_and_out ... ok
+test gui::pane::tests::a_layout_job_carries_each_segments_semantic_color ... ok
+test gui::pane::tests::an_attention_pane_ends_with_its_status_line ... ok
+test gui::tests::attention_rows_are_not_counted_live ... ok
+test gui::tests::drain_applies_events_and_retitles_once_per_change ... ok
+test gui::tests::grid_mode_opens_every_slot_up_to_max_panes ... ok
+test gui::tests::grid_mode_round_trips_through_storage ... ok
+test gui::tests::lines_arriving_behind_a_paused_pane_feed_the_badge ... ok
+test gui::tests::lines_for_a_closed_pane_are_discarded ... ok
+test gui::tests::pane_buffer_is_capped_at_scrollback ... ok
+test cli::source_root_tests::all_entry_points_default_and_override_all_home_roots ... ok
+test gui::tests::pane_lines_buffer_and_lifecycle_drops_them ... ok
+test arbitration::tests::a_stale_pid_is_not_running ... ok
+test gui::tests::pane_buffer_is_capped_in_bytes_as_well_as_lines ... ok
+test gui::tests::rows_are_read_through_the_view ... ok
+test gui::tests::select_next_and_prev_move_through_the_visible_rows_and_clamp ... ok
+test gui::tests::selection_survives_a_tick_reorder ... ok
+test gui::tests::pipeline_tab_leaves_session_zoom_and_remains_visible ... ok
+test gui::tests::the_selection_drives_the_engine_s_tailers ... ok
+test gui::tests::toggle_muted_flips_the_flag_and_notifies_the_engine ... ok
+test gui::tests::toggle_pin_flips_view_state_and_sends_the_whole_pinned_set ... ok
+test gui::pane::tests::clicking_the_badge_resumes_the_follow ... ok
+test menubar::tests::a_session_label_skips_fields_it_has_no_data_for ... ok
+test menubar::tests::both_attention_kinds_append_in_order ... ok
+test menubar::tests::build_menu_actions_at_end ... ok
+test gui::pane::tests::a_wheel_scroll_pauses_the_follow_and_a_jump_resumes_it ... ok
+test menubar::tests::build_menu_attention_first ... ok
+test menubar::tests::build_menu_caps_at_20_rows ... ok
+test menubar::tests::build_menu_cost_in_summary ... ok
+test menubar::tests::build_menu_empty_roster ... ok
+test menubar::tests::build_menu_mute_toggle_carries_the_current_state ... ok
+test menubar::tests::build_menu_no_more_when_under_cap ... ok
+test menubar::tests::build_menu_single_row ... ok
+test menubar::tests::counts_only_live_sessions_in_the_live_count ... ok
+test menubar::tests::empty_roster_is_zero_live ... ok
+test menubar::tests::build_menu_unknown_cost_in_summary ... ok
+test menubar::tests::fmt_elapsed_formats_durations ... ok
+test menubar::tests::fmt_summary_cost_formats_totals ... ok
+test menubar::tests::icon_color_tracks_the_attention_state ... ok
+test menubar::tests::icon_is_a_full_rgba_buffer_with_a_transparent_corner ... ok
+test menubar::tests::icon_state_carries_mute ... ok
+test menubar::tests::icon_state_flips_on_any_attention_row ... ok
+test menubar::tests::icon_state_is_calm_without_attention ... ok
+test menubar::tests::menu_labels_read_as_one_line_each ... ok
+test menubar::tests::overflow_label_counts_the_hidden_sessions ... ok
+test menubar::tests::muting_dims_the_icon_without_changing_its_color ... ok
+test menubar::tests::perm_wait_is_omitted_when_zero ... ok
+test menubar::tests::status_title_appends_the_mute_glyph_only_when_muted ... ok
+test menubar::tests::stuck_is_omitted_when_zero ... ok
+test notify::delivery_tests::applescript_escaping_handles_a_literal_backslash ... ok
+test notify::delivery_tests::applescript_escaping_neutralizes_quotes_and_backslashes ... ok
+test notify::delivery_tests::build_osascript_embeds_all_three_fields_escaped ... ok
+test notify::delivery_tests::build_osascript_sanitizes_control_sequences_in_title ... ok
+test gui::tests::enter_zooms_and_escape_returns ... ok
+test notify::delivery_tests::deliver_is_a_noop_when_silent ... ok
+test gui::tests::slash_requests_focus_on_the_filter_box ... ok
+test gui::tests::a_fleet_and_an_empty_deck_both_draw ... ok
+test notify::delivery_tests::probe_falls_back_to_notify_send ... ok
+test notify::delivery_tests::probe_falls_back_to_osascript ... ok
+test notify::delivery_tests::probe_finds_terminal_notifier_first ... ok
+test notify::delivery_tests::probe_ignores_a_non_executable_file ... ok
+test notify::delivery_tests::probe_is_silent_with_nothing_on_path ... ok
+test gui::pane::tests::a_full_buffer_only_lays_out_the_visible_rows ... ok
+test remote::discover::tests::a_container_gone_from_docker_ps_is_removed ... ok
+test remote::discover::tests::a_container_that_becomes_a_collision_after_a_rename_is_torn_down ... ok
+test remote::discover::tests::a_container_with_no_creation_time_cannot_outrank_a_dated_one ... ok
+test notify::delivery_tests::probe_prefers_terminal_notifier_over_osascript ... ok
+test remote::discover::tests::a_hostile_label_is_sanitized_and_length_capped ... ok
+test remote::discover::tests::a_name_colliding_with_an_explicit_remote_is_refused_and_logged ... ok
+test remote::discover::tests::a_later_container_cannot_steal_an_incumbents_name ... ok
+test remote::discover::tests::a_new_container_is_spawned ... ok
+test remote::discover::tests::a_pre_planted_undated_impostor_never_becomes_the_incumbent ... ok
+test remote::discover::tests::a_same_tick_impostor_loses_the_name_to_the_older_container ... ok
+test remote::discover::tests::a_renamed_container_tears_down_the_old_name_and_spawns_the_new_one ... ok
+test remote::discover::tests::a_tie_at_the_top_refuses_the_whole_contested_name ... ok
+test remote::discover::tests::a_tie_below_the_oldest_container_does_not_refuse_the_name ... ok
+test remote::discover::tests::an_explicit_remotes_cleaned_name_is_the_one_a_label_collides_with ... ok
+test remote::discover::tests::an_incumbent_beats_a_newcomer_of_any_age ... ok
+test remote::discover::tests::an_incumbent_keeps_its_name_even_when_it_is_listed_last ... ok
+test remote::discover::tests::an_invalid_container_name_is_skipped_and_logged ... ok
+test remote::discover::tests::an_invalid_label_falls_back_to_the_container_name ... ok
+test remote::discover::tests::an_unchanged_container_neither_spawns_nor_removes ... ok
+test remote::discover::tests::parse_ps_never_returns_an_unlabeled_container ... ok
+test remote::discover::tests::parse_ps_reads_labeled_containers ... ok
+test remote::discover::tests::parse_ps_reads_multiple_lines ... ok
+test remote::discover::tests::parse_ps_reads_the_agent_name_label ... ok
+test remote::discover::tests::parse_ps_reads_the_creation_time ... ok
+test remote::discover::tests::parse_ps_skips_entries_missing_an_id ... ok
+test remote::discover::tests::parse_ps_skips_malformed_lines_without_failing_the_rest ... ok
+test remote::discover::tests::two_containers_created_in_the_same_second_are_both_refused ... ok
+test remote::discover::tests::two_undated_containers_racing_for_the_same_label_are_both_refused ... ok
+test remote::proto::tests::empty_line_is_parse_skip ... ok
+test remote::proto::tests::garbage_line_is_parse_skip ... ok
+test remote::proto::tests::open_tail_replay_round_trips ... ok
+test remote::proto::tests::hello_with_future_proto_version_decodes_fine ... ok
+test remote::proto::tests::round_trips_close_tail ... ok
+test remote::proto::tests::round_trips_bye ... ok
+test remote::proto::tests::round_trips_hello ... ok
+test remote::proto::tests::round_trips_open_tail ... ok
+test remote::proto::tests::round_trips_shutdown ... ok
+test remote::proto::tests::round_trips_snap ... ok
+test remote::proto::tests::round_trips_tail ... ok
+test remote::proto::tests::truncated_json_is_parse_skip ... ok
+test remote::proto::tests::unknown_extra_fields_are_ignored_not_rejected ... ok
+test remote::proto::tests::unknown_message_type_is_parse_skip ... ok
+test remote::proto::tests::valid_json_wrong_shape_is_parse_skip ... ok
+test gui::tests::a_quiet_window_settles_and_an_engine_event_wakes_it ... ok
+test remote::source::tests::a_connection_that_lasted_restarts_the_backoff ... ok
+test remote::source::tests::a_dropped_connection_marks_the_rows_it_left_behind ... ok
+test remote::source::tests::a_flood_from_a_connected_agent_surfaces_a_notice_before_teardown ... ok
+test gui::tests::j_k_and_m_drive_selection_and_mute_through_handle_keys ... ok
+test remote::source::tests::a_frame_exactly_at_the_cap_still_reads ... ok
+test remote::source::tests::a_frame_over_the_cap_is_dropped_and_the_next_one_still_reads ... ok
+test remote::source::tests::a_fresh_hello_clears_a_previous_missing_binary_notice ... ok
+test remote::source::tests::a_fresh_hello_resets_the_previous_connections_complaints ... ok
+test gui::roster::tests::render_lays_out_every_branch ... ok
+test remote::source::tests::a_healthy_run_clears_the_instant_exit_strikes ... ok
+test remote::source::tests::a_hello_reopens_every_tail_the_host_holds ... ok
+test gui::tests::zoom_without_a_selection_falls_back_to_the_table ... ok
+test remote::source::tests::a_missing_binary_notice_names_the_fix_and_counts_repeats ... ok
+test remote::source::tests::a_name_can_never_break_the_key_prefix ... ok
+test remote::source::tests::a_remote_clock_running_ahead_warns_once ... ok
+test remote::source::tests::a_remote_that_never_connected_says_so ... ok
+test remote::source::tests::a_short_stderr_diagnostic_is_kept_whole ... ok
+test remote::source::tests::a_snapshot_within_the_cap_carries_no_marker ... ok
+test remote::source::tests::a_stream_ending_mid_line_is_eof_not_a_frame ... ok
+test remote::source::tests::a_version_mismatch_stops_the_connection_and_names_both_versions ... ok
+test remote::source::tests::a_line_of_control_bytes_cannot_expand_past_the_clip ... ok
+test remote::source::tests::an_orphan_reader_cannot_fold_one_last_frame_into_the_live_connection ... ok
+test remote::source::tests::an_orphans_oversized_frame_is_not_charged_to_the_live_connection ... ok
+test gui::tests::the_pane_area_draws_selected_grid_and_zoomed ... ok
+test remote::source::tests::backoff_doubles_from_one_second_to_thirty ... ok
+test remote::source::tests::bye_ends_the_connection ... ok
+test remote::source::tests::draining_a_tail_queue_resets_its_byte_total ... ok
+test remote::source::tests::dropped_stderr_is_counted_for_the_deck ... ok
+test remote::source::tests::every_remote_string_is_sanitized_on_the_host ... ok
+test remote::source::tests::frames_before_hello_are_ignored ... ok
+test gui::pane::tests::every_state_draws_at_any_size ... ok
+test remote::source::tests::one_segment_storm_line_is_clipped_at_ingest ... ok
+test remote::source::tests::ordinary_stderr_is_not_mistaken_for_a_missing_binary ... ok
+test remote::source::tests::oversized_frames_are_counted_for_the_deck ... ok
+test remote::source::tests::reads_one_frame_per_line ... ok
+test remote::source::tests::repeated_instant_exits_pin_the_backoff_at_the_ceiling_for_good ... ok
+test remote::source::tests::stderr_phrasings_for_a_missing_binary_are_recognized ... ok
+test remote::source::tests::stderr_with_no_newline_in_it_is_read_under_the_cap_not_after ... ok
+test remote::source::tests::an_oversized_snapshot_is_truncated_with_a_visible_marker ... ok
+test remote::source::tests::an_agent_spamming_hello_cannot_queue_a_command_per_greeting ... ok
+test remote::source::tests::tail_frames_for_an_open_key_queue_up_bounded ... ok
+test remote::source::tests::tail_frames_for_keys_the_host_never_opened_are_discarded ... ok
+test remote::source::tests::timestamps_within_the_skew_tolerance_are_quiet ... ok
+test remote::spec::tests::a_colon_in_the_ssh_host_position_becomes_a_name_suffix_not_a_second_host ... ok
+test remote::spec::tests::a_dash_f_ssh_host_is_rejected ... ok
+test remote::spec::tests::a_host_that_is_only_a_dash_is_rejected ... ok
+test remote::spec::tests::a_leading_dash_docker_container_is_rejected ... ok
+test remote::spec::tests::a_leading_dash_ssh_host_is_rejected ... ok
+test remote::spec::tests::a_name_suffix_is_the_name_the_remote_will_actually_run_under ... ok
+test remote::spec::tests::a_name_suffix_with_control_bytes_is_rejected ... ok
+test remote::spec::tests::a_name_with_a_semicolon_is_rejected ... ok
+test remote::spec::tests::a_name_with_a_space_is_rejected ... ok
+test remote::spec::tests::a_shell_substitution_in_a_cmd_spec_reaches_the_child_as_literal_argv ... ok
+test remote::spec::tests::a_spec_with_no_colon_is_rejected ... ok
+test remote::spec::tests::an_empty_cmd_spec_is_rejected ... ok
+test remote::spec::tests::an_empty_ssh_host_is_rejected ... ok
+test remote::spec::tests::an_option_looking_name_suffix_is_rejected ... ok
+test remote::spec::tests::an_unknown_transport_is_rejected ... ok
+test remote::spec::tests::an_unterminated_quote_is_rejected ... ok
+test remote::spec::tests::cmd_spec_ignores_remote_flags ... ok
+test remote::spec::tests::cmd_spec_splits_argv_and_spawns_it_directly ... ok
+test remote::spec::tests::cmd_spec_with_quoted_words_keeps_them_as_one_argument ... ok
+test remote::spec::tests::discovered_and_readded_containers_keep_all_root_flags ... ok
+test remote::spec::tests::distinct_remote_names_all_parse ... ok
+test remote::spec::tests::docker_spec_builds_a_docker_kind_spec_without_string_parsing ... ok
+test remote::spec::tests::docker_spec_builds_docker_exec_argv ... ok
+test remote::spec::tests::docker_spec_forwards_remote_flags_after_the_agent_subcommand ... ok
+test remote::spec::tests::docker_spec_name_suffix_overrides_the_default_name ... ok
+test remote::spec::tests::duplicate_remote_names_are_rejected ... ok
+test remote::spec::tests::new_root_flags_are_literal_argv_for_every_transport ... ok
+test remote::spec::tests::remote_flags_split_like_a_shell_line_without_being_one ... ok
+test remote::source::tests::one_enormous_tail_line_is_clipped_at_ingest ... ok
+test remote::spec::tests::ssh_spec_accepts_a_user_at_host ... ok
+test remote::spec::tests::ssh_spec_builds_batch_mode_ssh_argv ... ok
+test remote::spec::tests::ssh_spec_name_suffix_overrides_the_default_name ... ok
+test remote::spec::tests::validate_name_rejects_empty_leading_dash_and_bad_charset ... ok
+test roster::tests::commas_groups_by_three ... ok
+test roster::tests::empty_roster_still_renders_a_header_and_totals ... ok
+test roster::tests::glyphs_cover_every_state ... ok
+test roster::tests::home_roots_expand_without_changing_literal_paths ... ok
+test roster::tests::hostile_token_counts_saturate_instead_of_wrapping ... ok
+test roster::tests::long_fields_are_clipped_to_their_columns ... ok
+test roster::tests::open_tailer_dispatches_on_the_key_prefix ... ok
+test roster::tests::open_tailer_routes_remote_keys_by_name ... ok
+test roster::tests::remote_prefix_trusts_only_the_six_known_source_prefixes ... ok
+test roster::tests::remotes_summary_line_is_none_without_remotes ... ok
+test roster::tests::remotes_summary_line_names_every_remote_and_its_link_state ... ok
+test roster::tests::resolve_key_finds_the_row_it_names ... ok
+test roster::tests::resolve_key_lists_the_valid_keys_when_it_fails ... ok
+test roster::tests::resolve_key_says_so_when_the_roster_is_empty ... ok
+test roster::tests::row_line_lays_out_the_columns ... ok
+test roster::tests::short_remote_ids_keep_source_prefix_out_of_display_id ... ok
+test remote::spec::tests::ssh_shell_preserves_hostile_arguments_without_evaluation ... ok
+test roster::tests::ticker_ignores_unrelated_lines_and_missing_logs ... ok
+test roster::tests::ticker_lines_are_appended_under_a_heading ... ok
+test roster::tests::ticker_reads_only_the_tail_of_a_huge_log ... ok
+test roster::tests::tool_column_annotates_perm_wait_with_no_elapsed ... ok
+test roster::tests::tool_column_annotates_stuck_with_elapsed_when_known ... ok
+test roster::tests::tool_column_stays_plain_when_stuck_elapsed_is_unknown ... ok
+test roster::tests::totals_count_attention_separately ... ok
+test roster::tests::totals_omit_zero_attention_counts ... ok
+test ui::list::tests::a_done_row_is_dim_from_end_to_end ... ok
+test roster::tests::ticker_extracts_the_last_calls ... ok
+test ui::list::tests::a_narrow_frame_truncates_the_summary_instead_of_panicking ... ok
+test ui::list::tests::a_pinned_row_shows_the_pin_glyph_and_sorts_first ... ok
+test ui::list::tests::attention_rows_take_their_state_color ... ok
+test ui::list::tests::the_cursor_scrolls_into_view_on_a_short_pane ... ok
+test ui::list::tests::every_session_gets_a_row_with_its_glyph_key_and_cost ... ok
+test ui::list::tests::the_empty_deck_names_the_paths_it_is_watching ... ok
+test ui::list::tests::the_preview_falls_back_to_metadata_with_no_buffered_lines ... ok
+test ui::list::tests::the_preview_shows_the_buffered_tail_once_the_pane_streams ... ok
+test ui::list::tests::the_preview_shows_the_selected_session_not_the_first ... ok
+test ui::list::tests::the_selected_row_is_the_only_one_with_the_selection_background ... ok
+test ui::list::tests::totals_and_ticker_sit_between_the_list_and_the_preview ... ok
+test ui::overlay::tests::backspace_edits_the_filter_draft ... ok
+test ui::overlay::tests::clear_only_fires_in_sort_focus_so_filter_text_can_contain_c ... ok
+test ui::overlay::tests::draft_matches_on_an_unparseable_draft_reports_zero_of_total ... ok
+test ui::overlay::tests::draft_matches_updates_without_committing_the_filter ... ok
+test ui::overlay::tests::enter_commits_a_valid_filter_and_closes ... ok
+test ui::overlay::tests::enter_with_a_bad_filter_shows_the_error_and_stays_open ... ok
+test ui::overlay::tests::esc_restores_the_view_exactly_as_it_was_on_open ... ok
+test ui::overlay::tests::filter_focus_types_into_the_draft_including_digits ... ok
+test ui::overlay::tests::sort_focus_digit_then_same_digit_flips_direction ... ok
+test ui::overlay::tests::sort_focus_ignores_letters_typed_for_filtering ... ok
+test ui::palette::tests::glyph_for_liveness_done ... ok
+test ui::palette::tests::glyph_for_liveness_live ... ok
+test ui::palette::tests::glyph_for_liveness_perm_wait ... ok
+test ui::palette::tests::glyph_for_liveness_stuck ... ok
+test ui::palette::tests::glyph_set_ascii_mode ... ok
+test ui::palette::tests::glyph_set_unicode_mode ... ok
+test ui::palette::tests::glyphs_uses_env_var_once ... ok
+test ui::palette::tests::line_to_spans_maps_bold_with_modifier ... ok
+test ui::palette::tests::line_to_spans_maps_dim ... ok
+test ui::palette::tests::line_to_spans_maps_error ... ok
+test ui::palette::tests::line_to_spans_maps_ok ... ok
+test ui::palette::tests::line_to_spans_maps_plain_to_fg ... ok
+test ui::palette::tests::line_to_spans_maps_stat ... ok
+test ui::palette::tests::line_to_spans_maps_tool ... ok
+test ui::palette::tests::line_to_spans_maps_user ... ok
+test ui::palette::tests::line_to_spans_preserves_text_content ... ok
+test ui::palette::tests::pin_glyph_resolves_to_the_cached_mode ... ok
+test ui::pane::tests::a_done_pane_is_titled_with_a_checkmark_and_a_dim_border ... ok
+test ui::pane::tests::a_live_pane_gets_no_status_line ... ok
+test ui::pane::tests::a_narrow_pane_wraps_long_lines_instead_of_truncating_them ... ok
+test ui::pane::tests::a_perm_wait_pane_appends_a_status_line_with_elapsed ... ok
+test ui::pane::tests::a_pinned_done_pane_stays_amber_instead_of_dim ... ok
+test ui::pane::tests::a_scrolled_pane_stops_following_and_counts_what_is_below ... ok
+test ui::list::tests::very_narrow_and_very_short_frames_still_render ... ok
+test ui::pane::tests::a_stuck_pane_appends_a_status_line_with_elapsed ... ok
+test ui::pane::tests::an_over_large_offset_clamps_to_the_top_of_the_buffer ... ok
+test ui::pane::tests::the_border_takes_the_session_state_unless_the_pane_is_selected ... ok
+test ui::pane::tests::the_border_is_painted_in_the_state_color ... ok
+test ui::pane::tests::the_pane_is_titled_with_its_session_key_and_follows_the_tail ... ok
+test ui::pane::tests::wrapping_breaks_on_spaces_and_hard_splits_long_words ... ok
+test ui::pane::tests::wrapping_keeps_a_blank_line_as_a_blank_row ... ok
+test ui::pane::tests::wrapping_preserves_the_style_of_each_segment ... ok
+test ui::pane::tests::tiny_and_empty_panes_render_without_panicking ... ok
+test ui::tests::a_filter_hides_non_matching_rows_in_list_mode ... ok
+test ui::tests::a_page_gives_up_a_slot_only_once_the_fleet_overflows ... ok
+test ui::tests::a_filter_hides_non_matching_sessions_in_grid_mode ... ok
+test ui::tests::a_pinned_done_session_keeps_its_slot_with_an_amber_border ... ok
+test ui::tests::a_pinned_session_hidden_by_the_filter_still_holds_a_grid_slot ... ok
+test ui::tests::a_vanished_session_leaves_the_cursor_at_its_old_position ... ok
+test ui::tests::an_empty_deck_still_draws_in_grid_mode ... ok
+test ui::tests::c_in_sort_focus_clears_sort_and_filter ... ok
+test ui::tests::capital_g_resumes_following_the_tail_and_g_jumps_to_the_top ... ok
+test ui::tests::closing_a_pane_drops_its_buffer ... ok
+test ui::tests::ctrl_c_quits ... ok
+test ui::tests::digit_then_same_digit_flips_sort_direction_through_the_app ... ok
+test ui::tests::draws_the_empty_state_and_footer_before_the_first_roster ... ok
+test ui::tests::esc_restores_the_prior_sort_and_filter ... ok
+test ui::tests::eviction_frees_the_grid_slot_like_a_manual_close ... ok
+test ui::tests::a_sixty_column_grid_wraps_its_panes_without_panicking ... ok
+test ui::tests::grid_keys_do_nothing_in_list_mode ... ok
+test ui::tests::header_c_clears_without_opening_the_palette ... ok
+test ui::tests::help_overlay_renders_over_the_body ... ok
+test ui::tests::l_toggles_between_list_and_grid ... ok
+test ui::tests::open_panes_follow_the_grid_slots ... ok
+test ui::tests::p_toggles_pin_and_tells_the_engine_the_pinned_key_set ... ok
+test ui::tests::paging_swaps_which_panes_the_engine_tails ... ok
+test ui::tests::paging_up_stops_following_the_tail_and_counts_what_is_below ... ok
+test ui::tests::four_sessions_tile_two_by_two_with_their_keys_and_state_colors ... ok
+test ui::tests::pane_lines_are_buffered_for_the_open_pane_only ... ok
+test ui::tests::plain_c_does_not_quit ... ok
+test ui::tests::q_quits ... ok
+test ui::tests::question_mark_toggles_help ... ok
+test ui::tests::resurrection_undoes_a_dismissal_and_drops_the_stale_buffer ... ok
+test ui::tests::panic_hook_runs_restore_before_the_previous_hook ... ok
+test ui::tests::roster_shrink_clamps_selection ... ok
+test ui::tests::s_opens_sort_focus_and_f_opens_filter_focus ... ok
+test ui::tests::selection_follows_its_session_across_a_reorder ... ok
+test ui::tests::selection_is_bounded_by_roster_length ... ok
+test ui::tests::selection_opens_the_new_pane_and_closes_the_old_one ... ok
+test ui::tests::selection_stays_empty_on_empty_roster ... ok
+test ui::tests::the_cursor_pages_the_grid_as_it_walks_off_the_bottom ... ok
+test ui::tests::the_header_chip_bar_appears_only_once_a_sort_or_filter_is_active ... ok
+test ui::tests::ten_sessions_page_six_slots_with_a_placeholder_and_tab_shows_the_rest ... ok
+test ui::tests::the_header_shows_a_green_chip_per_filter_term_and_the_live_count ... ok
+test ui::tests::the_open_palette_swallows_quit_and_navigation_keys ... ok
+test ui::tests::the_header_notes_when_pins_exceed_max_panes ... ok
+test ui::tests::the_overlay_shows_a_parse_error_instead_of_a_count ... ok
+test ui::tests::the_overlay_shows_both_sections_and_the_active_chip ... ok
+test ui::tests::the_pane_buffer_is_capped_and_keeps_the_newest_lines ... ok
+test ui::tests::the_ticker_event_is_kept_for_the_stats_line ... ok
+test remote::source::tests::a_child_that_never_reads_its_stdin_can_neither_grow_nor_wedge_the_host ... ok
+test ui::tests::tiling_follows_the_artboards ... ok
+test ui::tests::typing_a_filter_updates_the_count_and_enter_applies_it ... ok
+test ui::tests::x_gives_up_a_slot_and_o_takes_it_back ... ok
+test view::tests::a_pinned_row_hidden_by_the_filter_is_still_filtered_out ... ok
+test view::tests::attention_groups_come_first_then_live_then_done ... ok
+test ui::tests::zoom_gives_the_selected_pane_the_body_and_collapses_the_roster ... ok
+test view::tests::chips_and_as_input_round_trip_the_typed_words ... ok
+test view::tests::clear_resets_sort_and_filter_but_not_attention_or_pins ... ok
+test view::tests::descending_sort_reverses_within_groups_not_the_groups ... ok
+test view::tests::elapsed_comparisons_parse_duration_suffixes ... ok
+test view::tests::empty_filter_matches_everything ... ok
+test view::tests::equal_keys_keep_input_order_in_both_directions ... ok
+test view::tests::every_sort_key_orders_both_directions ... ok
+test view::tests::glob_mid_string_star_backtracks ... ok
+test view::tests::glob_star_alone_matches_everything ... ok
+test view::tests::glob_trailing_stars_and_prefix_suffix ... ok
+test view::tests::glob_without_star_is_exact_and_case_insensitive ... ok
+test view::tests::in_out_sort_survives_wire_controlled_token_counts ... ok
+test view::tests::malformed_terms_report_errors_not_panics ... ok
+test view::tests::match_count_reports_matched_of_total ... ok
+test view::tests::missing_elapsed_sorts_before_any_measured_elapsed ... ok
+test view::tests::no_sort_key_keeps_roster_order ... ok
+test view::tests::numeric_comparisons_on_cost_in_out ... ok
+test view::tests::one_bad_term_fails_the_whole_parse ... ok
+test view::tests::pin_group_is_outermost_ahead_of_attention_grouping ... ok
+test view::tests::pin_unpin_is_pinned_round_trip ... ok
+test view::tests::pinned_rows_sort_first_regardless_of_sort_key ... ok
+test view::tests::rows_without_elapsed_never_match_elapsed_terms ... ok
+test view::tests::set_filter_keeps_the_old_filter_on_error ... ok
+test view::tests::sort_key_label_and_dir_arrow_cover_every_variant ... ok
+test view::tests::sort_key_orders_within_each_attention_group ... ok
+test ui::tests::the_pane_buffer_is_capped_in_bytes_as_well_as_lines ... ok
+test view::tests::terms_are_anded ... ok
+test view::tests::string_terms_glob_their_documented_fields ... ok
+test view::tests::ties_within_a_sorted_run_keep_input_order ... ok
+test view::tests::toggle_sort_activates_then_flips_then_switches ... ok
+test remote::source::tests::a_flood_is_on_the_deck_while_the_child_is_still_running ... ok
+test remote::source::tests::a_child_that_leaves_its_pipe_open_cannot_wedge_teardown ... ok
+test notify::delivery_tests::deliver_invokes_osascript_with_an_inert_hostile_title ... ok
+test remote::source::tests::tail_frames_are_bounded_in_segments_not_just_in_text ... ok
+test notify::delivery_tests::deliver_invokes_terminal_notifier_with_the_banner_fields ... ok
+test notify::delivery_tests::deliver_osascript_receives_sanitized_and_escaped_fields ... ok
+test notify::delivery_tests::deliver_terminal_notifier_receives_sanitized_fields ... ok
+test remote::source::tests::a_grandchild_writing_after_teardown_cannot_reach_the_hosts_state ... ok
+test remote::source::tests::tail_frames_are_bounded_in_bytes_not_just_in_lines ... ok
+
+test result: ok. 430 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.63s
+
+     Running unittests src/main.rs (target/debug/deps/hermon-a628888178985565)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/agent.rs (target/debug/deps/agent-231225df786521cf)
+
+running 2 tests
+test agent_streams_hello_snap_tail_and_exits_promptly_on_stdin_eof ... ok
+test agent_stdout_carries_only_frames ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+
+     Running tests/codex_source.rs (target/debug/deps/codex_source-933b794b6ce0b5e1)
+
+running 6 tests
+test missing_root_and_unreadable_neighbor ... ok
+test nested_concurrent_trait_object_and_transport ... ok
+test id_model_title_fallbacks_and_deterministic_sort ... ok
+test new_user_activity_without_task_started_invalidates_old_turn_completion ... ok
+test accounting_precedence_idempotence_and_foreign_threads ... ok
+test correlated_tools_completion_reopen_and_delayed_completion ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/codex_tailer.rs (target/debug/deps/codex_tailer-065746467f60e3dd)
+
+running 11 tests
+test completion_text_is_fallback_only ... ok
+test deferred_user_does_not_overwrite_later_assistant_or_tool_metadata ... ok
+test replay_zero_skips_an_existing_incomplete_record ... ok
+test event_stream_selection_ids_and_repeated_text_across_turns ... ok
+test canonical_tools_suppress_completed_command_duplicates_in_either_order ... ok
+test mixed_and_event_only_fixtures_have_no_duplicate_messages ... ok
+test replay_zero_partial_exact_boundary_and_prefix_reconciliation ... ok
+test symlink_files_directories_and_post_discovery_redirection_are_rejected ... ok
+test equal_size_replacement_truncation_and_delete_recreate ... ok
+test multibyte_byte_at_a_time_and_partial_lines ... ok
+test malformed_unknown_oversized_and_sanitized_records_recover ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/engine.rs (target/debug/deps/engine-d18b3f25c79d767c)
+
+running 6 tests
+test a_hung_up_ui_ends_the_loop_via_the_failing_send ... ok
+test shutdown_joins_promptly_with_no_sessions ... ok
+test engine_emits_roster_then_a_lifecycle_finished_on_turn_done ... ok
+test opening_a_pane_streams_its_tailer_lines ... ok
+test a_key_that_is_not_on_the_deck_opens_nothing ... ok
+test a_closed_pane_is_not_polled_again ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s
+
+     Running tests/flow_block_reason.rs (target/debug/deps/flow_block_reason-21ad03fa9cc60240)
+
+running 1 test
+test routed_test_defect_delivers_exact_green_block_reason_to_red_fix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.70s
+
+     Running tests/flow_cancel_recovery.rs (target/debug/deps/flow_cancel_recovery-b07a453a0ee8b6db)
+
+running 2 tests
+test cancelled_core_clears_handle_after_stop_confirms_settlement ... ok
+test cancelled_core_retries_owned_stop_after_crash_before_stop_request ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/flow_cli.rs (target/debug/deps/flow_cli-368739e3c271771c)
+
+running 10 tests
+test doctor_reports_command_not_on_path ... ok
+test doctor_probes_every_bot_auth_and_project_commands_under_hub_env ... ok
+test intake_refuses_on_doctor_failure ... ok
+test doctor_requires_bot_completion_not_just_exit_zero ... ok
+test doctor_reports_missing_bot ... ok
+test doctor_rejects_failed_command_and_code_host_auth ... ok
+test cli_status_json_schema ... ok
+test intake_snapshots_workflow_and_templates_without_credentials ... ok
+test cli_controls_reject_stale_targets_and_merge_bypass ... ok
+test cli_controls_append_events ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.77s
+
+     Running tests/flow_cli_regressions.rs (target/debug/deps/flow_cli_regressions-4b967ad4f893d9d5)
+
+running 8 tests
+test paused_core_does_not_dispatch_a_new_worker ... ok
+test cancelled_core_reconciles_owned_worker_settlement_without_accepting_late_success ... ok
+test doctor_rejects_required_workflow_command_missing_from_project ... ok
+test doctor_checks_configured_code_host_repository_access ... ok
+test cancel_records_intent_without_stopping_a_foreign_attempt_handle ... ok
+test status_replays_committed_control_when_snapshot_rename_was_lost ... ok
+test failed_answer_mirror_is_durable_and_retried_without_reapplying_answer ... ok
+test status_discards_torn_tail_without_losing_committed_control ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.74s
+
+     Running tests/flow_host.rs (target/debug/deps/flow_host-d5f42638fe028794)
+
+running 3 tests
+test foreground_hub_exposes_documented_control_flags ... ok
+test foreground_hub_once_accepts_empty_data_directory ... ok
+test foreground_hub_advances_queued_run_with_project_environment ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/flow_host_isolation.rs (target/debug/deps/flow_host_isolation-98d9ff26a98868bf)
+
+running 1 test
+test invalid_run_lock_cannot_starve_other_runs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/flow_inputs.rs (target/debug/deps/flow_inputs-4326e63bfcf3f024)
+
+running 2 tests
+test accepted_artifact_reaches_successor_in_same_reconciliation ... ok
+test successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+
+     Running tests/flow_pipeline.rs (target/debug/deps/flow_pipeline-8fc95bac140acd4e)
+
+running 9 tests
+test alert_on_owner_needed ... ok
+test pipeline_missing_session_receipt_is_still_visible ... ok
+test hub_single_instance_lock ... FAILED
+test pipeline_session_uses_recorded_id_and_running_step_only ... ok
+test pipeline_view_rows_from_events ... ok
+test flow_alerts_honor_mute_config_and_terminal_states ... ok
+test tui_and_gui_open_running_pipeline_session_pane ... ok
+test alert_on_stall ... ok
+test foreground_hub_uses_same_single_instance_lock ... ok
+
+failures:
+
+---- hub_single_instance_lock stdout ----
+
+thread 'hub_single_instance_lock' (96337017) panicked at crates/hermon/tests/flow_pipeline.rs:123:10:
+drop releases lock
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    hub_single_instance_lock
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p hermon --test flow_pipeline`

@@ -8,9 +8,12 @@ named Hermes profiles, the RUM owner identity and the central Linear token's
 when the owner selects staging for a refactor; base is a string in the current
 schema, not the mapping from the original proposal.
 
-The owner deferred live intake until the code is finished, for a guided pilot.
-No RUM ticket has been selected or enrolled, and no live gate, PR, merge or Docs
-success is claimed by the fixture tests.
+The explicit ACP example is `projects/rummyrune/pilot.yaml`. It preserves
+the five role names and contains placeholders for operator paths, owner
+identity and the repository. Prepare the actual configuration locally.
+Keep live issue context, session receipts and authentication state outside
+the public repository. Fixture tests and capability checks do not establish
+an owner approval, live workflow, merge or Docs success.
 
 ## Pack contracts
 
@@ -48,6 +51,14 @@ or baseline-only failures cannot establish RED. Pending, skipped and todo tests 
 ignored evidence. `Libtest` remains the default for older project files;
 `Json` supports the existing normalized report contract. Reports must be clean
 JSON on captured output and fit the 16 MiB parsing bound.
+
+The ACP pilot configuration separates raw server logs from the JSON report.
+It runs the same installed Vitest CLI through Node inside `pnpm exec /bin/sh`, duplicates the report stream
+to descriptor 3, redirects normal stdout to stderr, and selects
+`--outputFile=/dev/fd/3`. This preserves the complete report and actual exit
+status while keeping direct `process.stdout.write` diagnostics out of the parser.
+Pass/fail fixtures and a real local-Postgres test verified this configuration;
+see [report-stream evidence](evidence/hermes-acp/report-stream.md).
 
 Every bot step has a short `roles/<step>.md` prompt. Intake snapshots readable
 role files and their SHA-256 hashes into `context/roles/` and
@@ -114,17 +125,15 @@ relevant Notion Engineering KB Design Specs and Decision Log. Follow the target
 repository's AGENTS.md and personal overlay. Confirm one scope, the intended
 base and required capabilities. No pilot is selected by guessing a ticket ID.
 
-The shipped named Hermes bindings currently fail doctor on the existing
-shared-gateway cancellation capability gate. Plain viewer process death is not
-proof that its model/tools stopped. Before using these bindings, verify a stable
-scoped cancellation contract during active tools or implement and verify an
-owned-worker mode. Preserve the profile's actual skills/MCP context. Do not
-replace it silently with a different bot or waive the gate after a trivial probe.
-The current Hermes family label also cannot prove cross-model-family review;
-a live adapter must supply verified model-family identities for GREEN and Review.
-A configured command adapter must meet the same supervision and provenance
-requirements. See [process supervision](process-supervision.md) and
-[agent contracts](agent-contracts.md).
+Legacy `Hermes` bindings retain the shared-gateway cancellation gate. The opt-in
+`HermesAcp` binding uses public ACP v1 with a pinned version and current model,
+exact-session cancellation and read-only main-call usage verification. Viewer
+death leaves an unfinished receipt and retains capacity. It never establishes
+settlement. The adapter preserves the selected profile's skills and MCP context.
+GREEN and Review use independently verified OpenAI and Anthropic families.
+See [ACP configuration and supervision](hermes-acp.md),
+[process supervision](process-supervision.md) and the
+[live contract probes](evidence/hermes-acp/live-contract.md).
 
 Configure the complete child environment, dependencies, git/gh access and bot
 credentials locally. GUI/launchd does not load shell startup files. Supply the
@@ -135,16 +144,15 @@ a PR. `doctor` executes project checks and bot probes; allow the configured
 60-minute full-project check budget. It must pass before intake allocates a run.
 
 ```sh
-hermon doctor workflows/sdlc --project projects/rummyrune/project.yaml --ticket RUM-123
-# Substitute the ticket selected during the guided session:
-hermon run workflows/sdlc RUM-123 --project projects/rummyrune/project.yaml \
-  --base qa --confirm --run-id RUM-123-pilot
+hermon doctor workflows/sdlc --project projects/rummyrune/pilot.yaml --ticket "$TICKET"
+hermon run workflows/sdlc "$TICKET" --project projects/rummyrune/pilot.yaml \
+  --base staging --confirm --run-id "$RUN_ID"
 hermon hub
 # Or use hermon menubar with the same data directory.
-hermon status RUM-123-pilot --json
+hermon status "$RUN_ID" --json
 ```
 
-These are examples for the future guided session, not executed pilot commands.
+These examples require owner-local paths and credentials before execution.
 With a custom `--data-dir`, pass it consistently to intake, hosting, views and
 controls. Only one host may own the directory. Existing monitoring stays usable
 with no queued runs.

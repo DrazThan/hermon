@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "kind": "sanitized_capability_summary",
+  "versions_verified": [
+    "0.22.4",
+    "0.22.5"
+  ],
+  "role_profiles_verified": 5,
+  "assigned_result_verified": true,
+  "main_call_family_verified": true,
+  "scoped_active_tool_cancellation_verified": true,
+  "unrelated_control_continued": true,
+  "operator_identifiers_included": false,
+  "usage_telemetry_included": false,
+  "raw_receipts": "retained privately"
+}

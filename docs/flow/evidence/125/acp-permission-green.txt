@@ -1,0 +1,10 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.32s
+     Running tests/acp_permission_scope.rs (target/debug/deps/acp_permission_scope-222537f1d1eb3d3a)
+
+running 3 tests
+test acp_allows_only_once_for_owned_result_and_artifact_file_writes ... ok
+test acp_rejects_outside_relative_cross_attempt_and_symlink_write_targets ... ok
+test acp_rejects_hub_metadata_control_locks_and_hidden_output_basenames ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.55s

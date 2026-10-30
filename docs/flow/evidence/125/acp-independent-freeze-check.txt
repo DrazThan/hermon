@@ -1,0 +1,14 @@
+crates/hermon/tests/hermes_acp_doctor.rs: OK
+docs/flow/evidence/125/acp-doctor-acceptance.md: OK
+crates/hermon-flow/tests/acp_permission_scope.rs: OK
+crates/hermon-flow/tests/fixtures/hermes-acp-artifact-permission.py: OK
+docs/flow/evidence/125/acp-permission-acceptance.md: OK
+crates/hermon-flow/tests/acp_provenance.rs: OK
+docs/flow/evidence/125/acp-provenance-acceptance.md: OK
+crates/hermon-flow/tests/acp_rpc_collision.rs: OK
+crates/hermon-flow/tests/fixtures/hermes-acp-id-collision.py: OK
+docs/flow/evidence/125/acp-rpc-collision-acceptance.md: OK
+crates/hermon-flow/tests/hermes_acp.rs: OK
+crates/hermon-flow/tests/fixtures/hermes-acp.py: OK
+docs/flow/evidence/125/acp-transport-acceptance.md: OK
+docs/flow/evidence/125/acp-transport-test-correction.md: OK

@@ -151,17 +151,36 @@ mod delivery_tests {
     use std::os::unix::fs::PermissionsExt;
 
     /// A temp dir containing one executable shim named `name`, whose body
-    /// appends its argv (one per line) to `out_file` — enough to prove a
+    /// publishes its complete argv (one per line) to `out_file`, proving a
     /// probed [`Notifier`] actually invokes the binary it resolved with the
     /// right arguments, without the test popping a real system notification.
     fn shim_dir(name: &str, out_file: &Path) -> tempfile::TempDir {
+        shim_dir_after_first(name, out_file, ":")
+    }
+
+    fn shim_dir_after_first(name: &str, out_file: &Path, after_first: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join(name);
         fs::write(
             &script,
             format!(
-                "#!/bin/sh\nfor a in \"$@\"; do echo \"$a\" >> {:?}; done\n",
-                out_file
+                r#"#!/bin/sh
+set -eu
+capture={out_file:?}.$$.pending
+trap 'rm -f "$capture"' EXIT HUP INT TERM
+first=yes
+{{
+for a in "$@"; do
+    printf '%s\n' "$a"
+    if [ "$first" = yes ]; then
+        {after_first}
+    fi
+    first=no
+done
+}} > "$capture"
+mv "$capture" {out_file:?}
+trap - EXIT HUP INT TERM
+"#
             ),
         )
         .unwrap();
@@ -274,6 +293,50 @@ mod delivery_tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("shim never wrote to {}", path.display());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shim_publishes_complete_argv_before_reader_can_observe_it() {
+        use std::io::Write;
+
+        struct OwnedShim(std::process::Child);
+        impl Drop for OwnedShim {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let out = tempfile::tempdir().unwrap();
+        let out_file = out.path().join("argv.txt");
+        let checkpoint = out.path().join("first-argument-written");
+        let hook = format!("printf ready > {:?}\nIFS= read -r release", checkpoint);
+        let dir = shim_dir_after_first("capture", &out_file, &hook);
+        let mut child = OwnedShim(
+            Command::new(dir.path().join("capture"))
+                .args(["first", "last"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+
+        read_eventually(&checkpoint);
+        assert!(
+            !out_file.exists(),
+            "a partial argument capture must not be visible to read_eventually"
+        );
+        child
+            .0
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"continue\n")
+            .unwrap();
+        assert_eq!(read_eventually(&out_file), "first\nlast\n");
+        assert!(child.0.wait().unwrap().success());
     }
 
     #[test]

@@ -1,0 +1,20 @@
+[
+  {
+    "case": "pass",
+    "launcher": "pnpm exec /bin/sh",
+    "exit": 0,
+    "numTotalTests": 1,
+    "numFailedTests": 0,
+    "complete_stdout_is_json": true,
+    "diagnostic_on_stderr": true
+  },
+  {
+    "case": "fail",
+    "launcher": "pnpm exec /bin/sh",
+    "exit": 1,
+    "numTotalTests": 1,
+    "numFailedTests": 1,
+    "complete_stdout_is_json": true,
+    "diagnostic_on_stderr": true
+  }
+]

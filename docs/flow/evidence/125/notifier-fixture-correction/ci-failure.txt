@@ -1,0 +1,21 @@
+2026-10-30T16:03:01.6955050Z test notify::delivery_tests::deliver_invokes_terminal_notifier_with_the_banner_fields ... FAILED
+2026-10-30T16:03:01.6955840Z test notify::delivery_tests::deliver_is_a_noop_when_silent ... ok
+2026-10-30T16:03:01.7039760Z test notify::delivery_tests::deliver_invokes_osascript_with_an_inert_hostile_title ... ok
+2026-10-30T16:03:01.7057240Z test notify::delivery_tests::deliver_osascript_receives_sanitized_and_escaped_fields ... ok
+2026-10-30T16:03:01.7087600Z test notify::delivery_tests::probe_falls_back_to_notify_send ... ok
+2026-10-30T16:03:01.7101350Z test notify::delivery_tests::probe_falls_back_to_osascript ... ok
+2026-10-30T16:03:01.7152860Z test notify::delivery_tests::probe_finds_terminal_notifier_first ... ok
+2026-10-30T16:03:01.7155780Z test notify::delivery_tests::probe_ignores_a_non_executable_file ... ok
+2026-10-30T16:03:01.7157900Z test notify::delivery_tests::probe_is_silent_with_nothing_on_path ... ok
+2026-10-30T16:03:01.7188300Z test notify::delivery_tests::probe_prefers_terminal_notifier_over_osascript ... ok
+2026-10-30T16:03:01.7381160Z test notify::delivery_tests::deliver_terminal_notifier_receives_sanitized_fields ... ok
+2026-10-30T16:03:10.0748480Z failures:
+2026-10-30T16:03:10.0749870Z ---- notify::delivery_tests::deliver_invokes_terminal_notifier_with_the_banner_fields stdout ----
+2026-10-30T16:03:10.0751010Z thread 'notify::delivery_tests::deliver_invokes_terminal_notifier_with_the_banner_fields' (13585) panicked at crates/hermon/src/notify.rs:290:9:
+2026-10-30T16:03:10.0751730Z assertion failed: got.contains("C:0f865f")
+2026-10-30T16:03:10.0752270Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-30T16:03:10.0752950Z failures:
+2026-10-30T16:03:10.0753340Z     notify::delivery_tests::deliver_invokes_terminal_notifier_with_the_banner_fields
+2026-10-30T16:03:10.0754380Z test result: FAILED. 429 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.00s
+2026-10-30T16:03:10.0761710Z error: test failed, to rerun pass `-p hermon --lib`
+2026-10-30T16:03:10.0889190Z ##[error]Process completed with exit code 101.

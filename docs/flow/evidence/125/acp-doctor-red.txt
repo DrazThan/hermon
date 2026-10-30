@@ -1,0 +1,33 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.96s
+     Running tests/hermes_acp_doctor.rs (target/debug/deps/hermes_acp_doctor-51915d3c8478e41e)
+
+running 3 tests
+test doctor_requires_actual_task_result_file_even_after_verified_end_turn ... FAILED
+test doctor_rejects_end_turn_without_main_session_usage ... ok
+test doctor_accepts_verified_acp_bot_while_unrelated_tracker_auth_stays_failed ... FAILED
+
+failures:
+
+---- doctor_requires_actual_task_result_file_even_after_verified_end_turn stdout ----
+
+thread 'doctor_requires_actual_task_result_file_even_after_verified_end_turn' (96239027) panicked at crates/hermon/tests/hermes_acp_doctor.rs:159:5:
+fake must have completed and written its result elsewhere
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- doctor_accepts_verified_acp_bot_while_unrelated_tracker_auth_stays_failed stdout ----
+
+thread 'doctor_accepts_verified_acp_bot_while_unrelated_tracker_auth_stays_failed' (96239025) panicked at crates/hermon/tests/hermes_acp_doctor.rs:123:5:
+assertion `left == right` failed: actual ACP task, result and main usage must establish bot readiness: {"checks":[{"fix":"Hermes ACP doctor probe is not implemented","name":"bot worker","ok":false},{"fix":null,"name":"gh auth","ok":true},{"fix":null,"name":"gh repository fixture/project","ok":true},{"fix":"Linear transport failed","name":"tracker auth","ok":false}],"schema":1}
+  left: Bool(false)
+ right: true
+
+
+failures:
+    doctor_accepts_verified_acp_bot_while_unrelated_tracker_auth_stays_failed
+    doctor_requires_actual_task_result_file_even_after_verified_end_turn
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.38s
+
+error: test failed, to rerun pass `-p hermon --test hermes_acp_doctor`

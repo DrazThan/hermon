@@ -1,0 +1,23 @@
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.62s
+     Running unittests src/lib.rs (target/debug/deps/hermon-18a1fd736ff12339)
+
+running 16 tests
+test notify::delivery_tests::build_osascript_sanitizes_control_sequences_in_title ... ok
+test notify::delivery_tests::applescript_escaping_handles_a_literal_backslash ... ok
+test notify::delivery_tests::deliver_is_a_noop_when_silent ... ok
+test notify::delivery_tests::build_osascript_embeds_all_three_fields_escaped ... ok
+test notify::delivery_tests::applescript_escaping_neutralizes_quotes_and_backslashes ... ok
+test notify::delivery_tests::probe_is_silent_with_nothing_on_path ... ok
+test notify::delivery_tests::probe_finds_terminal_notifier_first ... ok
+test notify::delivery_tests::probe_ignores_a_non_executable_file ... ok
+test notify::delivery_tests::probe_falls_back_to_notify_send ... ok
+test notify::delivery_tests::probe_falls_back_to_osascript ... ok
+test notify::delivery_tests::probe_prefers_terminal_notifier_over_osascript ... ok
+test notify::delivery_tests::deliver_invokes_osascript_with_an_inert_hostile_title ... ok
+test notify::delivery_tests::deliver_invokes_terminal_notifier_with_the_banner_fields ... ok
+test notify::delivery_tests::shim_publishes_complete_argv_before_reader_can_observe_it ... ok
+test notify::delivery_tests::deliver_osascript_receives_sanitized_and_escaped_fields ... ok
+test notify::delivery_tests::deliver_terminal_notifier_receives_sanitized_fields ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 415 filtered out; finished in 0.76s

@@ -81,6 +81,9 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
                 .with_context(|| format!("configure missing bot {bot} in project.bots"))?;
             let config = match config {
                 BotConfig::Command(config) => config,
+                BotConfig::HermesAcp(config) => {
+                    return crate::agent::hermes_acp::probe(config, &project.repo, &project.env);
+                }
                 BotConfig::Hermes { .. } => bail!(
                     "bot {bot}: configure a command adapter with verified owned-worker cancellation; Hermes shared gateway supervision is unavailable"
                 ),

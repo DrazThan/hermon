@@ -1,0 +1,29 @@
+2026-10-30T15:52:10.4957600Z      Running tests/flow_host.rs (target/debug/deps/flow_host-fd63e7ca3584e9fc)
+2026-10-30T15:52:10.4959080Z
+2026-10-30T15:52:10.4959520Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+2026-10-30T15:52:10.4959880Z
+2026-10-30T15:52:10.8341060Z
+2026-10-30T15:52:10.8343030Z running 3 tests
+2026-10-30T15:52:10.8906000Z test foreground_hub_exposes_documented_control_flags ... ok
+2026-10-30T15:52:10.9069130Z test foreground_hub_once_accepts_empty_data_directory ... ok
+2026-10-30T15:52:11.2022620Z test foreground_hub_advances_queued_run_with_project_environment ... FAILED
+2026-10-30T15:52:11.2023240Z
+2026-10-30T15:52:11.2023350Z failures:
+2026-10-30T15:52:11.2023550Z
+2026-10-30T15:52:11.2023920Z ---- foreground_hub_advances_queued_run_with_project_environment stdout ----
+2026-10-30T15:52:11.2024350Z
+2026-10-30T15:52:11.2024630Z thread '<unnamed>' (14366) panicked at crates/hermon/tests/flow_host.rs:48:54:
+2026-10-30T15:52:11.2025440Z called `Result::unwrap()` on an `Err` value: Os { code: 35, kind: WouldBlock, message: "Resource temporarily unavailable" }
+2026-10-30T15:52:11.2026230Z note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+2026-10-30T15:52:11.2026630Z
+2026-10-30T15:52:11.2027050Z thread 'foreground_hub_advances_queued_run_with_project_environment' (14363) panicked at crates/hermon/tests/flow_host.rs:84:29:
+2026-10-30T15:52:11.2027860Z called `Result::unwrap()` on an `Err` value: Any { .. }
+2026-10-30T15:52:11.2028180Z
+2026-10-30T15:52:11.2029230Z
+2026-10-30T15:52:11.2030050Z failures:
+2026-10-30T15:52:11.2031120Z     foreground_hub_advances_queued_run_with_project_environment
+2026-10-30T15:52:11.2033540Z error: test failed, to rerun pass `-p hermon --test flow_host`
+2026-10-30T15:52:11.2034270Z
+2026-10-30T15:52:11.2035360Z test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+2026-10-30T15:52:11.2036870Z
+2026-10-30T15:52:11.2117180Z ##[error]Process completed with exit code 101.

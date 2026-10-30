@@ -1,0 +1,13 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests/hermes_acp.rs (target/debug/deps/hermes_acp-172eb002ae464a02)
+
+running 6 tests
+test acp_viewer_exit_without_terminal_response_remains_uncertain ... ok
+test acp_start_records_runtime_session_and_preserves_profile_argv ... ok
+test acp_late_end_turn_cannot_override_persisted_cancellation ... ok
+test acp_dangerous_permission_request_is_denied_by_default ... ok
+test acp_deadline_cancels_exact_session_and_leaves_unrelated_session_running ... ok
+test acp_owner_answer_loads_exact_prior_acp_session_and_delivers_answer ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s

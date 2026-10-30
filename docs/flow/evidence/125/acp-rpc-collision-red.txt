@@ -1,0 +1,22 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.24s
+     Running tests/acp_rpc_collision.rs (target/debug/deps/acp_rpc_collision-fe2323b36f894e62)
+
+running 1 test
+test acp_permission_request_id_cannot_be_mistaken_for_prompt_response ... FAILED
+
+failures:
+
+---- acp_permission_request_id_cannot_be_mistaken_for_prompt_response stdout ----
+
+thread 'acp_permission_request_id_cannot_be_mistaken_for_prompt_response' (96268321) panicked at crates/hermon-flow/tests/acp_rpc_collision.rs:155:37:
+observe supervised ACP attempt: Block { kind: Transient, reason: "supervisor is dead without a completion receipt; reconcile owned work before retry" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    acp_permission_request_id_cannot_be_mistaken_for_prompt_response
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+
+error: test failed, to rerun pass `-p hermon-flow --test acp_rpc_collision`
