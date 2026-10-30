@@ -69,6 +69,10 @@ pub struct OwnerQuestion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Run {
     pub id: String,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default)]
+    pub cancelled: bool,
     pub current: String,
     pub status: Status,
     pub active: Option<Attempt>,
@@ -95,6 +99,8 @@ impl Run {
     pub fn new(id: impl Into<String>, start: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            paused: false,
+            cancelled: false,
             current: start.into(),
             status: Status::Ready,
             active: None,
@@ -229,6 +235,9 @@ pub struct Dependencies<'a> {
 /// The host owns per-run locking and durable snapshots. No wall clock, process,
 /// filesystem or network calls are made except through the supplied interfaces.
 pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) -> Result<()> {
+    if run.paused || run.cancelled {
+        return Ok(());
+    }
     // A very large configured retry limit must not monopolize the host loop.
     // Ready remains an automatic route if this cooperative budget is exhausted.
     let budget = workflow.steps.len().saturating_mul(4).max(16);

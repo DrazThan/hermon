@@ -596,12 +596,24 @@ hermon ls       [...same source flags as watch...] [--fresh-window SEC]
 hermon render KEY [...same source flags as watch...] [--fresh-window SEC]
 hermon templates preview WORKFLOW TEMPLATE [--project-templates DIR]
                 render a workflow comment template with sample values, without posting
+hermon doctor WORKFLOW --project PROJECT [--ticket TICKET] [--json]
+hermon run WORKFLOW TICKET --project PROJECT --confirm [--base BRANCH] [--start STEP]
+hermon status [RUN] [--json] [--data-dir DIR]
+hermon answer RUN TEXT | approve RUN | retry RUN STEP
+hermon override RUN STEP --reason TEXT
+hermon pause RUN | resume RUN | cancel RUN
 hermon agent    [...same source flags as watch...]
                 the in-container half of the remote wire protocol: stream session
                 frames over stdio for a host `hermon watch`/`gui`/`menubar` to consume
 ```
 
 Defaults make `hermon watch` correct with zero flags.
+
+Workflow intake runs doctor before creating a worktree or run. Controls and
+status accept `--data-dir`; answers and approvals are mirrored through the
+central tracker app. See [intake and CLI controls](docs/flow/intake-controls.md)
+for project configuration, environment checks and persistence. Runs queue for
+the hosting loop; menubar hosting and the pipeline UI are tracked in #124.
 
 | Flag | Default | Meaning |
 |---|---|---|

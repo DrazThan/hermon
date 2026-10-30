@@ -463,7 +463,12 @@ pub fn hermes_session_id(stderr: &str) -> Option<String> {
         .rfind(|id| !id.is_empty() && !id.chars().any(char::is_whitespace))
         .map(str::to_owned)
 }
-fn substitute(arg: &str, task: &Path, workdir: &Path, session: Option<&str>) -> Result<String> {
+pub(crate) fn substitute(
+    arg: &str,
+    task: &Path,
+    workdir: &Path,
+    session: Option<&str>,
+) -> Result<String> {
     // Expand once: placeholder-like text inside a value stays literal.
     let mut rest = arg;
     let mut output = String::new();
@@ -528,7 +533,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     File::open(directory)?.sync_all()?;
     Ok(())
 }
-fn lock(path: &Path, nonblocking: bool) -> Result<Option<File>> {
+pub(crate) fn lock(path: &Path, nonblocking: bool) -> Result<Option<File>> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -555,7 +560,7 @@ fn read_text(path: &Path) -> Option<String> {
         .ok()?;
     (data.len() <= 16 * 1024 * 1024).then_some(data)
 }
-fn protocol_observation(protocol: &Protocol, stdout: &str) -> (Option<String>, bool) {
+pub(crate) fn protocol_observation(protocol: &Protocol, stdout: &str) -> (Option<String>, bool) {
     let mut session = None;
     let mut completion = matches!(protocol, Protocol::ResultFile);
     for value in stdout

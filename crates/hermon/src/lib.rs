@@ -7,6 +7,7 @@ pub mod arbitration;
 pub mod cli;
 pub mod config;
 pub mod engine;
+mod flow_cli;
 pub mod gui;
 #[cfg(target_os = "macos")]
 pub mod login_item;
@@ -90,6 +91,49 @@ pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
+        Command::Run(args) => flow_cli::intake(args),
+        Command::Doctor(args) => flow_cli::doctor(args),
+        Command::Status(args) => flow_cli::status(args),
+        Command::Answer { run, text, data } => flow_cli::control(
+            &data.data_dir,
+            &run,
+            hermon_flow::control::Action::Answer(text),
+        ),
+        Command::Approve(args) => flow_cli::control(
+            &args.data.data_dir,
+            &args.run,
+            hermon_flow::control::Action::Approve,
+        ),
+        Command::Retry { run, step, data } => flow_cli::control(
+            &data.data_dir,
+            &run,
+            hermon_flow::control::Action::Retry(step),
+        ),
+        Command::Override {
+            run,
+            step,
+            reason,
+            data,
+        } => flow_cli::control(
+            &data.data_dir,
+            &run,
+            hermon_flow::control::Action::Override { step, reason },
+        ),
+        Command::Pause(args) => flow_cli::control(
+            &args.data.data_dir,
+            &args.run,
+            hermon_flow::control::Action::Pause,
+        ),
+        Command::Resume(args) => flow_cli::control(
+            &args.data.data_dir,
+            &args.run,
+            hermon_flow::control::Action::Resume,
+        ),
+        Command::Cancel(args) => flow_cli::control(
+            &args.data.data_dir,
+            &args.run,
+            hermon_flow::control::Action::Cancel,
+        ),
         Command::Templates {
             command:
                 cli::TemplatesCommand::Preview {

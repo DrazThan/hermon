@@ -17,6 +17,43 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Start a workflow after confirming its base and passing doctor.
+    Run(FlowRunArgs),
+    /// Probe workflow bots, tracker authentication and project commands.
+    Doctor(DoctorArgs),
+    /// Show one workflow run, or all runs.
+    Status(FlowStatusArgs),
+    /// Answer the current settled owner question.
+    Answer {
+        run: String,
+        text: String,
+        #[command(flatten)]
+        data: FlowData,
+    },
+    /// Approve the current Owner GO request.
+    Approve(FlowControlArgs),
+    /// Retry the current blocked step.
+    Retry {
+        run: String,
+        step: String,
+        #[command(flatten)]
+        data: FlowData,
+    },
+    /// Waive a blocked step with a recorded owner reason.
+    Override {
+        run: String,
+        step: String,
+        #[arg(long)]
+        reason: String,
+        #[command(flatten)]
+        data: FlowData,
+    },
+    /// Pause further dispatch; an active attempt remains owned by its worker.
+    Pause(FlowControlArgs),
+    /// Resume a paused run.
+    Resume(FlowControlArgs),
+    /// Cancel a run and request settlement of its owned worker.
+    Cancel(FlowControlArgs),
     /// Preview workflow comment templates with sample values.
     Templates {
         #[command(subcommand)]
@@ -36,6 +73,60 @@ pub enum Command {
     /// consume — the in-container half of the remote wire protocol (#88,
     /// #89). `--interval` (from [`SourceArgs`]) is the `Snap` cadence.
     Agent(SourceArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct FlowData {
+    /// Hermon data directory (contains runs/).
+    #[arg(long, default_value_os_t = default_flow_data())]
+    pub data_dir: std::path::PathBuf,
+}
+fn default_flow_data() -> std::path::PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("hermon")
+}
+#[derive(Debug, Args)]
+pub struct FlowRunArgs {
+    pub workflow: std::path::PathBuf,
+    pub ticket: String,
+    #[arg(long, default_value = "project.yaml")]
+    pub project: std::path::PathBuf,
+    #[command(flatten)]
+    pub data: FlowData,
+    /// Confirm the selected workflow, base and initial step.
+    #[arg(long)]
+    pub confirm: bool,
+    #[arg(long)]
+    pub base: Option<String>,
+    #[arg(long)]
+    pub start: Option<String>,
+    #[arg(long)]
+    pub run_id: Option<String>,
+}
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    pub workflow: std::path::PathBuf,
+    #[arg(long, default_value = "project.yaml")]
+    pub project: std::path::PathBuf,
+    #[arg(long)]
+    pub ticket: Option<String>,
+    #[arg(long)]
+    pub json: bool,
+}
+#[derive(Debug, Args)]
+pub struct FlowStatusArgs {
+    pub run: Option<String>,
+    #[arg(long)]
+    pub json: bool,
+    #[command(flatten)]
+    pub data: FlowData,
+}
+#[derive(Debug, Args)]
+pub struct FlowControlArgs {
+    pub run: String,
+    #[command(flatten)]
+    pub data: FlowData,
 }
 
 #[derive(Debug, Subcommand)]
@@ -331,7 +422,7 @@ mod source_root_tests {
             Command::Ls(s) => s.source,
             Command::Render(s) => s.source,
             Command::Menubar(s) => s.source,
-            Command::Templates { .. } => panic!("template commands have no source flags"),
+            _ => panic!("workflow commands have no source flags"),
         }
     }
     #[test]

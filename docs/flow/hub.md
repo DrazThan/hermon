@@ -85,3 +85,8 @@ for credentials, durable request state, incremental polling and preview usage.
 Slice 7 implements `CodeHost` with GitHub PR publication and fresh remote-base
 merge ancestry checks. See [GitHub code host](code-host.md) for intake binding,
 PR recovery, configured environment and the owner-only merge contract.
+
+Slice 8 adds [doctor-gated CLI intake and durable controls](intake-controls.md).
+The host and controls share a per-run lock, ordered event journal, snapshots
+and owner-action outboxes. Hub snapshots now carry pause and cancellation
+intent so later observations cannot dispatch a paused or cancelled run.

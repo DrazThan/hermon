@@ -1,0 +1,19 @@
+   Compiling hermon-flow v0.5.0 (/Users/taloz/code/hermon/crates/hermon-flow)
+   Compiling hermon v0.5.0 (/Users/taloz/code/hermon/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.44s
+     Running tests/flow_cli.rs (target/debug/deps/flow_cli-bd8f1da68607fc1b)
+
+running 10 tests
+test doctor_reports_command_not_on_path ... ok
+test doctor_reports_missing_bot ... ok
+test doctor_probes_every_bot_auth_and_project_commands_under_hub_env ... ok
+test doctor_rejects_failed_command_and_code_host_auth ... ok
+test doctor_requires_bot_completion_not_just_exit_zero ... ok
+test cli_status_json_schema ... ok
+test intake_snapshots_workflow_and_templates_without_credentials ... ok
+test intake_refuses_on_doctor_failure ... ok
+test cli_controls_append_events ... ok
+test cli_controls_reject_stale_targets_and_merge_bypass ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.30s
+
