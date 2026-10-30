@@ -48,6 +48,8 @@ commands:
     timeout_seconds: 600
   test:
     argv:
+      - pnpm
+      - exec
       - /bin/sh
       - -c
       - |

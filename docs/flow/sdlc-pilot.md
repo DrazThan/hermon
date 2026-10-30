@@ -53,7 +53,7 @@ ignored evidence. `Libtest` remains the default for older project files;
 JSON on captured output and fit the 16 MiB parsing bound.
 
 The ACP pilot configuration separates raw server logs from the JSON report.
-It runs the same installed Vitest CLI through Node, duplicates the report stream
+It runs the same installed Vitest CLI through Node inside `pnpm exec /bin/sh`, duplicates the report stream
 to descriptor 3, redirects normal stdout to stderr, and selects
 `--outputFile=/dev/fd/3`. This preserves the complete report and actual exit
 status while keeping direct `process.stdout.write` diagnostics out of the parser.

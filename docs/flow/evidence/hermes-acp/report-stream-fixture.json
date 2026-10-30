@@ -1,6 +1,7 @@
 [
   {
     "case": "pass",
+    "launcher": "pnpm exec /bin/sh",
     "exit": 0,
     "numTotalTests": 1,
     "numFailedTests": 0,
@@ -9,6 +10,7 @@
   },
   {
     "case": "fail",
+    "launcher": "pnpm exec /bin/sh",
     "exit": 1,
     "numTotalTests": 1,
     "numFailedTests": 1,
