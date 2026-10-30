@@ -306,6 +306,19 @@ pub fn doctor_missing_test_command() -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+pub fn doctor_counts_only_report() -> Value {
+    let mut fixture = Fixture::new();
+    fs::write(
+        &fixture.workflow,
+        "version: 1\nname: positive\nsteps:\n  work:\n    bot: worker\n    check: [tests_pass]\n",
+    )
+    .unwrap();
+    fixture.config["commands"]["test"] =
+        json!({"argv":["/bin/sh","-c","exit 0"],"timeout_seconds":3,"report":"Json"});
+    fixture.save_config();
+    serde_json::from_slice(&fixture.doctor().stdout).unwrap()
+}
+
 fn exercise_inner(report: Value, status: i32, expectations: Value, poison: bool) -> Value {
     let mut fixture = Fixture::new();
     fs::write(&fixture.workflow, "version: 1\nname: vitest-fixture\nsteps:\n  plan:\n    bot: worker\n    produces: [test-expectations.json]\n    next: characterize\n  characterize:\n    bot: worker\n    check: [tests_pass]\n    tag: characterize\n    next: owner_go\n  owner_go:\n    gate: owner_go\n").unwrap();

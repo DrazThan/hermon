@@ -1,0 +1,22 @@
+   Compiling hermon v0.5.0 (<workspace>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.49s
+     Running tests/flow_characterization.rs (target/debug/deps/flow_characterization-ebd28bb6403cc178)
+
+running 1 test
+test doctor_rejects_counts_only_report_before_allocating_a_run ... FAILED
+
+failures:
+
+---- doctor_rejects_counts_only_report_before_allocating_a_run stdout ----
+
+thread 'doctor_rejects_counts_only_report_before_allocating_a_run' (97471344) panicked at crates/hermon/tests/flow_characterization.rs:31:5:
+{"checks":[{"fix":null,"name":"bot worker","ok":true},{"fix":null,"name":"command project_check","ok":true},{"fix":null,"name":"command test","ok":true},{"fix":null,"name":"gh auth","ok":true},{"fix":null,"name":"gh repository fixture/project","ok":true},{"fix":null,"name":"tracker auth","ok":true}],"schema":1}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    doctor_rejects_counts_only_report_before_allocating_a_run
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 2.19s
+
+error: test failed, to rerun pass `-p hermon --test flow_characterization`

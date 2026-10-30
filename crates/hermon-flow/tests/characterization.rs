@@ -172,6 +172,17 @@ fn runtime_collection_count_and_unrelated_failures_remain_blocks() {
         assert!(!positive(bad, &["required"]));
     }
 }
+
+#[test]
+fn failed_suite_cannot_be_hidden_by_passing_assertions() {
+    let r = report(&[("required", "passed")]);
+    let mut suite = r.clone();
+    suite["numFailedTestSuites"] = json!(1);
+    let mut file = r;
+    file["testResults"][0]["status"] = json!("failed");
+    assert!(!positive(suite, &["required"]));
+    assert!(!positive(file, &["required"]));
+}
 #[test]
 fn counts_only_report_cannot_prove_named_passing_assertions() {
     assert!(!check(

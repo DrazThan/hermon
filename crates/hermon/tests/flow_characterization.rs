@@ -26,6 +26,22 @@ fn doctor_requires_test_command_for_positive_gate() {
 }
 
 #[test]
+fn doctor_rejects_counts_only_report_before_allocating_a_run() {
+    let report = fixture::doctor_counts_only_report();
+    assert!(
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["ok"] == false
+                && finding["fix"]
+                    .as_str()
+                    .is_some_and(|fix| fix.contains("VitestJson"))),
+        "{report}"
+    );
+}
+
+#[test]
 fn accepted_plan_drives_characterization_and_records_required_passing_ids() {
     let record = fixture::exercise(
         report(),
