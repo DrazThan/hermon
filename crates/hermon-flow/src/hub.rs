@@ -238,12 +238,16 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
     if run.cancelled {
         // Cancellation is terminal for acceptance, not for supervision. Keep
         // observing the owned handle until the worker confirms settlement.
-        if let Some(attempt) = &run.active
-            && matches!(deps.agent.poll(&attempt.handle), Ok(Poll::Finished { .. }))
-        {
-            run.active = None;
-            run.unsettled = false;
-            event(run, "settled", "cancelled worker settlement confirmed");
+        if let Some(attempt) = &run.active {
+            let settled = matches!(deps.agent.poll(&attempt.handle), Ok(Poll::Finished { .. }))
+                || matches!(deps.agent.stop(&attempt.handle), Ok(Settlement::Confirmed));
+            // Repeating stop is intentional: the host may have crashed after
+            // persisting cancellation, before asking the owned worker to stop.
+            if settled {
+                run.active = None;
+                run.unsettled = false;
+                event(run, "settled", "cancelled worker settlement confirmed");
+            }
         }
         return Ok(());
     }

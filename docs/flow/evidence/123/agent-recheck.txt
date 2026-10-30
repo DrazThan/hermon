@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running tests/agent.rs (target/debug/deps/agent-ede879daedb4325e)
+
+running 2 tests
+test agent_stdout_carries_only_frames ... ok
+test agent_streams_hello_snap_tail_and_exits_promptly_on_stdin_eof ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.66s
+

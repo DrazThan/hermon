@@ -128,7 +128,8 @@ Pause stops new dispatch; it does not signal the active worker. Resume clears
 the pause. Cancel persists terminal intent before requesting a stop from the
 run's owned supervisor. It never signals an arbitrary stored PID. Late success
 cannot accept a cancelled step, start a successor or resurrect the run.
-The hub continues polling cancelled handles until settlement is confirmed.
+The hub continues polling cancelled handles and repeating the idempotent owned
+stop request until settlement is confirmed, including after a host crash.
 
 The hosting loop must use the same run lock and shared `control::save` API,
 respect the persisted hub flags, and retry `intake::announce` and
