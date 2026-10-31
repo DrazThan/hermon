@@ -1,0 +1,22 @@
+   Compiling hermon v0.5.0 (<repository>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running tests/acp_failed_turn_scope.rs (target/debug/deps/acp_failed_turn_scope-6c81f2ca318ad404)
+
+running 1 test
+test recovery_requires_a_bound_session_and_a_literal_owned_attempt ... FAILED
+
+failures:
+
+---- recovery_requires_a_bound_session_and_a_literal_owned_attempt stdout ----
+
+thread 'recovery_requires_a_bound_session_and_a_literal_owned_attempt' (99388040) panicked at crates/hermon/tests/acp_failed_turn_scope.rs:244:9:
+unsafe binding missing-open-session was accepted
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    recovery_requires_a_bound_session_and_a_literal_owned_attempt
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.20s
+
+error: test failed, to rerun pass `-p hermon --test acp_failed_turn_scope`
