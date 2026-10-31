@@ -36,9 +36,24 @@ Hermes session identity. An owner answer explicitly loads the recorded ACP
 session. Cancellation intent is durable before `session/cancel`; only the exact
 prompt's terminal response establishes settlement. A late `end_turn` cannot undo
 timeout or cancellation. The adapter waits up to 30 seconds for cancellation.
-EOF, request failure or transport loss during submitted work leaves the attempt
-unfinished and retains capacity. Do not resend an uncertain turn or stop a
-shared gateway to make it appear settled.
+EOF, ambiguous request errors or transport loss during submitted work leave the
+attempt unfinished and retain capacity. The pinned adapter's explicit
+`admitted_turn_failed` response (code `-32603`, message `Internal error`,
+`error.data.details`) instead confirms a failed admitted turn. It becomes a
+capability block, never a successful step, and does not trigger a follow-up.
+
+For a dead older worker that recorded this exact failure but remained unsettled,
+use `hermon reconcile RUN STEP --data-dir DATA`. This control holds the run and
+worker locks and validates the complete bounded ACP trace against the owned
+launch, pinned agent/version/model and session. It accepts only the expected
+failed prompt response after the initialization/open/mode sequence and at most
+three interim end turns. Missing, malformed, foreign, unmatched or trailing
+frames, symlink receipts and live workers are refused. No transport or prompt
+is started, and the launch, result file, trace and candidate remain unchanged.
+The host must still observe failure settlement; an explicit `hermon retry`
+remains required. Inspect existing background jobs and verify their actual
+outcomes before retrying. Do not resend an uncertain turn or stop a shared
+gateway to make it appear settled.
 
 After a successful terminal response, the adapter reloads the current session
 tip and opens the profile usage database read-only. It requires positive

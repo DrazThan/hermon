@@ -1,0 +1,12 @@
+{
+  "new_test_functions_passed": 6,
+  "existing_acp_test_functions_passed": 28,
+  "existing_cli_and_doctor_test_functions_passed": 13,
+  "format": "passed",
+  "strict_all_target_clippy": "passed",
+  "release_build": "passed",
+  "frozen_packets": "unchanged",
+  "failed_turn_never_accepted_as_done": true,
+  "reconcile_starts_no_worker_or_prompt": true,
+  "generic_errors_still_unsettled": true
+}

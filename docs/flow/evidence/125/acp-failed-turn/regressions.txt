@@ -1,0 +1,66 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.10s
+     Running tests/acp_continuation_independent.rs (target/debug/deps/acp_continuation_independent-a4e4bd1a815b21eb)
+
+running 5 tests
+test existing_invalid_result_stops_without_another_prompt_or_synthetic_success ... ok
+test cancellation_during_followup_targets_the_same_owned_session ... ok
+test missing_result_exhausts_exactly_three_followups_as_a_capability_block ... ok
+test interim_end_turn_continues_same_contract_and_stops_when_result_appears ... ok
+test followup_uses_the_original_overall_deadline_instead_of_a_new_budget ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.19s
+
+     Running tests/acp_patch_permission_independent.rs (target/debug/deps/acp_patch_permission_independent-051eab5cdfdd7521)
+
+running 4 tests
+test canonical_single_and_multiple_owned_updates_receive_allow_once ... ok
+test protected_hidden_lock_targets_and_wrong_session_are_denied ... ok
+test path_boundaries_and_mixed_targets_follow_raw_arguments_not_cosmetic_diff ... ok
+test non_update_operations_malformed_headers_and_unknown_modes_are_denied ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.92s
+
+     Running tests/acp_permission_scope.rs (target/debug/deps/acp_permission_scope-222537f1d1eb3d3a)
+
+running 3 tests
+test acp_allows_only_once_for_owned_result_and_artifact_file_writes ... ok
+test acp_rejects_outside_relative_cross_attempt_and_symlink_write_targets ... ok
+test acp_rejects_hub_metadata_control_locks_and_hidden_output_basenames ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.07s
+
+     Running tests/acp_provenance.rs (target/debug/deps/acp_provenance-db7948f64f12070d)
+
+running 9 tests
+test acp_missing_vendor_db_is_a_capability_block_without_creating_it ... ok
+test acp_known_provider_model_pairs_supply_real_model_families ... ok
+test acp_unknown_provider_model_pair_never_launches_or_claims_family ... ok
+test acp_initialize_version_mismatch_cannot_start_a_session_or_prompt ... ok
+test acp_end_turn_accepts_only_recorded_main_model_usage_and_preserves_readonly_db ... ok
+test acp_current_model_mismatch_cannot_send_a_prompt ... ok
+test acp_main_usage_can_follow_only_compression_parent_lineage ... ok
+test acp_compression_lineage_limit_and_cycles_cannot_become_usage_evidence ... ok
+test acp_end_turn_rejects_missing_auxiliary_zero_foreign_or_mixed_main_usage ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.94s
+
+     Running tests/acp_rpc_collision.rs (target/debug/deps/acp_rpc_collision-fe2323b36f894e62)
+
+running 1 test
+test acp_permission_request_id_cannot_be_mistaken_for_prompt_response ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/hermes_acp.rs (target/debug/deps/hermes_acp-172eb002ae464a02)
+
+running 6 tests
+test acp_start_records_runtime_session_and_preserves_profile_argv ... ok
+test acp_dangerous_permission_request_is_denied_by_default ... ok
+test acp_late_end_turn_cannot_override_persisted_cancellation ... ok
+test acp_owner_answer_loads_exact_prior_acp_session_and_delivers_answer ... ok
+test acp_viewer_exit_without_terminal_response_remains_uncertain ... ok
+test acp_deadline_cancels_exact_session_and_leaves_unrelated_session_running ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.65s
+

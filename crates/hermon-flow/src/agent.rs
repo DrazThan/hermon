@@ -96,6 +96,28 @@ pub struct ProcessAgent {
     env: Option<BTreeMap<String, String>>,
     worker_subcommand: Option<String>,
 }
+
+/// Explicit recovery of a dead ACP worker from its recorded failed-terminal
+/// proof. The caller holds the run lock; the lifetime lock excludes live work.
+pub(crate) fn reconcile_failed_acp(directory: &Path) -> Result<()> {
+    for name in ["launch.json", "process.json", "log", "worker.lock"] {
+        let metadata = fs::symlink_metadata(directory.join(name))?;
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "unsafe recovery receipt {name}"
+        );
+    }
+    let _worker = lock(&directory.join("worker.lock"), true)?
+        .context("worker is still live; cannot reconcile")?;
+    let launch: Launch = read_json(&directory.join("launch.json"))?;
+    let mut state: State = read_json(&directory.join("process.json"))?;
+    ensure!(
+        !state.finished && !state.process_success && !state.completion,
+        "attempt already has a completion outcome"
+    );
+    hermes_acp::reconcile_failure(directory, &launch, &mut state)?;
+    write_json(&directory.join("process.json"), &state)
+}
 impl ProcessAgent {
     pub fn new(
         root: impl AsRef<Path>,

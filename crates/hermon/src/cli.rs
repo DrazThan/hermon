@@ -43,6 +43,13 @@ pub enum Command {
         #[command(flatten)]
         data: FlowData,
     },
+    /// Reconcile a dead ACP worker's explicit failed-turn receipt (never accepts results).
+    Reconcile {
+        run: String,
+        step: String,
+        #[command(flatten)]
+        data: FlowData,
+    },
     /// Waive a blocked step with a recorded owner reason.
     Override {
         run: String,

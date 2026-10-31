@@ -314,6 +314,16 @@ impl Client {
                 && value.get("method").is_none()
                 && value["id"] == id
             {
+                if prompt && failed_admission(&value) {
+                    state
+                        .hermes
+                        .as_mut()
+                        .context("missing ACP identity")?
+                        .settled = true;
+                    bail!(
+                        "Hermes confirmed a failed admitted turn; inspect the attempt log before retry"
+                    );
+                }
                 ensure!(
                     value.get("error").is_none(),
                     "Hermes ACP request failed; inspect the bounded attempt log"
@@ -343,6 +353,129 @@ impl Client {
         // signals stop our idle transport, never establish gateway settlement.
         self.owned.finish()
     }
+}
+
+/// The pinned public ACP adapter emits this only after its admitted turn's
+/// canonical receipt is terminal/failed. Other RPC errors remain ambiguous.
+fn failed_admission(frame: &Value) -> bool {
+    frame.get("method").is_none()
+        && frame.get("result").is_none()
+        && frame["error"]["code"] == -32603
+        && frame["error"]["message"] == "Internal error"
+        && frame["error"]["data"]["details"] == "admitted_turn_failed"
+}
+
+/// Recover only the exact failed prompt from an older adapter's complete trace.
+/// No transport is opened and no candidate result is accepted.
+pub(super) fn reconcile_failure(
+    directory: &Path,
+    launch: &Launch,
+    state: &mut State,
+) -> Result<()> {
+    let config = launch
+        .hermes_acp
+        .as_ref()
+        .context("not a Hermes ACP attempt")?;
+    config.validate()?;
+    let receipt = state
+        .hermes
+        .as_ref()
+        .context("missing ACP session identity")?;
+    ensure!(
+        receipt.profile == config.profile
+            && receipt.model_id == config.model_id
+            && receipt.family == family(&config.model_id)
+            && state.attempt.session_id.as_deref() == Some(&receipt.current_session_id),
+        "launch and session receipt disagree"
+    );
+    ensure!(
+        state.attempt.log_path == directory.join("log"),
+        "foreign ACP trace path"
+    );
+    let file = File::open(directory.join("log"))?;
+    ensure!(
+        file.metadata()?.len() <= 128 * 1024 * 1024,
+        "ACP trace exceeds recovery limit"
+    );
+    let mut reader = BufReader::new(file);
+    let mut expected = 1_u64;
+    let mut failed = false;
+    loop {
+        let mut line = String::new();
+        let n = Read::by_ref(&mut reader)
+            .take(16 * 1024 * 1024 + 1)
+            .read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+        ensure!(
+            !failed && n <= 16 * 1024 * 1024 && line.ends_with('\n'),
+            "incomplete or trailing ACP trace"
+        );
+        let frame: Value = serde_json::from_str(&line)?;
+        ensure!(frame["jsonrpc"] == "2.0", "invalid ACP trace frame");
+        if frame.get("method").is_some() {
+            continue;
+        }
+        ensure!(
+            frame["id"].as_u64() == Some(expected),
+            "unmatched ACP response"
+        );
+        match expected {
+            1 => ensure!(
+                frame.get("error").is_none()
+                    && frame["result"]["protocolVersion"] == 1
+                    && frame["result"]["agentInfo"]["name"] == "hermes-agent"
+                    && frame["result"]["agentInfo"]["version"] == config.version,
+                "unverified ACP initialization"
+            ),
+            2 => {
+                ensure!(frame.get("error").is_none(), "failed ACP session open");
+                let previous = match &launch.resume_session {
+                    Some(session) => {
+                        ensure!(
+                            session == &receipt.acp_session_id,
+                            "foreign resume identity"
+                        );
+                        Some(receipt)
+                    }
+                    None => None,
+                };
+                let opened = identity(&frame["result"], config, previous)?;
+                ensure!(
+                    opened.acp_session_id == receipt.acp_session_id
+                        && opened.current_session_id == receipt.current_session_id,
+                    "foreign ACP session"
+                );
+            }
+            3 => ensure!(
+                frame.get("error").is_none() && frame["result"].is_object(),
+                "unconfirmed ACP mode"
+            ),
+            4..=7 => {
+                if failed_admission(&frame) {
+                    failed = true;
+                } else {
+                    ensure!(
+                        frame.get("error").is_none() && frame["result"]["stopReason"] == "end_turn",
+                        "ambiguous ACP prompt outcome"
+                    );
+                }
+            }
+            _ => bail!("unexpected ACP response sequence"),
+        }
+        expected += 1;
+    }
+    ensure!(failed, "no confirmed failed admission in ACP trace");
+    state.hermes.as_mut().unwrap().settled = true;
+    state.result = Some(capability_result(
+        "Hermes confirmed a failed admitted turn; recorded trace reconciled without accepting a result or resending work",
+    ));
+    state.attempt.cancelled |= directory.join("cancel").exists();
+    state.process_success = !state.attempt.cancelled && !state.attempt.timed_out;
+    state.completion = state.process_success;
+    state.finished = true;
+    Ok(())
 }
 /// Accept only the unambiguous Update File subset of Hermes' permissive parser.
 /// Inspect every raw header; titles and displayed diffs are never authority.
@@ -579,7 +712,13 @@ pub(super) fn run(
                 "session/prompt",
                 json!({"sessionId":sid,"prompt":[{"type":"text","text":prompt}]}),
             )?;
-            let result = client.wait(id, directory, launch, state, true)?;
+            let result = match client.wait(id, directory, launch, state, true) {
+                Ok(result) => result,
+                Err(error) => {
+                    terminal = state.hermes.as_ref().is_some_and(|receipt| receipt.settled);
+                    return Err(error);
+                }
+            };
             let reason = result["stopReason"]
                 .as_str()
                 .context("missing ACP terminal stopReason")?;

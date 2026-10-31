@@ -112,6 +112,13 @@ pub fn run() -> anyhow::Result<()> {
             &run,
             hermon_flow::control::Action::Retry(step),
         ),
+        Command::Reconcile { run, step, data } => {
+            hermon_flow::control::reconcile(&data.data_dir, &run, &step)?;
+            println!(
+                "{run}: failed ACP turn recorded; host observation and explicit retry remain required"
+            );
+            Ok(())
+        }
         Command::Override {
             run,
             step,
