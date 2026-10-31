@@ -1,0 +1,5 @@
+{
+  "crates/hermon-flow/tests/characterization.rs": "e3bcbb9ad4dcf1e13273eab5013d35f4d3e10bde2806ea7193736b6b0a93bc66",
+  "crates/hermon/tests/flow_characterization.rs": "c15eb0dad26fe83f69bc57991c5f0fa86fb8ce40cb044d21dcd1bef22a971518",
+  "crates/hermon/tests/support/characterization_fixture.rs": "006573a55e1ffe87e725e6eabaabc32fa1692e55b8987f594a73567d8a20a157"
+}

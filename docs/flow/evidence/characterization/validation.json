@@ -1,0 +1,14 @@
+{
+  "workspace": {
+    "passed": 1021,
+    "failed": 0,
+    "ignored": 3
+  },
+  "new_acceptance_tests": 14,
+  "fmt": "passed",
+  "strict_clippy": "passed",
+  "release_build": "passed",
+  "original_sdlc_pack": "unchanged",
+  "first_workspace_attempt": "Existing hub_single_instance_lock transient failure; its unchanged 9-test target and subsequent full workspace run passed.",
+  "test_freeze_v2_verified": true
+}

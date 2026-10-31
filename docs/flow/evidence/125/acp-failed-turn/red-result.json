@@ -1,0 +1,17 @@
+{
+  "base_commit": "bc978777d91a1e7ea1da347b0cdde16f7d99b609",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "hermon",
+    "--test",
+    "acp_failed_turn",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 101,
+  "passed": 3,
+  "failed": 2,
+  "fixture_race_corrected_before_freeze": true
+}

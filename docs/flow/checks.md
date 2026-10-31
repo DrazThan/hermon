@@ -25,6 +25,7 @@ hub can then call `check` and `evidence` through its existing `Git` trait.
 | `frozen_unchanged:<tag>` | The supplied evidence reference belongs to this ticket/base, is an ancestor of HEAD, and all paths in its frozen RED delta remain unchanged. |
 | `lint` | The named `lint` command exits zero. |
 | `tests_fail` | The named `test` command exits nonzero, with a valid report identifying every expected new failing test. |
+| `tests_pass` | The named `test` command exits zero and its successful VitestJson report proves every independently required passing assertion exactly once. |
 | `project_check` | The named `project_check` command exits zero. |
 | `cmd:<name>` | The selected named command exits zero. |
 
@@ -86,6 +87,13 @@ Reports have a bounded parser budget; excessive or invalid report output blocks
 rather than substituting an exit-code-only result.
 
 ## Evidence
+
+For test-only existing behavior, see the separate
+[characterization workflow](characterization.md). Its `tests_pass` check requires
+nonempty expected IDs, no baseline failures, explicit report success and no
+failed assertions or suites. Missing, duplicate or ignored required IDs block.
+Counts-only formats cannot prove named passes. Evidence records only the
+required passing subset as `required_passed_tests`.
 
 A successful check creates an in-memory receipt for that step and commit. A
 failed recheck revokes the receipt. New evidence requires that exact step, HEAD,

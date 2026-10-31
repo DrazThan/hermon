@@ -1,0 +1,112 @@
+   Compiling libc v0.2.189
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling cfg-if v1.0.4
+   Compiling proc-macro2 v1.0.107
+   Compiling version_check v0.9.5
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.229
+   Compiling itoa v1.0.18
+   Compiling zeroize v1.9.1
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.23
+   Compiling rustls-pki-types v1.15.1
+   Compiling cc v1.4.4
+   Compiling httparse v1.10.1
+   Compiling untrusted v0.9.0
+   Compiling autocfg v1.5.1
+   Compiling generic-array v0.14.7
+   Compiling vcpkg v0.2.15
+   Compiling crc32fast v1.5.1
+   Compiling pkg-config v0.3.34
+   Compiling foldhash v0.2.0
+   Compiling num-traits v0.2.19
+   Compiling hashbrown v0.17.1
+   Compiling bitflags v2.13.1
+   Compiling serde_json v1.0.151
+   Compiling bytes v1.12.1
+   Compiling rustls v0.23.46
+   Compiling serde v1.0.229
+   Compiling rustix v1.1.4
+   Compiling log v0.4.34
+   Compiling once_cell v1.21.4
+   Compiling getrandom v0.4.3
+   Compiling ring v0.17.14
+   Compiling libsqlite3-sys v0.38.2
+   Compiling adler2 v2.0.1
+   Compiling simd-adler32 v0.3.10
+   Compiling miniz_oxide v0.9.1
+   Compiling http v1.5.0
+   Compiling getrandom v0.2.17
+   Compiling syn v3.0.4
+   Compiling errno v0.3.14
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling hashlink v0.12.1
+   Compiling memchr v2.8.3
+   Compiling subtle v2.6.1
+   Compiling core-foundation-sys v0.8.7
+   Compiling anyhow v1.0.104
+   Compiling base64 v0.23.1
+   Compiling iana-time-zone v0.1.65
+   Compiling flate2 v1.1.10
+   Compiling digest v0.10.7
+   Compiling ureq-proto v0.6.5
+   Compiling cpufeatures v0.2.17
+   Compiling webpki-roots v1.0.11
+   Compiling fallible-iterator v0.3.0
+   Compiling utf8-zero v0.8.1
+   Compiling percent-encoding v2.3.2
+   Compiling smallvec v1.15.2
+   Compiling fastrand v2.5.0
+   Compiling arraydeque v0.5.1
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling yaml-rust2 v0.13.0
+   Compiling sha2 v0.10.9
+   Compiling serde_derive v1.0.229
+   Compiling serde_path_to_error v0.1.20
+   Compiling tempfile v3.27.0
+   Compiling chrono v0.4.45
+   Compiling rustls-webpki v0.103.16
+   Compiling rusqlite v0.40.2
+   Compiling ureq v3.5.0
+   Compiling hermon-flow v0.5.0 (<baseline-checkout>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.57s
+     Running tests/characterization_independent.rs (<baseline-target>/debug/deps/characterization_independent-b71488a068b225cf)
+
+running 12 tests
+test inconsistent_assertion_counts_cannot_prove_named_passes ... ok
+test accepted_named_passing_ids_are_recorded_without_unrelated_names ... FAILED
+test characterization_freeze_forbids_test_edits_and_verification_forbids_production_edits ... FAILED
+test duplicate_expected_id_is_ambiguous_even_when_all_copies_pass ... ok
+test missing_expected_id_rejects_counts_that_otherwise_pass ... ok
+test failed_expected_id_never_establishes_pass_even_with_exit_zero ... ok
+test original_red_still_requires_real_expected_failures ... ok
+test nonzero_and_signal_exit_cannot_prove_named_passes ... ok
+test empty_expected_ids_and_declared_baseline_failures_are_rejected ... ok
+test counts_only_and_incompatible_report_formats_cannot_prove_named_passes ... ok
+test skipped_pending_and_todo_expected_ids_never_establish_pass ... ok
+test suite_and_runtime_errors_cannot_prove_named_passes ... ok
+
+failures:
+
+---- accepted_named_passing_ids_are_recorded_without_unrelated_names stdout ----
+
+thread 'accepted_named_passing_ids_are_recorded_without_unrelated_names' (fixture-thread) panicked at crates/hermon-flow/tests/characterization_independent.rs:172:10:
+every independently required ID occurs once and passes: Block { kind: Capability, reason: "unknown check tests_pass" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- characterization_freeze_forbids_test_edits_and_verification_forbids_production_edits stdout ----
+
+thread 'characterization_freeze_forbids_test_edits_and_verification_forbids_production_edits' (fixture-thread) panicked at crates/hermon-flow/tests/characterization_independent.rs:289:14:
+called `Result::unwrap()` on an `Err` value: Block { kind: Capability, reason: "unknown check tests_pass" }
+
+
+failures:
+    accepted_named_passing_ids_are_recorded_without_unrelated_names
+    characterization_freeze_forbids_test_edits_and_verification_forbids_production_edits
+
+test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+error: test failed, to rerun pass `-p hermon-flow --test characterization_independent`

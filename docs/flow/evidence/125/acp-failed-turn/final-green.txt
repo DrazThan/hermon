@@ -1,0 +1,21 @@
+   Compiling hermon-flow v0.5.0 (<repository>/crates/hermon-flow)
+   Compiling hermon v0.5.0 (<repository>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.76s
+     Running tests/acp_failed_turn.rs (target/debug/deps/acp_failed_turn-3132ded19ca6c925)
+
+running 5 tests
+test reconciliation_recovers_only_the_recorded_failed_turn_and_preserves_artifacts ... ok
+test reconciliation_never_touches_a_live_worker_receipt ... ok
+test explicit_failed_admission_settles_without_a_result_or_followup ... ok
+test generic_unmatched_or_request_errors_cannot_claim_settlement ... ok
+test reconciliation_refuses_ambiguous_or_unbound_recorded_evidence ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.50s
+
+     Running tests/acp_failed_turn_scope.rs (target/debug/deps/acp_failed_turn_scope-6c81f2ca318ad404)
+
+running 1 test
+test recovery_requires_a_bound_session_and_a_literal_owned_attempt ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.71s
+

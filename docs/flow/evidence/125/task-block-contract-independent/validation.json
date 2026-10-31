@@ -1,0 +1,10 @@
+{
+  "task_contract_test": "passed",
+  "characterization_cli_tests": 8,
+  "characterization_checks_and_original_pack_tests": 24,
+  "format": "passed",
+  "strict_all_target_clippy": "passed",
+  "release_build": "passed",
+  "frozen_inputs_unchanged": true,
+  "result_validation": "unchanged"
+}

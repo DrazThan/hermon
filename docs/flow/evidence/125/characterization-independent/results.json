@@ -1,0 +1,92 @@
+{
+  "baseline_commit": "0852a5ca367c1c6bef694b8387bac8544498b1a3",
+  "current_commit": "6009e182d366da115c2a1c80c77e014475628c19",
+  "baseline": [
+    {
+      "suite": "unit",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "hermon-flow",
+        "--test",
+        "characterization_independent",
+        "--locked",
+        "--offline"
+      ],
+      "exit_code": 101
+    },
+    {
+      "suite": "pack",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "hermon-flow",
+        "--test",
+        "characterization_pack_independent",
+        "--locked",
+        "--offline"
+      ],
+      "exit_code": 101
+    },
+    {
+      "suite": "cli",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "hermon",
+        "--test",
+        "characterization_cli_independent",
+        "--locked",
+        "--offline"
+      ],
+      "exit_code": 101
+    }
+  ],
+  "current": [
+    {
+      "suite": "unit",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "hermon-flow",
+        "--test",
+        "characterization_independent",
+        "--locked",
+        "--offline"
+      ],
+      "exit_code": 0
+    },
+    {
+      "suite": "pack",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "hermon-flow",
+        "--test",
+        "characterization_pack_independent",
+        "--locked",
+        "--offline"
+      ],
+      "exit_code": 0
+    },
+    {
+      "suite": "cli",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "hermon",
+        "--test",
+        "characterization_cli_independent",
+        "--locked",
+        "--offline"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

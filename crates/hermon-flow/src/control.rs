@@ -165,6 +165,34 @@ pub enum Action {
     Resume,
     Cancel,
 }
+
+/// Establish failure only from an older dead ACP worker's explicit terminal
+/// receipt. The regular host observes settlement; retry stays a separate action.
+pub fn reconcile(data: &Path, id: &str, step: &str) -> Result<()> {
+    identifier(step)?;
+    let dir = directory(data, id)?;
+    let _guard = lock(&dir.join("run.lock"), false)?.context("run lock")?;
+    let record = read(&dir, id)?;
+    ensure!(
+        record.run.current == step && record.run.status == Status::Blocked && record.run.unsettled,
+        "only the current unsettled blocked step can be reconciled"
+    );
+    let active = record
+        .run
+        .active
+        .as_ref()
+        .context("missing unsettled worker")?;
+    ensure!(active.step == step, "active step mismatch");
+    let owned = dir.join("steps").join(step).join(active.number.to_string());
+    let expected = fs::canonicalize(&owned)?;
+    ensure!(
+        expected == owned
+            && expected.starts_with(&dir)
+            && fs::canonicalize(&active.handle)? == expected,
+        "worker handle is outside its owned attempt"
+    );
+    crate::agent::reconcile_failed_acp(&expected)
+}
 fn event(record: &mut RunRecord, kind: &str, reason: &str) {
     record.run.events.push(Event {
         kind: kind.into(),

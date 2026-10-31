@@ -1,0 +1,26 @@
+   Compiling hermon-flow v0.5.0 (<baseline-checkout>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running tests/characterization_pack_independent.rs (<baseline-target>/debug/deps/characterization_pack_independent-ad374449bc272180)
+
+running 2 tests
+test shipped_characterization_pack_keeps_owner_gates_and_bounded_independent_review ... FAILED
+test shipped_strict_sdlc_pack_still_requires_behavioral_red ... ok
+
+failures:
+
+---- shipped_characterization_pack_keeps_owner_gates_and_bounded_independent_review stdout ----
+
+thread 'shipped_characterization_pack_keeps_owner_gates_and_bounded_independent_review' (fixture-thread) panicked at crates/hermon-flow/tests/characterization_pack_independent.rs:11:10:
+separate characterization workflow must load: <baseline-checkout>/crates/hermon-flow/../../workflows/sdlc-characterization/workflow.yaml: read workflow
+
+Caused by:
+    No such file or directory (os error 2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    shipped_characterization_pack_keeps_owner_gates_and_bounded_independent_review
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p hermon-flow --test characterization_pack_independent`

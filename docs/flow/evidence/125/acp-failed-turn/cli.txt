@@ -1,0 +1,44 @@
+   Compiling hermon v0.5.0 (<repository>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+     Running tests/acp_failed_turn.rs (target/debug/deps/acp_failed_turn-3132ded19ca6c925)
+
+running 5 tests
+test reconciliation_never_touches_a_live_worker_receipt ... ok
+test reconciliation_recovers_only_the_recorded_failed_turn_and_preserves_artifacts ... ok
+test explicit_failed_admission_settles_without_a_result_or_followup ... ok
+test generic_unmatched_or_request_errors_cannot_claim_settlement ... ok
+test reconciliation_refuses_ambiguous_or_unbound_recorded_evidence ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.19s
+
+     Running tests/flow_cancel_recovery.rs (target/debug/deps/flow_cancel_recovery-b07a453a0ee8b6db)
+
+running 2 tests
+test cancelled_core_clears_handle_after_stop_confirms_settlement ... ok
+test cancelled_core_retries_owned_stop_after_crash_before_stop_request ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/flow_cli_regressions.rs (target/debug/deps/flow_cli_regressions-4b967ad4f893d9d5)
+
+running 8 tests
+test paused_core_does_not_dispatch_a_new_worker ... ok
+test cancelled_core_reconciles_owned_worker_settlement_without_accepting_late_success ... ok
+test doctor_rejects_required_workflow_command_missing_from_project ... ok
+test doctor_checks_configured_code_host_repository_access ... ok
+test status_replays_committed_control_when_snapshot_rename_was_lost ... ok
+test failed_answer_mirror_is_durable_and_retried_without_reapplying_answer ... ok
+test status_discards_torn_tail_without_losing_committed_control ... ok
+test cancel_records_intent_without_stopping_a_foreign_attempt_handle ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.29s
+
+     Running tests/hermes_acp_doctor.rs (target/debug/deps/hermes_acp_doctor-51915d3c8478e41e)
+
+running 3 tests
+test doctor_requires_actual_task_result_file_even_after_verified_end_turn ... ok
+test doctor_accepts_verified_acp_bot_while_unrelated_tracker_auth_stays_failed ... ok
+test doctor_rejects_end_turn_without_main_session_usage ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.91s
+

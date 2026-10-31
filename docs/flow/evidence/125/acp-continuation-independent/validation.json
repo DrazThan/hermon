@@ -1,0 +1,11 @@
+{
+  "independent_continuation_tests": 5,
+  "existing_acp_regressions": 19,
+  "doctor_and_task_contract_regressions": 4,
+  "all_passed": true,
+  "format": "passed",
+  "strict_all_target_clippy": "passed",
+  "release_build": "passed",
+  "frozen_inputs_unchanged": true,
+  "new_sessions_or_owner_approvals": "none"
+}

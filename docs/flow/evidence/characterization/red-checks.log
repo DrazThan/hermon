@@ -1,0 +1,40 @@
+   Compiling hermon-flow v0.5.0 (<workspace>/crates/hermon-flow)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running tests/characterization.rs (target/debug/deps/characterization-b84c6c41fce2987d)
+
+running 8 tests
+test characterization_pack_keeps_owner_gates_test_scope_freeze_and_independent_review ... FAILED
+test named_passes_accept_unrelated_skips_and_duplicate_baseline_names ... FAILED
+test counts_only_report_cannot_prove_named_passing_assertions ... ok
+test no_expectations_or_baseline_failures_cannot_authorize_characterization ... ok
+test strict_red_still_rejects_characterization_and_accepts_expected_failures ... ok
+test exit_and_report_success_are_both_required ... ok
+test runtime_collection_count_and_unrelated_failures_remain_blocks ... ok
+test required_assertions_must_all_exist_pass_and_be_unambiguous ... ok
+
+failures:
+
+---- characterization_pack_keeps_owner_gates_test_scope_freeze_and_independent_review stdout ----
+
+thread 'characterization_pack_keeps_owner_gates_test_scope_freeze_and_independent_review' (97459137) panicked at crates/hermon-flow/tests/characterization.rs:209:57:
+called `Result::unwrap()` on an `Err` value: <workspace>/crates/hermon-flow/../../workflows/sdlc-characterization/workflow.yaml: read workflow
+
+Caused by:
+    No such file or directory (os error 2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- named_passes_accept_unrelated_skips_and_duplicate_baseline_names stdout ----
+
+thread 'named_passes_accept_unrelated_skips_and_duplicate_baseline_names' (97459140) panicked at crates/hermon-flow/tests/characterization.rs:95:5:
+assertion failed: positive(report(&[("required", "passed"), ("old", "pending"),
+                    ("baseline", "passed"), ("baseline", "passed")]),
+    &["required"])
+
+
+failures:
+    characterization_pack_keeps_owner_gates_test_scope_freeze_and_independent_review
+    named_passes_accept_unrelated_skips_and_duplicate_baseline_names
+
+test result: FAILED. 6 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.48s
+
+error: test failed, to rerun pass `-p hermon-flow --test characterization`

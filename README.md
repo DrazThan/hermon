@@ -30,6 +30,13 @@ posts questions and progress through one central Linear app using editable
 [comment templates](workflows/sdlc/templates). Role prompts are frozen at intake
 and delivered in each worker's task file.
 
+For tests of existing behavior, the separate
+[characterization pack](workflows/sdlc-characterization/workflow.yaml) runs
+Plan → Owner GO → Characterize → Verify → Review → PR → owner Merge → Docs.
+It checks independently planned passing Vitest assertions, freezes the tests and
+enforces test-only edits. See the [characterization contract](docs/flow/characterization.md)
+for report requirements and correction routes.
+
 ```sh
 hermon templates preview workflows/sdlc go_request.md
 hermon doctor workflows/sdlc --project projects/rummyrune/project.yaml

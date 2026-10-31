@@ -1,0 +1,5 @@
+# Review characterization and verification
+
+Read the approved plan, independent test brief and accepted characterized and verified references in task.md. Inspect the complete intake-base-to-verified candidate diff. The characterized-to-verified diff may be empty because verification need not edit code. Verify scope, assertion strength, fixtures, mounted boundaries, real database evidence and absence of production edits against the complete change.
+
+Independently run relevant checks where safe. Confirm all planner-required assertion IDs executed once and passed, and frozen test paths remain unchanged. Missing evidence is a block. Do not modify the candidate. For each actionable finding, give file/location, severity, trigger, mechanism and smallest correction. Return verdict changes_needed with findings in summary, or clean with the exact verified evidence. The hub enforces a different known model family from verification and bounds review rounds. A clean review permits PR publication; merge remains the owner's decision.

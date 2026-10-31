@@ -1,0 +1,39 @@
+   Compiling hermon v0.5.0 (<repository>/crates/hermon)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/acp_failed_turn.rs (target/debug/deps/acp_failed_turn-3132ded19ca6c925)
+
+running 5 tests
+test reconciliation_recovers_only_the_recorded_failed_turn_and_preserves_artifacts ... FAILED
+test reconciliation_never_touches_a_live_worker_receipt ... ok
+test explicit_failed_admission_settles_without_a_result_or_followup ... FAILED
+test generic_unmatched_or_request_errors_cannot_claim_settlement ... ok
+test reconciliation_refuses_ambiguous_or_unbound_recorded_evidence ... ok
+
+failures:
+
+---- reconciliation_recovers_only_the_recorded_failed_turn_and_preserves_artifacts stdout ----
+
+thread 'reconciliation_recovers_only_the_recorded_failed_turn_and_preserves_artifacts' (99345421) panicked at crates/hermon/tests/acp_failed_turn.rs:247:5:
+reconcile failed: error: unrecognized subcommand 'reconcile'
+
+Usage: hermon <COMMAND>
+
+For more information, try '--help'.
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- explicit_failed_admission_settles_without_a_result_or_followup stdout ----
+
+thread 'explicit_failed_admission_settles_without_a_result_or_followup' (99345418) panicked at crates/hermon/tests/acp_failed_turn.rs:132:5:
+assertion `left == right` failed: known admitted-turn failure must settle
+  left: Bool(false)
+ right: true
+
+
+failures:
+    explicit_failed_admission_settles_without_a_result_or_followup
+    reconciliation_recovers_only_the_recorded_failed_turn_and_preserves_artifacts
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.81s
+
+error: test failed, to rerun pass `-p hermon --test acp_failed_turn`
