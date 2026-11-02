@@ -630,3 +630,290 @@ fn cli_controls_reject_stale_targets_and_merge_bypass() {
         );
     }
 }
+
+fn durable(fixture: &Fixture) -> (Vec<u8>, Vec<u8>) {
+    (
+        fs::read(fixture.run_dir().join("run.json")).unwrap(),
+        fs::read(fixture.run_dir().join("events.jsonl")).unwrap(),
+    )
+}
+fn assert_durable(fixture: &Fixture, before: &(Vec<u8>, Vec<u8>)) {
+    let after = durable(fixture);
+    assert_eq!(after.0, before.0, "run.json changed");
+    assert_eq!(after.1, before.1, "events.jsonl changed");
+}
+fn worktree_of(fixture: &Fixture) -> PathBuf {
+    PathBuf::from(fixture.record()["worktree"].as_str().unwrap())
+}
+
+#[test]
+fn reopen_continues_cancelled_run_at_current_step() {
+    let fixture = Fixture::new();
+    fixture.start();
+    fixture.state(
+        Status::Blocked,
+        "work",
+        Some(Block::new(BlockKind::Capability, "missing tool")),
+    );
+    let before = fixture.record();
+    let attempts = before["run"]["attempts"].clone();
+    let freezes = before["run"]["freezes"].clone();
+    let revisions = before["run"]["evidence_revisions"].clone();
+    let runs = before["run"]["runs"].clone();
+    let gates = before["run"]["gate_requests"].clone();
+    let paused = before["paused"].clone();
+    let run_paused = before["run"]["paused"].clone();
+    let pr = before["run"]["pr"].clone();
+    let question = before["run"]["owner_question"].clone();
+    assert_eq!(before["run"]["current"], "work");
+    fixture.success(&["cancel", RUN]);
+    let out = fixture.control(&["reopen", RUN, "--reason", "MCP auth fixed"]);
+    assert!(out.status.success(), "reopen: {}", text(&out));
+    let record = fixture.record();
+    assert_eq!(record["cancelled"], false, "{record}");
+    assert_eq!(record["run"]["cancelled"], false, "{record}");
+    assert_eq!(record["run"]["status"], "Blocked", "{record}");
+    assert_eq!(record["run"]["current"], "work", "{record}");
+    assert_eq!(record["run"]["block"]["kind"], "capability", "{record}");
+    assert!(
+        record["run"]["block"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("reopened"),
+        "{record}"
+    );
+    assert_eq!(record["run"]["attempts"], attempts, "{record}");
+    assert_eq!(record["run"]["freezes"], freezes, "{record}");
+    assert_eq!(record["run"]["evidence_revisions"], revisions, "{record}");
+    assert_eq!(record["run"]["runs"], runs, "{record}");
+    assert_eq!(record["run"]["gate_requests"], gates, "{record}");
+    assert_eq!(record["paused"], paused, "{record}");
+    assert_eq!(record["run"]["paused"], run_paused, "{record}");
+    assert_eq!(record["run"]["pr"], pr, "{record}");
+    assert_eq!(record["run"]["owner_question"], question, "{record}");
+    let events = fixture.events();
+    let last = events.last().expect("reopen journal event");
+    assert_eq!(last["kind"], "reopen", "{events:?}");
+    assert_eq!(last["step"], "work", "{events:?}");
+    let reason = last["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("MCP auth fixed"),
+        "reopen reason must carry the owner text: {reason}"
+    );
+    fixture.success(&["retry", RUN, "work"]);
+    assert_eq!(fixture.record()["run"]["status"], "Ready");
+}
+
+#[test]
+fn reopen_preserves_pause() {
+    let fixture = Fixture::new();
+    fixture.start();
+    fixture.success(&["pause", RUN]);
+    assert_eq!(fixture.record()["paused"], true);
+    assert_eq!(fixture.record()["run"]["paused"], true);
+    fixture.success(&["cancel", RUN]);
+    let out = fixture.control(&["reopen", RUN, "--reason", "check the fix first"]);
+    assert!(out.status.success(), "reopen: {}", text(&out));
+    assert_eq!(fixture.record()["paused"], true, "reopen cleared pause");
+    assert_eq!(
+        fixture.record()["run"]["paused"],
+        true,
+        "reopen cleared run pause"
+    );
+    fixture.success(&["resume", RUN]);
+    assert_eq!(fixture.record()["paused"], false);
+    assert_eq!(fixture.record()["run"]["paused"], false);
+}
+
+#[test]
+fn reopen_refuses_invalid_targets_without_writing() {
+    let fixture = Fixture::new();
+    fixture.start();
+    let live_bytes = durable(&fixture);
+    let live = fixture.control(&["reopen", RUN, "--reason", "still running"]);
+    assert!(!live.status.success(), "reopen of a live run must fail");
+    assert!(
+        String::from_utf8_lossy(&live.stderr).contains("cancelled"),
+        "live reopen must name the cancelled precondition: {}",
+        text(&live)
+    );
+    assert_durable(&fixture, &live_bytes);
+
+    fixture.success(&["cancel", RUN]);
+    let cancelled_bytes = durable(&fixture);
+    let blank = fixture.control(&["reopen", RUN, "--reason", "   "]);
+    assert!(
+        !blank.status.success(),
+        "a whitespace-only reason must fail"
+    );
+    assert!(
+        String::from_utf8_lossy(&blank.stderr).contains("reason"),
+        "whitespace reason must be rejected as a reason: {}",
+        text(&blank)
+    );
+    assert_durable(&fixture, &cancelled_bytes);
+
+    let unknown = fixture.control(&["reopen", "NO-SUCH-RUN", "--reason", "missing"]);
+    assert!(!unknown.status.success(), "an unknown run must fail");
+    assert!(
+        String::from_utf8_lossy(&unknown.stderr).contains("unknown run"),
+        "unknown run: {}",
+        text(&unknown)
+    );
+    assert_durable(&fixture, &cancelled_bytes);
+    assert!(!fixture.data.join("runs/NO-SUCH-RUN").exists());
+
+    let unsettled = Fixture::new();
+    unsettled.start();
+    let foreign = unsettled.root.join("foreign-attempt");
+    fs::create_dir_all(&foreign).unwrap();
+    let mut record = unsettled.record();
+    record["run"]["status"] = json!("Running");
+    record["run"]["active"] = serde_json::to_value(hermon_flow::hub::Attempt {
+        step: "work".into(),
+        number: 1,
+        handle: foreign.to_str().unwrap().into(),
+        started_at: 0,
+        family: "fixture".into(),
+        freezes: Default::default(),
+    })
+    .unwrap();
+    fs::write(
+        unsettled.run_dir().join("run.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    let cancel = unsettled.control(&["cancel", RUN]);
+    assert!(
+        !cancel.status.success(),
+        "foreign handle cannot be settled as an owned attempt"
+    );
+    assert_eq!(unsettled.record()["cancelled"], true);
+    assert_eq!(unsettled.record()["run"]["unsettled"], true);
+    assert!(unsettled.record()["run"]["active"].is_object());
+    let pending = durable(&unsettled);
+    let out = unsettled.control(&["reopen", RUN, "--reason", "worker still running"]);
+    assert!(
+        !out.status.success(),
+        "an unsettled cancelled run must be refused"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("settlement"),
+        "unsettled reopen must tell the owner to let the hub confirm settlement: {stderr}"
+    );
+    assert_durable(&unsettled, &pending);
+}
+
+#[test]
+fn reopen_refuses_worktree_off_accepted_evidence() {
+    let fixture = Fixture::new();
+    fixture.start();
+    fixture.state(
+        Status::Blocked,
+        "work",
+        Some(Block::new(BlockKind::Capability, "blocked")),
+    );
+    fixture.success(&["cancel", RUN]);
+    let record = fixture.record();
+    assert!(
+        !record["run"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["kind"] == "evidence"),
+        "a run with no evidence anchors on base_commit"
+    );
+    let base = record["base_commit"].as_str().unwrap().to_owned();
+    assert!(!base.is_empty(), "{record}");
+    let worktree = worktree_of(&fixture);
+    assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), base);
+    let frozen = durable(&fixture);
+
+    fs::write(worktree.join("untracked.txt"), "dirty\n").unwrap();
+    let dirty = fixture.control(&["reopen", RUN, "--reason", "worktree restored"]);
+    assert!(!dirty.status.success(), "an untracked file must be refused");
+    assert_durable(&fixture, &frozen);
+    fs::remove_file(worktree.join("untracked.txt")).unwrap();
+
+    fs::write(worktree.join("extra.txt"), "extra commit\n").unwrap();
+    git(&worktree, &["add", "extra.txt"]);
+    git(&worktree, &["commit", "-m", "past base_commit"]);
+    let head = git(&worktree, &["rev-parse", "HEAD"]);
+    assert_ne!(head, base);
+    let committed = fixture.control(&["reopen", RUN, "--reason", "worktree restored"]);
+    assert!(
+        !committed.status.success(),
+        "HEAD past base_commit must be refused"
+    );
+    let stderr = String::from_utf8_lossy(&committed.stderr);
+    assert!(
+        stderr.contains(&base) && stderr.contains(&head),
+        "refused reopen must name base_commit {base} and HEAD {head}: {stderr}"
+    );
+    assert_durable(&fixture, &frozen);
+
+    git(&worktree, &["reset", "--hard", &base]);
+    assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), base);
+    assert!(
+        git(
+            &worktree,
+            &["status", "--porcelain", "--untracked-files=all"]
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        git(&worktree, &["symbolic-ref", "--short", "HEAD"]),
+        record["branch"].as_str().unwrap()
+    );
+    let restored = fixture.control(&["reopen", RUN, "--reason", "worktree restored"]);
+    assert!(restored.status.success(), "reopen: {}", text(&restored));
+    assert_eq!(fixture.record()["cancelled"], false);
+    assert_eq!(fixture.record()["run"]["cancelled"], false);
+}
+
+#[test]
+fn reopen_mirrors_owner_notice_to_tracker() {
+    let fixture = Fixture::new();
+    fixture.start();
+    fixture.success(&["cancel", RUN]);
+    let out = fixture.control(&["reopen", RUN, "--reason", "MCP auth fixed"]);
+    assert!(out.status.success(), "reopen: {}", text(&out));
+    let requests = fixture.server.requests.lock().unwrap();
+    assert!(
+        requests.iter().any(|request| {
+            request["query"]
+                .as_str()
+                .unwrap_or("")
+                .contains("commentCreate")
+                && request["variables"]["input"]["body"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("reopened")
+                && request["variables"]["input"]["body"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("Hermon")
+        }),
+        "owner notice was not mirrored: {requests:?}"
+    );
+}
+
+#[test]
+fn cancelled_control_error_names_reopen() {
+    let fixture = Fixture::new();
+    fixture.start();
+    fixture.state(
+        Status::Blocked,
+        "work",
+        Some(Block::new(BlockKind::Capability, "blocked")),
+    );
+    fixture.success(&["cancel", RUN]);
+    let out = fixture.control(&["retry", RUN, "work"]);
+    assert!(!out.status.success(), "retry on a cancelled run must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("hermon reopen"),
+        "cancelled control error must name hermon reopen: {stderr}"
+    );
+}
