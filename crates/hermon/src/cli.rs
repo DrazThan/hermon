@@ -65,6 +65,14 @@ pub enum Command {
     Resume(FlowControlArgs),
     /// Cancel a run and request settlement of its owned worker.
     Cancel(FlowControlArgs),
+    /// Continue a cancelled, settled run at its current step; a retry is still required.
+    Reopen {
+        run: String,
+        #[arg(long)]
+        reason: String,
+        #[command(flatten)]
+        data: FlowData,
+    },
     /// Preview workflow comment templates with sample values.
     Templates {
         #[command(subcommand)]

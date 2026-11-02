@@ -389,3 +389,160 @@ fn successor_reads_accepted_attempt_instead_of_newer_unaccepted_directory() {
         "an unrelated numeric directory cannot supersede an accepted attempt: {task}"
     );
 }
+
+#[test]
+fn reopened_run_reads_inputs_from_original_accepted_attempts() {
+    let fixture = input_fixture(false);
+    let record = settle_planner(&fixture);
+    assert_eq!(record["run"]["current"], "red", "{record}");
+    assert_eq!(record["run"]["status"], "Running", "{record}");
+    assert_eq!(record["run"]["active"]["step"], "red", "{record}");
+    assert_eq!(record["run"]["active"]["number"], 1, "{record}");
+    let work_runs = record["run"]["runs"]["work"].clone();
+    assert!(work_runs.as_u64().unwrap_or(0) >= 1, "{record}");
+    let work_attempts = record["run"]["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|attempt| attempt["step"] == "work")
+        .count();
+    assert!(work_attempts >= 1, "{record}");
+    let work_dirs = fixture.run_dir().join("steps/work");
+    let mut before_work: Vec<_> = fs::read_dir(&work_dirs)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    before_work.sort();
+
+    let cancel = fixture.control(&["cancel", RUN]);
+    assert!(
+        cancel.status.success(),
+        "cancel must record intent: {}",
+        text(&cancel)
+    );
+    let result = fixture.run_dir().join("steps/red/1/result.json");
+    assert!(
+        fixture.run_dir().join("steps/red/1").is_dir(),
+        "cancelled successor attempt directory is missing"
+    );
+    if !result.is_file() {
+        fs::write(
+            &result,
+            r#"{"schema":1,"status":"done","summary":"ready","artifacts":[],"block":null,"verdict":null,"questions":[]}"#,
+        )
+        .unwrap();
+    }
+    let body = fs::read_to_string(&result).unwrap();
+    assert!(
+        body.contains("\"status\":\"done\"") || body.contains("\"status\": \"done\""),
+        "cancelled attempt must hold a done result the hub could wrongly accept: {body}"
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let settled = fixture.record();
+        if settled["cancelled"] == true
+            && settled["run"]["active"].is_null()
+            && settled["run"]["unsettled"] == false
+        {
+            break;
+        }
+        hub_tick(&fixture);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "cancelled successor did not settle: {settled}"
+        );
+        thread::sleep(Duration::from_millis(30));
+    }
+
+    let reopen = fixture.control(&["reopen", RUN, "--reason", "read the accepted plan"]);
+    assert!(reopen.status.success(), "reopen: {}", text(&reopen));
+    fixture.success(&["retry", RUN, "red"]);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let record = hub_tick(&fixture);
+        let started = record["run"]["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|attempt| attempt["step"] == "red" && attempt["number"] == 2);
+        if started && fixture.run_dir().join("steps/red/2/task.md").is_file() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "red attempt 2 was not started: {record}"
+        );
+        thread::sleep(Duration::from_millis(30));
+    }
+    let task = fs::read_to_string(fixture.run_dir().join("steps/red/2/task.md")).unwrap();
+    assert!(
+        task.contains("ACCEPTED PLANNER ARTIFACT 125"),
+        "accepted planner artifact missing from the reopened attempt: {task}"
+    );
+    let record = fixture.record();
+    assert_eq!(record["run"]["runs"]["work"], work_runs, "{record}");
+    assert_eq!(
+        record["run"]["attempts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|attempt| attempt["step"] == "work")
+            .count(),
+        work_attempts,
+        "{record}"
+    );
+    let mut after_work: Vec<_> = fs::read_dir(&work_dirs)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    after_work.sort();
+    assert_eq!(
+        after_work, before_work,
+        "a new work attempt started after cancel"
+    );
+    let events = fixture.events();
+    let cancel_at = events
+        .iter()
+        .position(|event| event["kind"] == "cancel")
+        .expect("cancel event");
+    let retry_at = events
+        .iter()
+        .rposition(|event| event["kind"] == "retry" && event["step"] == "red")
+        .expect("retry event");
+    assert!(cancel_at < retry_at);
+    assert!(
+        !events[cancel_at + 1..retry_at]
+            .iter()
+            .any(|event| event["kind"] == "step_done" && event["step"] == "red"),
+        "cancelled red attempt was accepted: {events:?}"
+    );
+    assert!(
+        !events[cancel_at + 1..]
+            .iter()
+            .any(|event| event["kind"] == "started" && event["step"] == "work"),
+        "work was restarted after cancel: {events:?}"
+    );
+    let red_attempts: Vec<u64> = record["run"]["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|attempt| attempt["step"] == "red")
+        .map(|attempt| attempt["number"].as_u64().unwrap())
+        .collect();
+    let mut cursor = 0usize;
+    let mut accepted = Vec::new();
+    for event in record["run"]["events"].as_array().unwrap() {
+        if event["step"] != "red" {
+            continue;
+        }
+        if event["kind"] == "started" {
+            cursor += 1;
+        } else if event["kind"] == "step_done" {
+            accepted.push(red_attempts[cursor - 1]);
+        }
+    }
+    assert!(
+        accepted.iter().all(|number| *number == 2),
+        "accepted red attempt must be 2, not the cancelled attempt: {accepted:?}"
+    );
+}

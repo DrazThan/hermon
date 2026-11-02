@@ -203,7 +203,7 @@ small git tag notes as evidence. Keep tokens out of any exported record.
    result. A fixture merge or an unmerged PR cannot satisfy this acceptance.
 
 Useful controls are `answer`, `approve`, `retry`, `override --reason`, `pause`,
-`resume` and `cancel`; see [intake and controls](intake-controls.md).
+`resume`, `cancel` and `reopen --reason`; see [intake and controls](intake-controls.md).
 Cancellation only targets owned processes; never stop a shared gateway to make
 an unknown outcome look settled. The milestone remains open until this live
 record and the owner's merge/Docs outcome exist.

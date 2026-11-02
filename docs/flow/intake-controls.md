@@ -17,6 +17,7 @@ hermon override RUN-ID green --reason 'Owner accepts the documented exception'
 hermon pause RUN-ID
 hermon resume RUN-ID
 hermon cancel RUN-ID
+hermon reopen RUN-ID --reason 'Worker MCP auth fixed; attempt 2 was invalid'
 ```
 
 `--confirm` confirms the supplied workflow and selected base/initial step. The
@@ -141,6 +142,8 @@ run's owned supervisor. It never signals an arbitrary stored PID. Late success
 cannot accept a cancelled step, start a successor or resurrect the run.
 The hub continues polling cancelled handles and repeating the idempotent owned
 stop request until settlement is confirmed, including after a host crash.
+Every other control is refused on a cancelled run; only an explicit `reopen`
+continues it.
 
 The hosting loop must use the same run lock and shared `control::save` API,
 respect the persisted hub flags, and retry `intake::announce` and
@@ -148,3 +151,35 @@ respect the persisted hub flags, and retry `intake::announce` and
 External project configuration remains host-owned so credentials can be fixed
 without editing a run. Live vendor/tracker interaction is not part of the
 synthetic acceptance suite under `docs/flow/evidence/123/`.
+
+## Continuing a cancelled run
+
+Use cancel and reopen when one attempt is invalid but the run's accepted work
+is sound, for example after fixing a worker's tool access outside the run:
+
+```sh
+hermon cancel RUN-ID            # stop the attempt; wait for settlement
+hermon reopen RUN-ID --reason 'Attempt 2 was invalid; MCP auth fixed'
+hermon resume RUN-ID            # only if the run was paused
+hermon retry RUN-ID STEP        # start a new attempt at the current step
+```
+
+Reopen is an explicit owner control. It requires a cancelled run whose worker
+settlement is confirmed, a nonempty reason, and a clean run worktree on the run
+branch whose HEAD is the last accepted evidence commit (the most recent evidence
+tag, peeled to its commit, or the run's base commit when there is none). It
+refuses otherwise and names the expected commit and the current HEAD; Hermon
+does not reset the worktree. Restoring the worktree discards commits made after
+that evidence, including commits from accepted steps without a tag, so
+cherry-pick anything you need before reopening.
+
+Reopen clears the cancel flags and leaves the run blocked at its current step,
+keeping attempts, evidence, freezes, gate history and the pause flag. The
+journal records which attempt was abandoned and why, and the reason is mirrored
+to the ticket as entered in Hermon. The retry starts a new attempt number that
+reads inputs from the original accepted attempts. A reopened owner gate opens a
+new request generation, so an earlier approval cannot pass it.
+
+Reopen only applies to fixes outside the run snapshot (project configuration,
+bot profiles, credentials, tool access). Workflow, role and template snapshots
+cannot change for an existing run.
