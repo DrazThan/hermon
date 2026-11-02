@@ -220,7 +220,7 @@ pub fn apply(data: &Path, id: &str, action: Action) -> Result<RunRecord> {
     let mut record = read(&dir, id)?;
     ensure!(
         !record.cancelled && !record.run.cancelled,
-        "run is cancelled"
+        "run is cancelled; continue it with: hermon reopen {id} --reason ..."
     );
     ensure!(record.run.status != Status::Done, "run is already done");
     let workflow = Workflow::from_str("intake workflow snapshot", &record.workflow_source)?;
@@ -344,6 +344,68 @@ pub fn apply(data: &Path, id: &str, action: Action) -> Result<RunRecord> {
         save(&dir, &record)?;
     }
     flush_notices(&dir, &mut record).context("control recorded; tracker mirror remains pending")?;
+    Ok(record)
+}
+/// Continue a cancelled, settled run at its current step. Only this explicit
+/// owner control clears cancellation; a late worker result never does. The run
+/// stays blocked so a retry starts a new attempt, and the worktree must still
+/// be at the last accepted evidence so abandoned work cannot leak into it.
+pub fn reopen(data: &Path, id: &str, reason: &str) -> Result<RunRecord> {
+    let dir = directory(data, id)?;
+    let _lock = lock(&dir.join("run.lock"), false)?.context("run lock")?;
+    let mut record = read(&dir, id)?;
+    ensure!(
+        record.cancelled || record.run.cancelled,
+        "run is not cancelled; reopen only continues a cancelled run"
+    );
+    let reason = reason.trim();
+    ensure!(!reason.is_empty(), "reopen requires a reason");
+    ensure!(record.run.status != Status::Done, "run is already done");
+    ensure!(
+        record.run.active.is_none() && !record.run.unsettled,
+        "worker settlement required before reopen; let the hub confirm the cancelled worker stopped, then reopen"
+    );
+    // Evidence events carry the tag reference; peel it rather than comparing
+    // the name. Without accepted evidence the run still starts at its base.
+    let expected = record
+        .run
+        .events
+        .iter()
+        .rev()
+        .find(|e| e.kind == "evidence")
+        .map_or_else(|| record.base_commit.clone(), |e| e.reason.clone());
+    crate::checks::worktree_at(&record.worktree, &record.branch, &expected)?;
+    let step = record.run.current.clone();
+    let abandoned = record
+        .run
+        .attempts
+        .iter()
+        .rev()
+        .find(|a| a.step == step)
+        .map_or_else(|| "none".to_owned(), |a| a.number.to_string());
+    let text =
+        format!("Owner reopened run in Hermon at {step}; abandoned attempt {abandoned}: {reason}");
+    record.cancelled = false;
+    record.run.cancelled = false;
+    record.run.status = Status::Blocked;
+    record.run.block = Some(Block::new(
+        BlockKind::Capability,
+        "Owner reopened run in Hermon; retry required",
+    ));
+    event(&mut record, "reopen", &text);
+    record.notices.push(Notice {
+        sequence: record.run.events.len(),
+        step,
+        text,
+        delivered: false,
+    });
+    save(&dir, &record)?;
+    if !record.started {
+        intake::announce(&dir, &mut record)
+            .context("reopen recorded; started notification remains pending")?;
+        save(&dir, &record)?;
+    }
+    flush_notices(&dir, &mut record).context("reopen recorded; tracker mirror remains pending")?;
     Ok(record)
 }
 pub(crate) fn request_stop(data: &Path, dir: &Path, record: &mut RunRecord) -> Result<()> {

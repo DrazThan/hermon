@@ -686,6 +686,33 @@ fn git_text(workdir: &Path, args: &[&str]) -> Result<String> {
 pub(crate) fn worktree_head(workdir: &Path) -> Result<String> {
     git_text(workdir, &["rev-parse", "--verify", "HEAD^{commit}"])
 }
+/// A continued run must start from its accepted evidence: a clean worktree on
+/// the run branch whose HEAD is the commit `expected` resolves to.
+pub(crate) fn worktree_at(workdir: &Path, branch: &str, expected: &str) -> Result<String> {
+    let current = git_text(workdir, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .context("run worktree HEAD is not on a branch")?;
+    ensure!(
+        current == branch,
+        "run worktree is on {current}, not the run branch {branch}"
+    );
+    ensure!(
+        git_at(workdir, &["status", "--porcelain", "--untracked-files=all"])?.is_empty(),
+        "run worktree has uncommitted or untracked changes; restore it before reopening"
+    );
+    let commit = git_text(
+        workdir,
+        &["rev-parse", "--verify", &format!("{expected}^{{commit}}")],
+    )
+    .with_context(|| format!("resolve accepted evidence {expected}"))?;
+    let head = worktree_head(workdir)?;
+    ensure!(
+        head == commit,
+        "run worktree HEAD {head} is not the last accepted evidence commit {commit} ({expected}); \
+         restore it, for example with `git -C {} reset --hard {commit}`, before reopening",
+        workdir.display()
+    );
+    Ok(commit)
+}
 fn resolve_executable(binary: &str, config: &CheckConfig) -> Result<PathBuf> {
     let paths = if binary.contains('/') {
         vec![config.workdir.join(binary)]

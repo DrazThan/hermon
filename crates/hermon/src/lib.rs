@@ -144,6 +144,14 @@ pub fn run() -> anyhow::Result<()> {
             &args.run,
             hermon_flow::control::Action::Cancel,
         ),
+        Command::Reopen { run, reason, data } => {
+            let record = hermon_flow::control::reopen(&data.data_dir, &run, &reason)?;
+            println!(
+                "{}: {} ({:?}); retry {} to start a new attempt",
+                record.run.id, record.run.current, record.run.status, record.run.current
+            );
+            Ok(())
+        }
         Command::Templates {
             command:
                 cli::TemplatesCommand::Preview {
