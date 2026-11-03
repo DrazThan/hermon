@@ -300,11 +300,7 @@ pub fn apply(data: &Path, id: &str, action: Action) -> Result<RunRecord> {
                 record.run.status == Status::Blocked
                     && !record.run.unsettled
                     && record.run.active.is_none()
-                    && record
-                        .run
-                        .block
-                        .as_ref()
-                        .is_some_and(|b| b.kind == BlockKind::OwnerQuestion),
+                    && record.run.block.is_some(),
                 "answer requires a settled owner question"
             );
             let question = record

@@ -126,8 +126,18 @@ pub fn status(args: FlowStatusArgs) -> Result<()> {
                 "{}  {}  {}  {}",
                 record.run.id, record.workflow_name, record.run.current, state
             );
-            if let Some(block) = record.run.block {
+            if let Some(block) = &record.run.block {
                 println!("  {}", block.reason);
+            }
+            if let Some(question) = record.run.owner_question.as_ref().filter(|q| {
+                record.run.status == hermon_flow::hub::Status::Blocked
+                    && q.step == record.run.current
+                    && q.answer.is_none()
+            }) {
+                for text in &question.questions {
+                    println!("  question: {text}");
+                }
+                println!("  answer with: hermon answer {} TEXT", record.run.id);
             }
         }
     }

@@ -48,6 +48,10 @@ variants, prose, quoted GO, other users, and other threads cannot approve it.
 This path makes no coordinator/model call.
 
 Owner questions retain the settled attempt handle in the durable hub state.
+A worker raises one with an `owner_question` block, or by listing nonempty
+`questions` on any other non-transient block that stops the run without a
+configured `on_block` route, such as an unrouted `scope_change`. The block kind
+and reason stay as reported. A manual retry withdraws an unanswered question.
 An authorized answer resumes that attempt through the agent adapter. The
 process adapter uses its recorded explicit session ID when the configured
 command supports resume; otherwise it starts with prior task context and the

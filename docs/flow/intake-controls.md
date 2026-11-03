@@ -130,6 +130,10 @@ Retry and override must name the current blocked step and require confirmed
 worker settlement. Override requires a nonempty reason and cannot waive an
 owner gate. Answer requires the current settled owner question and retains its
 previous session handle so the process adapter can deliver the answer on resume.
+Text `hermon status` lists a pending question and the `hermon answer` command.
+An answer resumes the same step only. The new attempt still runs its checks,
+and a later `owner_go` opens a new request, so an answer cannot waive a failed
+check or pass Owner GO.
 Approve passes only an open, current `owner_go` generation. It cannot pass
 `owner_merge`, which still requires code-host merge and ancestry verification.
 CLI answers and approvals create durable central-app notifications explicitly

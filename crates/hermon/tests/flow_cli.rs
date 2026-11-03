@@ -917,3 +917,75 @@ fn cancelled_control_error_names_reopen() {
         "cancelled control error must name hermon reopen: {stderr}"
     );
 }
+
+#[test]
+fn answer_binds_to_questions_on_a_scope_change_block() {
+    let fixture = Fixture::new();
+    fixture.start();
+    fixture.state(
+        Status::Blocked,
+        "work",
+        Some(Block::new(
+            BlockKind::ScopeChange,
+            "repair needs separate scope",
+        )),
+    );
+    let mut record = fixture.record();
+    record["run"]["owner_question"] = serde_json::to_value(OwnerQuestion {
+        step: "work".into(),
+        request: 1,
+        bot: "worker".into(),
+        questions: vec!["Elapsed time or calendar days?".into()],
+        previous_handle: "settled-fixture-handle".into(),
+        answer: None,
+    })
+    .unwrap();
+    fs::write(
+        fixture.run_dir().join("run.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    let out = fixture.control(&["status", RUN]);
+    assert!(out.status.success(), "{}", text(&out));
+    let shown = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        shown.contains("Elapsed time or calendar days?"),
+        "status must show the pending question: {shown}"
+    );
+    assert!(
+        shown.contains(&format!("hermon answer {RUN}")),
+        "status must name the supported reply command: {shown}"
+    );
+    fixture.success(&["answer", RUN, "Use elapsed 24-hour periods"]);
+    let record = fixture.record();
+    assert_eq!(
+        record["run"]["owner_question"]["answer"],
+        "Use elapsed 24-hour periods"
+    );
+    assert_eq!(record["run"]["status"], "Ready");
+    assert_eq!(record["run"]["current"], "work");
+    assert!(record["run"]["block"].is_null(), "{record}");
+    assert_eq!(record["run"]["gate_requests"], json!({}), "{record}");
+    assert!(
+        fixture.events().iter().any(|e| e["kind"] == "answer"),
+        "the answer must be journaled"
+    );
+}
+
+#[test]
+fn answer_is_refused_for_a_scope_change_block_without_questions() {
+    let fixture = Fixture::new();
+    fixture.start();
+    fixture.state(
+        Status::Blocked,
+        "work",
+        Some(Block::new(
+            BlockKind::ScopeChange,
+            "repair needs separate scope",
+        )),
+    );
+    let before = durable(&fixture);
+    let out = fixture.control(&["answer", RUN, "Use elapsed 24-hour periods"]);
+    assert!(!out.status.success(), "answer without a question succeeded");
+    assert_durable(&fixture, &before);
+}
