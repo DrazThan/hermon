@@ -286,13 +286,15 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                         );
                     }
                 }
+                // Any settled worker block that registered questions waits for
+                // an owner reply, whatever its kind. Answering only resumes the
+                // same step; checks and gates still apply to the new attempt.
                 if !run.unsettled
-                    && run
-                        .block
-                        .as_ref()
-                        .is_some_and(|block| block.kind == BlockKind::OwnerQuestion)
-                    && let Some(question) =
-                        run.owner_question.clone().filter(|q| q.step == run.current)
+                    && run.block.is_some()
+                    && let Some(question) = run
+                        .owner_question
+                        .clone()
+                        .filter(|q| q.step == run.current && q.answer.is_none())
                 {
                     deps.tracker
                         .question(
@@ -417,7 +419,14 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                             Err(block) => handle_block(run, workflow, step, block),
                             Ok(result) => {
                                 if let Some(block) = result.block {
-                                    if block.kind == BlockKind::OwnerQuestion {
+                                    // Questions on a block that stops for the
+                                    // owner must be answerable. A configured
+                                    // route or a new start clears them, and a
+                                    // transient block retries instead.
+                                    if block.kind == BlockKind::OwnerQuestion
+                                        || (block.kind != BlockKind::Transient
+                                            && !result.questions.is_empty())
+                                    {
                                         run.owner_question = Some(OwnerQuestion {
                                             step: run.current.clone(),
                                             request: attempt.number,
@@ -730,6 +739,15 @@ pub fn retry(run: &mut Run, reason: &str) -> Result<()> {
     );
     run.retries.remove(&run.current);
     run.check_failures.remove(&run.current);
+    // Retrying instead of answering withdraws the pending question. An
+    // answered question stays so a failed resume can be retried.
+    if run
+        .owner_question
+        .as_ref()
+        .is_some_and(|q| q.answer.is_none())
+    {
+        run.owner_question = None;
+    }
     run.block = None;
     run.status = Status::Ready;
     event(run, "retry", reason);
