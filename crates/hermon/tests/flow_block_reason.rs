@@ -341,3 +341,107 @@ fi
         "routed correction lost the exact GREEN defect reason: {task}"
     );
 }
+
+// Issue #148: later attempts in the same correction visit keep the routing reason.
+const GREEN_REASON: &str =
+    "Frozen assertion contradicts the accepted plan; correct only that assertion.";
+
+fn correction_fixture(transient_retries: u32, red_fix_first_attempt: &str) -> Fixture {
+    let mut fixture = Fixture::new();
+    let workflow = format!(
+        "version: 1\nname: block-reason-retry\nsteps:\n  green:\n    bot: worker\n    on_block: {{test_defect: red_fix}}\n  red_fix:\n    bot: reviewer\n    inputs: [block_reason]\n    next: owner_go\n  owner_go:\n    gate: owner_go\nlimits:\n  transient_retries: {transient_retries}\n"
+    );
+    fs::write(&fixture.workflow, workflow).unwrap();
+    fixture.config["start"] = json!("green");
+    fixture.save_config();
+    script(
+        &fixture.root.join("bin/probe-bot"),
+        &format!(
+            r##"#!/bin/sh
+set -eu
+if /usr/bin/grep -q '^# .* / green' "$1"; then
+  printf '%s' '{{"schema":1,"status":"block","summary":"test defect","artifacts":[],"block":{{"kind":"test_defect","reason":"{GREEN_REASON}"}},"verdict":null,"questions":[]}}' > "${{1%/*}}/result.json"
+  exit 0
+fi
+case "$1" in
+  */steps/red_fix/1/*) {red_fix_first_attempt} ;;
+esac
+printf '%s' '{{"schema":1,"status":"done","summary":"corrected","artifacts":[],"block":null,"verdict":null,"questions":[]}}' > "${{1%/*}}/result.json"
+"##
+        ),
+    );
+    fixture.start();
+    fixture
+}
+
+fn hub_until(fixture: &Fixture, done: impl Fn(&Value) -> bool) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let out = fixture.cli(&[
+            "hub",
+            "--once",
+            "--no-notify",
+            "--data-dir",
+            fixture.data.to_str().unwrap(),
+        ]);
+        assert!(out.status.success(), "host: {}", text(&out));
+        let record = fixture.record();
+        if done(&record) {
+            return record;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fixture stalled: {record}"
+        );
+        thread::sleep(Duration::from_millis(30));
+    }
+}
+
+fn block_reason_input(fixture: &Fixture, attempt: u32) -> String {
+    let task = fs::read_to_string(
+        fixture
+            .run_dir()
+            .join(format!("steps/red_fix/{attempt}/task.md")),
+    )
+    .unwrap();
+    let (_, rest) = task
+        .split_once("## Input: block_reason\n")
+        .unwrap_or_else(|| panic!("block_reason input missing: {task}"));
+    rest.split("\n## ").next().unwrap().trim().to_owned()
+}
+
+#[test]
+fn owner_retry_of_a_failed_correction_keeps_the_routing_reason() {
+    let fixture = correction_fixture(0, "exit 9");
+    let record = hub_until(&fixture, |r| {
+        r["run"]["current"] == "red_fix" && r["run"]["status"] == "Blocked"
+    });
+    assert_eq!(
+        record["run"]["block"]["reason"], "agent process failed",
+        "{record}"
+    );
+    assert_eq!(block_reason_input(&fixture, 1), GREEN_REASON);
+
+    fixture.success(&["retry", RUN, "red_fix"]);
+    hub_until(&fixture, |r| r["run"]["current"] == "owner_go");
+    assert_eq!(
+        block_reason_input(&fixture, 2),
+        GREEN_REASON,
+        "a retried correction lost the GREEN defect that routed it"
+    );
+}
+
+#[test]
+fn worker_transient_block_does_not_replace_the_routing_reason() {
+    let fixture = correction_fixture(
+        1,
+        r##"printf '%s' '{"schema":1,"status":"block","summary":"provider busy","artifacts":[],"block":{"kind":"transient","reason":"provider overloaded"},"verdict":null,"questions":[]}' > "${1%/*}/result.json"; exit 0"##,
+    );
+    hub_until(&fixture, |r| r["run"]["current"] == "owner_go");
+    assert_eq!(block_reason_input(&fixture, 1), GREEN_REASON);
+    assert_eq!(
+        block_reason_input(&fixture, 2),
+        GREEN_REASON,
+        "the worker's own transient block replaced the GREEN defect"
+    );
+}

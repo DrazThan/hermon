@@ -296,6 +296,19 @@ fn read_text(path: &Path) -> Result<String> {
     );
     Ok(fs::read_to_string(path)?)
 }
+/// The block that routed the run into its current visit of `step`. Retries,
+/// answers and restarts within that visit record later blocks of their own.
+fn routing_reason(run: &hub::Run, step: &str) -> Option<String> {
+    if run.current != step {
+        return None;
+    }
+    let route = run
+        .events
+        .iter()
+        .rposition(|e| e.kind == "route" && e.reason == step)?;
+    let block = &run.events[route.checked_sub(1)?];
+    (block.kind == "block" && block.step == run.events[route].step).then(|| block.reason.clone())
+}
 #[derive(Default)]
 struct Observations {
     completed: BTreeMap<String, PathBuf>,
@@ -394,6 +407,7 @@ impl PreparedAgent<'_> {
                     .borrow()
                     .block_reason
                     .clone()
+                    .or_else(|| routing_reason(&self.record.run, &request.step))
                     .or_else(|| self.record.run.block.as_ref().map(|b| b.reason.clone()))
                     .or_else(|| {
                         self.record
@@ -504,8 +518,11 @@ impl Agent for PreparedAgent<'_> {
                 ..
             } = poll
             {
+                // A transient block retries the same visit and never routes, so
+                // it must not replace the reason that routed into the visit.
                 observations.block_reason = serde_json::from_str::<serde_json::Value>(body)
                     .ok()
+                    .filter(|v| v["block"]["kind"] != "transient")
                     .and_then(|v| v["block"]["reason"].as_str().map(str::to_owned));
             }
         }
