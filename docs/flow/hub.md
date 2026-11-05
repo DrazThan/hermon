@@ -40,9 +40,12 @@ is recorded before `Agent::stop`; a stall alert leaves the worker running.
 `Poll::Unsettled` and observation errors retain the handle and block resend.
 A later `Finished` confirms settlement and still requires a manual retry.
 
-Review `max_rounds` counts executions, stopping immediately if the last allowed
-review asks for changes. `max_runs` bounds correction steps. Transient retries
-are counted beyond the initial attempt. Checks may rerun the bot once on an
+Review `max_rounds` counts visits to the review step, stopping immediately if
+the last allowed review asks for changes. `max_runs` bounds visits to
+correction steps. A visit starts when the run routes into the step; transient
+retries, check reruns, owner answers and manual retries repeat the current
+visit and do not spend either limit. Transient retries are counted beyond the
+initial attempt. Checks may rerun the bot once on an
 unknown check failure; the second failure alerts. Capability failures require
 owner action. Manual retry resets the transient and check-failure counters;
 it does not raise the workflow's execution limits.

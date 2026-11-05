@@ -487,7 +487,7 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                                 if result.verdict.as_deref() == Some("changes_needed")
                                     && step
                                         .max_rounds
-                                        .is_some_and(|limit| run.runs[&run.current] >= limit)
+                                        .is_some_and(|limit| visits(run, &run.current) >= limit)
                                 {
                                     stop_on_block(
                                         run,
@@ -549,8 +549,11 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                     continue;
                 }
                 let executions = run.runs.get(&run.current).copied().unwrap_or(0);
-                if step.max_runs.is_some_and(|limit| executions >= limit)
-                    || step.max_rounds.is_some_and(|limit| executions >= limit)
+                // Limits bound visits, not attempts. A retry, check rerun or
+                // answer repeats the current visit and must still start.
+                let visit = visits(run, &run.current);
+                if step.max_runs.is_some_and(|limit| visit > limit)
+                    || step.max_rounds.is_some_and(|limit| visit > limit)
                 {
                     stop_on_block(
                         run,
@@ -657,6 +660,23 @@ fn event(run: &mut Run, kind: &str, reason: &str) {
         step: run.current.clone(),
         reason: reason.into(),
     });
+}
+
+/// Entries into `step`, including the current one. Every event carries the
+/// step that was current when it was recorded, so a change of step in the log
+/// starts a visit; a `route` back to the same step starts another. Deriving
+/// this from the journal also covers runs persisted before visits mattered.
+pub fn visits(run: &Run, step: &str) -> u32 {
+    let mut count = 0;
+    let mut last: Option<&str> = None;
+    for event in &run.events {
+        if last != Some(event.step.as_str()) {
+            last = Some(&event.step);
+            count += u32::from(event.step == step);
+        }
+        count += u32::from(event.kind == "route" && event.step == step && event.reason == step);
+    }
+    count + u32::from(last != Some(run.current.as_str()) && run.current == step)
 }
 
 fn transition(run: &mut Run, next: Option<&String>) {
