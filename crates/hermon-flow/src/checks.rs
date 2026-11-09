@@ -91,6 +91,12 @@ struct CommandEvidence {
     /// when the project has thousands of baseline assertions.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     required_passed_tests: BTreeSet<String>,
+    /// For a superseding RED after production work, the commit whose
+    /// non-test paths `tests_fail` ran against, and the exact tree it ran on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    production_base: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree: Option<String>,
     log: LogRef,
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -215,6 +221,164 @@ impl GitChecks {
             .filter(|b| !b.is_empty())
             .map(|b| String::from_utf8(b.to_vec()).context("git path must be UTF-8"))
             .collect()
+    }
+    /// A superseding RED after GREEN production work must fail on the
+    /// pre-implementation production state, not on HEAD with the fix applied.
+    /// Returns a commit whose tree is HEAD with every path outside `tests`
+    /// that changed since the intake base restored to the base version
+    /// (deleted files return, added files disappear). `None` when HEAD has no
+    /// production changes, so the ordinary HEAD check already applies. The
+    /// commit is unreferenced; its parent is HEAD and its message identifies it
+    /// for crash recovery.
+    fn pre_implementation_commit(
+        &self,
+        head: &str,
+        tests: &[Vec<String>],
+    ) -> Result<Option<String>> {
+        let raw = self.git(&[
+            "diff",
+            "--raw",
+            "-z",
+            "--no-renames",
+            "--no-abbrev",
+            &self.config.base,
+            head,
+            "--",
+        ])?;
+        // Records are ":<src mode> <dst mode> <src oid> <dst oid> <status>\0<path>\0".
+        let mut fields = raw.split(|b| *b == 0).filter(|f| !f.is_empty());
+        let mut entries = Vec::new();
+        while let Some(meta) = fields.next() {
+            let path = fields.next().context("truncated git diff record")?;
+            let meta = std::str::from_utf8(meta).context("git diff metadata must be UTF-8")?;
+            let path = std::str::from_utf8(path).context("git path must be UTF-8")?;
+            let parts: Vec<_> = meta.trim_start_matches(':').split(' ').collect();
+            ensure!(parts.len() == 5, "unexpected git diff record {meta:?}");
+            // A test path matches every restricting set, as the freeze does.
+            if tests
+                .iter()
+                .all(|set| set.iter().any(|pattern| glob_matches(pattern, path)))
+            {
+                continue;
+            }
+            // An all-zero source mode removes a path GREEN added; otherwise the
+            // base mode and object restore a modified or deleted path.
+            entries.extend_from_slice(format!("{} {}\t{path}\0", parts[0], parts[2]).as_bytes());
+        }
+        if entries.is_empty() {
+            return Ok(None);
+        }
+        let scratch = tempfile::Builder::new()
+            .prefix("pre-implementation-")
+            .tempdir_in(&self.config.log_dir)?;
+        let index = scratch.path().join("index");
+        git_index(&self.config.workdir, &index, &["read-tree", head], None)?;
+        git_index(
+            &self.config.workdir,
+            &index,
+            &["update-index", "-z", "--index-info"],
+            Some(&entries),
+        )?;
+        let tree = String::from_utf8(git_index(
+            &self.config.workdir,
+            &index,
+            &["write-tree"],
+            None,
+        )?)?
+        .trim()
+        .to_owned();
+        let message = self.pre_implementation_message();
+        Ok(Some(self.text(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            head,
+            "-m",
+            &message,
+        ])?))
+    }
+    /// Test path sets of a superseding RED: an attempt with a recorded start
+    /// commit whose step restricts its edits with `only_paths_changed`. Other
+    /// steps, including the initial RED, keep checking HEAD.
+    fn superseding_test_sets(&self, checks: &[String]) -> Option<Vec<Vec<String>>> {
+        self.path_base.as_ref()?;
+        let sets: Vec<_> = checks
+            .iter()
+            .filter_map(|check| check.strip_prefix("only_paths_changed:"))
+            .filter_map(|set| self.config.paths.get(set).cloned())
+            .collect();
+        (!sets.is_empty()).then_some(sets)
+    }
+    fn pre_implementation_message(&self) -> String {
+        format!(
+            "{PRE_IMPLEMENTATION_MARKER}\n\nticket: {}\nbranch: {}",
+            self.config.ticket, self.config.branch
+        )
+    }
+    /// Run a named command on a detached checkout of `commit`, then return the
+    /// worktree to the run branch. Ignored dependency directories stay in place,
+    /// which a fresh temporary worktree would not have.
+    fn run_detached(
+        &self,
+        name: &str,
+        commit: &str,
+        head: &str,
+    ) -> std::result::Result<CommandEvidence, Block> {
+        self.git(&[
+            "-c",
+            "core.hooksPath=/dev/null",
+            "checkout",
+            "--quiet",
+            "--detach",
+            commit,
+        ])
+        .map_err(|e| {
+            block(
+                BlockKind::Unknown,
+                e.context("check out pre-implementation tree"),
+            )
+        })?;
+        let result = self.run_command(name);
+        self.restore_branch(head)
+            .map_err(|e| block(BlockKind::Unknown, e))?;
+        result
+    }
+    /// Leave a pre-implementation checkout for the run branch, discarding only
+    /// tracked edits made while it was checked out. The branch must still be at
+    /// the checked HEAD.
+    fn restore_branch(&self, head: &str) -> Result<()> {
+        let branch = format!("refs/heads/{}", self.config.branch);
+        ensure!(
+            self.text(&["rev-parse", "--verify", &branch])? == head,
+            "run branch moved while checks ran"
+        );
+        self.git(&[
+            "-c",
+            "core.hooksPath=/dev/null",
+            "checkout",
+            "--quiet",
+            "--force",
+            &self.config.branch,
+        ])
+        .context("restore run branch after pre-implementation check")?;
+        Ok(())
+    }
+    /// A host stopped during a pre-implementation check leaves the worktree on
+    /// the detached synthetic commit. Return it to the run branch only when the
+    /// commit is unmistakably ours and its parent is still the branch head;
+    /// anything else is left for the normal checks to refuse.
+    fn recover_pre_implementation_checkout(&self) -> Result<()> {
+        if self.git(&["symbolic-ref", "--quiet", "HEAD"]).is_ok() {
+            return Ok(());
+        }
+        let Ok(message) = self.text(&["log", "-1", "--format=%B", "HEAD"]) else {
+            return Ok(());
+        };
+        if message != self.pre_implementation_message() {
+            return Ok(());
+        }
+        let parent = self.text(&["rev-parse", "--verify", "HEAD^1^{commit}"])?;
+        self.restore_branch(&parent)
     }
     fn frozen(&self, kind: &str, reference: &str, head: &str) -> Result<()> {
         let tag_ref = format!("refs/tags/{reference}");
@@ -355,6 +519,8 @@ impl GitChecks {
                 tests,
                 assertions,
                 required_passed_tests: BTreeSet::new(),
+                production_base: None,
+                tree: None,
                 log: LogRef {
                     sha256: hash_file(&log_path)?,
                     path: log_path,
@@ -498,6 +664,8 @@ impl Git for GitChecks {
         freezes: &BTreeMap<String, String>,
     ) -> std::result::Result<(), Block> {
         self.receipt = None;
+        self.recover_pre_implementation_checkout()
+            .map_err(|e| block(BlockKind::Unknown, e))?;
         let head = self
             .bound_head()
             .map_err(|e| block(BlockKind::Unknown, e))?;
@@ -550,7 +718,27 @@ impl Git for GitChecks {
                             Block::new(BlockKind::Capability, format!("unknown check {other}"))
                         })?,
                 };
-                let mut command = self.run_command(name)?;
+                let mut command = if check == "tests_fail"
+                    && let Some(tests) = self.superseding_test_sets(checks)
+                {
+                    match self
+                        .pre_implementation_commit(&head, &tests)
+                        .map_err(|e| block(BlockKind::Unknown, e))?
+                    {
+                        Some(commit) => {
+                            let tree = self
+                                .text(&["rev-parse", "--verify", &format!("{commit}^{{tree}}")])
+                                .map_err(|e| block(BlockKind::Unknown, e))?;
+                            let mut command = self.run_detached(name, &commit, &head)?;
+                            command.production_base = Some(self.config.base.clone());
+                            command.tree = Some(tree);
+                            command
+                        }
+                        None => self.run_command(name)?,
+                    }
+                } else {
+                    self.run_command(name)?
+                };
                 if check == "tests_fail" {
                     let report = command.tests.as_ref().ok_or_else(|| {
                         Block::new(
@@ -682,6 +870,44 @@ fn git_at(workdir: &Path, args: &[&str]) -> Result<Vec<u8>> {
 }
 fn git_text(workdir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(git_at(workdir, args)?)?.trim().into())
+}
+/// First line of the unreferenced commit a superseding RED checks out.
+const PRE_IMPLEMENTATION_MARKER: &str = "hermon: pre-implementation tests_fail tree";
+/// Git plumbing against a private index file, leaving the worktree's own
+/// index, HEAD and files untouched.
+fn git_index(workdir: &Path, index: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
+    let mut command = Command::new("/usr/bin/git");
+    command.current_dir(workdir).args(args);
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ] {
+        command.env_remove(key);
+    }
+    command
+        .env("GIT_INDEX_FILE", index)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().context("run git")?;
+    if let Some(bytes) = stdin {
+        child.stdin.take().context("git stdin")?.write_all(bytes)?;
+    }
+    let output = child.wait_with_output()?;
+    ensure!(
+        output.status.success(),
+        "git {}: {}",
+        args.first().unwrap_or(&""),
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(output.stdout)
 }
 pub(crate) fn worktree_head(workdir: &Path) -> Result<String> {
     git_text(workdir, &["rev-parse", "--verify", "HEAD^{commit}"])

@@ -335,6 +335,39 @@ struct PreparedAgent<'a> {
     observations: Rc<RefCell<Observations>>,
 }
 impl PreparedAgent<'_> {
+    /// The start commit already recorded for an earlier attempt in the current
+    /// visit of `step`. A check retry, transient retry, answer or manual retry
+    /// repeats the visit, so its edit check must still cover everything the
+    /// visit committed; re-snapshotting HEAD would hide an earlier attempt's
+    /// out-of-scope commit. The host starts at most one attempt per tick, so the
+    /// snapshot taken before this tick shows whether this visit already started
+    /// one. A route in this tick means a new visit and a fresh HEAD snapshot.
+    fn visit_path_base(&self, step: &str) -> Result<Option<String>> {
+        let run = &self.record.run;
+        if run.current != step {
+            return Ok(None);
+        }
+        let visit = run
+            .events
+            .iter()
+            .rposition(|e| e.kind == "route" && e.reason == step)
+            .map_or(0, |index| index + 1);
+        if !run.events[visit..]
+            .iter()
+            .any(|e| e.step == step && e.kind == "started")
+        {
+            return Ok(None);
+        }
+        let Some(previous) = run.attempts.iter().rev().find(|a| a.step == step) else {
+            return Ok(None);
+        };
+        match fs::read_to_string(attempt_dir(self.dir, step, previous.number)?.join("base_commit"))
+        {
+            Ok(base) => Ok(Some(base.trim().to_owned())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).context("read visit start commit"),
+        }
+    }
     fn prepare(&self, request: &StartRequest) -> Result<()> {
         let dir = attempt_dir(self.dir, &request.step, request.number)?;
         if dir.join("task.md").exists() {
@@ -352,7 +385,10 @@ impl PreparedAgent<'_> {
         {
             let base = dir.join("base_commit");
             if !base.exists() {
-                let head = crate::checks::worktree_head(&self.record.worktree)?;
+                let head = match self.visit_path_base(&request.step)? {
+                    Some(base) => base,
+                    None => crate::checks::worktree_head(&self.record.worktree)?,
+                };
                 let mut file = tempfile::NamedTempFile::new_in(&dir)?;
                 file.write_all(head.as_bytes())?;
                 file.as_file().sync_all()?;
