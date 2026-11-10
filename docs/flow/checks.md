@@ -24,7 +24,7 @@ hub can then call `check` and `evidence` through its existing `Git` trait.
 | `only_paths_changed:<set>` | Every committed path changed from the selected check base to HEAD belongs to the configured named glob set. Initial RED uses intake base; a hosted superseding RED uses its recorded attempt-start commit. |
 | `frozen_unchanged:<tag>` | The supplied evidence reference belongs to this ticket/base, is an ancestor of HEAD, and all paths in its frozen RED delta remain unchanged. |
 | `lint` | The named `lint` command exits zero. |
-| `tests_fail` | The named `test` command exits nonzero, with a valid report identifying every expected new failing test. |
+| `tests_fail` | The named `test` command exits nonzero, with a valid report identifying every expected new failing test. A hosted superseding RED runs it on pre-implementation production (see below). |
 | `tests_pass` | The named `test` command exits zero and its successful VitestJson report proves every independently required passing assertion exactly once. |
 | `project_check` | The named `project_check` command exits zero. |
 | `cmd:<name>` | The selected named command exits zero. |
@@ -42,6 +42,27 @@ freeze contains the accumulated intake-to-RED test paths, including deletions,
 filtered by the recorded named path sets. Those sets and the complete filtered
 delta are checked against the project and tag commit before use. Older notes
 without named sets retain complete base-to-RED delta verification.
+
+A hosted superseding RED usually follows GREEN production work, so the expected
+new tests may already pass at HEAD. Its `tests_fail` therefore runs on
+pre-implementation production: a commit whose tree is HEAD with every path
+outside the step's `only_paths_changed` sets that changed since the intake base
+restored to its base version (files GREEN added are absent, files it deleted
+return). Test paths, including the correction, come from HEAD. When HEAD has no
+such production changes, the check runs at HEAD as before. The host checks out
+that unreferenced commit detached in the run worktree, so ignored dependency
+directories stay available, runs the command with hooks disabled, and then
+forces the worktree back to the run branch, which must still point at the
+checked HEAD. A host stopped mid-check leaves the worktree on that commit; the
+next check recognizes it by its exact message and parent and returns to the
+branch before checking again. Nothing in the candidate is reverted: evidence
+still tags the run-branch HEAD, and the `test` command record adds
+`production_base` (the intake base) and `tree` (the tree it ran on). `lint` and
+other checks run at HEAD.
+
+Retries within one visit (an automatic check retry, a transient retry, an owner
+answer or a manual retry) reuse the visit's recorded starting commit, so an
+earlier attempt's out-of-scope commit still fails `only_paths_changed`.
 
 Each `CheckCommand` supplies an argv vector and a positive `timeout_seconds`.
 There is no implicit shell; a project that needs one must explicitly configure
