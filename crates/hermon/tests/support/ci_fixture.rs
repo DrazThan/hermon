@@ -903,16 +903,16 @@ impl Fixture {
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|request| {
+            .filter(|request| {
                 request["query"]
-                    .as_str()?
-                    .contains("commentCreate")
-                    .then(|| {
-                        request["variables"]["input"]["body"]
-                            .as_str()
-                            .unwrap()
-                            .to_owned()
-                    })
+                    .as_str()
+                    .is_some_and(|query| query.contains("commentCreate"))
+            })
+            .map(|request| {
+                request["variables"]["input"]["body"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
             })
             .collect()
     }
@@ -925,7 +925,7 @@ impl Fixture {
     pub fn bare_refs(&self) -> String {
         git(&self.bare, &["for-each-ref", "--format=%(refname)"])
     }
-    pub fn worktree<'a>(&self, record: &'a Value) -> PathBuf {
+    pub fn worktree(&self, record: &Value) -> PathBuf {
         PathBuf::from(record["worktree"].as_str().unwrap())
     }
     pub fn branch<'a>(&self, record: &'a Value) -> &'a str {
@@ -979,12 +979,11 @@ impl Fixture {
             .join("process.json");
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
-            if let Ok(body) = fs::read(&path) {
-                if let Ok(value) = serde_json::from_slice::<Value>(&body) {
-                    if value["finished"].as_bool() == Some(true) {
-                        return;
-                    }
-                }
+            if let Ok(body) = fs::read(&path)
+                && let Ok(value) = serde_json::from_slice::<Value>(&body)
+                && value["finished"].as_bool() == Some(true)
+            {
+                return;
             }
             assert!(
                 Instant::now() < deadline,
