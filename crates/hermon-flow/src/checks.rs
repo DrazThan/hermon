@@ -116,19 +116,26 @@ struct EvidenceNote {
     frozen_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     frozen_path_sets: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    amendments: Option<Amendments>,
 }
+mod light;
+pub use light::{Amendments, RedProof};
+
 struct Receipt {
     step: String,
     head: String,
     commands: Vec<CommandEvidence>,
     paths: Vec<String>,
     path_sets: BTreeMap<String, Vec<String>>,
+    amendments: Option<Amendments>,
 }
 pub struct GitChecks {
     config: CheckConfig,
     context: AttemptContext,
     receipt: Option<Receipt>,
     path_base: Option<String>,
+    proof_dir: PathBuf,
 }
 impl GitChecks {
     pub fn new(mut config: CheckConfig) -> std::result::Result<Self, Block> {
@@ -169,8 +176,10 @@ impl GitChecks {
             )?;
             Ok(config)
         };
+        let config = prepare().map_err(|e| block(BlockKind::Capability, e))?;
         Ok(Self {
-            config: prepare().map_err(|e| block(BlockKind::Capability, e))?,
+            proof_dir: config.log_dir.clone(),
+            config,
             context: AttemptContext::default(),
             receipt: None,
             path_base: None,
@@ -380,7 +389,12 @@ impl GitChecks {
         let parent = self.text(&["rev-parse", "--verify", "HEAD^1^{commit}"])?;
         self.restore_branch(&parent)
     }
-    fn frozen(&self, kind: &str, reference: &str, head: &str) -> Result<()> {
+    fn freeze_identity(
+        &self,
+        kind: &str,
+        reference: &str,
+        head: &str,
+    ) -> Result<(String, EvidenceNote)> {
         let tag_ref = format!("refs/tags/{reference}");
         self.git(&["check-ref-format", &tag_ref])?;
         let object = self.text(&["rev-parse", "--verify", &format!("{tag_ref}^{{tag}}")])?;
@@ -413,6 +427,11 @@ impl GitChecks {
             "freeze paths differ from the recorded RED delta"
         );
         self.git(&["merge-base", "--is-ancestor", &commit, head])?;
+        Ok((object, note))
+    }
+    fn frozen(&self, kind: &str, reference: &str, head: &str) -> Result<()> {
+        let (_, note) = self.freeze_identity(kind, reference, head)?;
+        let commit = note.commit;
         // Comparing the complete delta avoids constructing pathspecs from file
         // names (which may themselves contain Git pathspec metacharacters).
         let changed = self.paths_between(&commit, head)?;
@@ -602,6 +621,8 @@ impl GitChecks {
                 ),
                 Err(_) => self.write_note(&object, &annotation)?,
             }
+            self.validate_amendment_note(&note)?;
+            self.pin_red(&reference, &object, &note)?;
             return Ok(reference);
         }
         let head = self.bound_head()?;
@@ -635,7 +656,9 @@ impl GitChecks {
             commands: receipt.commands.clone(),
             frozen_paths: receipt.paths.clone(),
             frozen_path_sets: receipt.path_sets.clone(),
+            amendments: receipt.amendments.clone(),
         };
+        self.validate_amendment_note(&note)?;
         let text = serde_json::to_string(&note)?;
         ensure!(
             text.len() < 8192,
@@ -653,11 +676,37 @@ impl GitChecks {
         ])?;
         let object = self.text(&["rev-parse", "--verify", &full_ref])?;
         self.write_note(&object, &text)?;
+        self.pin_red(&reference, &object, &note)?;
         Ok(reference)
     }
 }
 impl Git for GitChecks {
+    fn red_proof(&mut self, reference: &str) -> std::result::Result<RedProof, Block> {
+        self.red_proof_verified(reference)
+            .map_err(|e| block(BlockKind::Capability, e))
+    }
+    fn review_amendments(
+        &mut self,
+        red: &str,
+        green: &str,
+    ) -> std::result::Result<Amendments, Block> {
+        self.amendments_verified(red, green, true)
+            .map(|(a, _)| a)
+            .map_err(|e| block(BlockKind::Capability, e))
+    }
     fn candidate(&mut self, reference: &str) -> std::result::Result<String, Block> {
+        let object = self
+            .text(&[
+                "rev-parse",
+                "--verify",
+                &format!("refs/tags/{reference}^{{tag}}"),
+            ])
+            .map_err(|e| block(BlockKind::Capability, e))?;
+        let note = self
+            .load_note(&object)
+            .map_err(|e| block(BlockKind::Capability, e))?;
+        self.validate_amendment_note(&note)
+            .map_err(|e| block(BlockKind::Capability, e))?;
         accepted_candidate(
             &self.config.workdir,
             &self.config.branch,
@@ -692,6 +741,7 @@ impl Git for GitChecks {
         };
         let mut commands = Vec::new();
         let mut path_sets = BTreeMap::new();
+        let mut amendments = None;
         for check in checks {
             if let Some(set) = check.strip_prefix("only_paths_changed:") {
                 let patterns = self.config.paths.get(set).ok_or_else(|| {
@@ -710,6 +760,21 @@ impl Git for GitChecks {
                 // excluding production already present before this attempt.
                 paths.retain(|path| patterns.iter().any(|pattern| glob_matches(pattern, path)));
                 path_sets.insert(set.to_owned(), patterns.clone());
+            } else if let Some(tag) = check.strip_prefix("red_guard:") {
+                let reference = freezes
+                    .get(tag)
+                    .ok_or_else(|| Block::new(BlockKind::Unknown, format!("missing RED {tag}")))?;
+                let (receipt, diff) = self
+                    .amendment_delta(reference, &head, true)
+                    .map_err(|e| block(BlockKind::Unknown, e))?;
+                fs::write(
+                    self.config
+                        .log_dir
+                        .join(format!("amendments-{}.diff", receipt.diff_sha256)),
+                    diff,
+                )
+                .map_err(|e| block(BlockKind::Unknown, e.into()))?;
+                amendments = Some(receipt);
             } else if let Some(tag) = check.strip_prefix("frozen_unchanged:") {
                 let reference = freezes.get(tag).ok_or_else(|| {
                     Block::new(BlockKind::Unknown, format!("missing freeze {tag}"))
@@ -778,7 +843,7 @@ impl Git for GitChecks {
                     let assertions = command.assertions.as_ref().ok_or_else(|| {
                         Block::new(
                             BlockKind::Capability,
-                            "tests_pass requires VitestJson with named passing assertions",
+                            "tests_pass requires VitestJson or Libtest with named passing assertions",
                         )
                     })?;
                     if command.exit_code != Some(0)
@@ -829,6 +894,7 @@ impl Git for GitChecks {
             commands,
             paths,
             path_sets,
+            amendments,
         });
         Ok(())
     }
@@ -1079,6 +1145,15 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<ParsedReport> 
             };
             let mut summaries = 0;
             let mut failure_bytes = 0;
+            let mut named = PassingAssertions {
+                successful: true,
+                ..Default::default()
+            };
+            let mut seen = BTreeSet::new();
+            let mut counts = [0_u64; 3];
+            let mut running = None;
+            let mut named_bytes = 0;
+            let mut complete = true;
             let mut line = String::new();
             loop {
                 line.clear();
@@ -1093,6 +1168,42 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<ParsedReport> 
                     break;
                 }
                 let line = line.trim_end_matches(['\r', '\n']);
+                if line.chars().any(char::is_control) {
+                    complete = false;
+                }
+                if let Some(count) = line.strip_prefix("running ") {
+                    complete &= running.is_none();
+                    running = count
+                        .strip_suffix(" tests")
+                        .or_else(|| count.strip_suffix(" test"))
+                        .and_then(|n| n.parse::<u64>().ok());
+                    complete &= running.is_some();
+                }
+                if let Some((id, status)) = line
+                    .strip_prefix("test ")
+                    .and_then(|line| line.split_once(" ... "))
+                {
+                    named_bytes += id.len();
+                    ensure!(
+                        named_bytes <= MAX_LINE as usize && seen.len() < 100_000,
+                        "libtest IDs exceed parsing limit"
+                    );
+                    if id.is_empty() || id.chars().any(char::is_whitespace) {
+                        complete = false;
+                    }
+                    if !seen.insert(id.to_owned()) {
+                        named.ambiguous.insert(id.to_owned());
+                    }
+                    match status {
+                        "ok" => {
+                            counts[0] += 1;
+                            named.passed.insert(id.to_owned());
+                        }
+                        "FAILED" => counts[1] += 1,
+                        "ignored" => counts[2] += 1,
+                        _ => complete = false,
+                    }
+                }
                 if let Some(id) = line
                     .strip_prefix("test ")
                     .and_then(|l| l.strip_suffix(" ... FAILED"))
@@ -1109,10 +1220,25 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<ParsedReport> 
                     );
                 }
                 if let Some(summary) = line.strip_prefix("test result: ") {
-                    let (_, counts) = summary
+                    let (status, counts_text) = summary
                         .split_once(". ")
                         .context("invalid libtest summary")?;
-                    let fields: Vec<_> = counts.split(';').collect();
+                    complete &= matches!(status, "ok" | "FAILED");
+                    named.successful &= status == "ok";
+                    let fields: Vec<_> = counts_text.split(';').collect();
+                    complete &= fields.len() == 6
+                        && fields[3]
+                            .trim()
+                            .strip_suffix(" measured")
+                            .is_some_and(|n| n.parse::<u64>().is_ok())
+                        && fields[4]
+                            .trim()
+                            .strip_suffix(" filtered out")
+                            .is_some_and(|n| n.parse::<u64>().is_ok())
+                        && fields[5]
+                            .trim()
+                            .strip_prefix("finished in ")
+                            .is_some_and(|s| !s.is_empty());
                     for (index, suffix, count) in [
                         (0, " passed", &mut report.passed),
                         (1, " failed", &mut report.failed),
@@ -1125,12 +1251,20 @@ fn parse_report(path: &Path, format: &TestReportFormat) -> Result<ParsedReport> 
                             .strip_suffix(suffix)
                             .context("invalid libtest count")?
                             .parse()?;
+                        complete &= counts[index] == n;
                         *count = count.checked_add(n).context("test count overflow")?;
                     }
+                    complete &= running
+                        .take()
+                        .is_none_or(|n| n == counts.iter().sum::<u64>());
+                    counts = [0; 3];
                     summaries += 1;
                 }
             }
             ensure!(summaries > 0, "missing libtest result summary");
+            named.successful &=
+                complete && running.is_none() && counts == [0; 3] && report.failed == 0;
+            assertions = Some(named);
             report
         }
     };

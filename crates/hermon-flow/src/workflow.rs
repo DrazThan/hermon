@@ -47,6 +47,15 @@ pub struct Step {
     pub require_different_family: Option<String>,
     pub max_runs: Option<u32>,
     pub max_rounds: Option<u32>,
+    #[serde(default)]
+    pub review_amendments: Option<ReviewAmendments>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewAmendments {
+    pub red: String,
+    pub green: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,12 +178,31 @@ impl Workflow {
                     "{path}.require_different_family: target must be a bot step"
                 );
             }
+            if let Some(review) = &step.review_amendments {
+                ensure!(
+                    step.bot.is_some()
+                        && step.require_different_family.is_some()
+                        && step.inputs.iter().any(|i| i == "amendments"),
+                    "{path}.review_amendments requires an independent review bot and amendments input"
+                );
+                for tag in [&review.red, &review.green] {
+                    ensure!(
+                        !tag.is_empty() && self.steps.values().any(|s| s.tag.as_ref() == Some(tag)),
+                        "{path}.review_amendments: missing evidence tag {tag:?}"
+                    );
+                }
+                ensure!(
+                    review.red != review.green,
+                    "{path}.review_amendments: distinct tags required"
+                );
+            }
             for (index, check) in step.check.iter().enumerate() {
                 let valid = match check.split_once(':') {
                     None => ["lint", "tests_fail", "tests_pass", "project_check"]
                         .contains(&check.as_str()),
                     Some((kind, arg)) => {
-                        ["only_paths_changed", "frozen_unchanged", "cmd"].contains(&kind)
+                        ["only_paths_changed", "frozen_unchanged", "red_guard", "cmd"]
+                            .contains(&kind)
                             && !arg.is_empty()
                             && !arg.chars().any(|c: char| c.is_whitespace() || c == ':')
                     }
