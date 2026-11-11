@@ -64,11 +64,26 @@ pub struct CodeHostConfig {
     pub repo: String,
     #[serde(default = "origin")]
     pub remote: String,
+    #[serde(default)]
+    pub ci: Option<crate::ci::Policy>,
 }
 fn origin() -> String {
     "origin".into()
 }
 impl Project {
+    pub fn ci_policy(&self, workflow: &Workflow) -> Result<Option<&crate::ci::Policy>> {
+        if workflow.uses_ci() {
+            let policy = self
+                .code_host
+                .ci
+                .as_ref()
+                .context("code_host.ci policy is required for github_ci")?;
+            policy.validate()?;
+            Ok(Some(policy))
+        } else {
+            Ok(None)
+        }
+    }
     pub fn load(path: &Path) -> Result<Self> {
         let source = fs::read_to_string(path)
             .with_context(|| format!("{}: read project", path.display()))?;
@@ -206,6 +221,7 @@ pub fn create(request: Request<'_>) -> Result<RunRecord> {
     let project = Project::load(request.project)?;
     let source = fs::read_to_string(request.workflow)?;
     let workflow = Workflow::from_str(&request.workflow.display().to_string(), &source)?;
+    let policy = project.ci_policy(&workflow)?.cloned();
     let role_bodies = roles(&workflow, request.workflow)?;
     let start = request.start.unwrap_or(&project.start);
     ensure!(
@@ -321,6 +337,16 @@ pub fn create(request: Request<'_>) -> Result<RunRecord> {
         notices: vec![],
         started: false,
     };
+    let policy_body = policy
+        .map(|policy| {
+            serde_json::to_string(&crate::ci::PinnedPolicy {
+                run_id: record.run.id.clone(),
+                workflow_hash: record.workflow_hash.clone(),
+                policy,
+            })
+        })
+        .transpose()?;
+    record.run.ci_policy_digest = policy_body.as_deref().map(hash);
     record.run.events.push(Event {
         kind: "intake".into(),
         step: start.into(),
@@ -335,6 +361,9 @@ pub fn create(request: Request<'_>) -> Result<RunRecord> {
             .prefix(".intake-")
             .tempdir_in(run_dir.parent().unwrap())?;
         fs::create_dir_all(staging.path().join("context"))?;
+        if let Some(body) = &policy_body {
+            fs::write(staging.path().join("context/ci-policy.json"), body)?;
+        }
         fs::write(staging.path().join("context/issue.md"), context)?;
         fs::write(
             staging.path().join("context/workflow.yaml"),

@@ -92,6 +92,14 @@ pub fn pipeline_rows(record: &RunRecord, now: u64) -> Result<Vec<PipelineRow>> {
                     "cancelled".into()
                 } else if record.paused || record.run.paused {
                     "paused".into()
+                } else if step.gate.as_deref() == Some("github_ci")
+                    && record.run.status == Status::Gate
+                {
+                    "automatic CI wait".into()
+                } else if matches!(step.action.as_deref(), Some("open_draft_pr" | "ready_pr"))
+                    && record.run.status == Status::Ready
+                {
+                    "automatic action".into()
                 } else {
                     format!("{:?}", record.run.status).to_lowercase()
                 }
@@ -211,6 +219,13 @@ impl FlowAlerts {
                 error.reason.clone(),
                 format!("host:{}", error.reason),
             ))
+        } else if run.status == Status::Gate
+            && Workflow::from_str("alert workflow", &record.workflow_source)?.steps[&run.current]
+                .gate
+                .as_deref()
+                == Some("github_ci")
+        {
+            None
         } else if matches!(run.status, Status::Gate | Status::Blocked) {
             let reason = run
                 .block

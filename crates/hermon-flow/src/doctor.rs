@@ -145,8 +145,15 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
             })
         })
         .collect();
-    for name in required {
-        if !project.commands.contains_key(name) {
+    let uses_ci = workflow.uses_ci();
+    if uses_ci {
+        report.check(
+            "code_host.ci policy".into(),
+            project.ci_policy(workflow).map(|_| ()),
+        );
+    }
+    for name in &required {
+        if !project.commands.contains_key(*name) {
             report.check(
                 format!("command {name}"),
                 Err(anyhow::anyhow!(
@@ -168,6 +175,9 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
         })());
     }
     for (name, command) in &project.commands {
+        if uses_ci && !required.contains(name.as_str()) {
+            continue;
+        }
         report.check(
             format!("command {name}"),
             execute(project, &command.argv, None, command.timeout_seconds).map(|_| ()),

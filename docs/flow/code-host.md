@@ -5,6 +5,16 @@ interface. It invokes `git` and `gh` directly, without a shell. The existing
 `open_pr` action publishes a run branch and creates a PR; `owner_merge` observes
 what the owner did in GitHub. Neither the adapter nor the hub has a merge operation.
 
+Opt-in `open_draft_pr` → `github_ci` → independent review → `ready_pr`
+uses schema-2 state with stable run identity and a delimited managed body,
+preserving owner text outside it. The draft contains the complete accepted plan;
+readiness requires the exact pushed GREEN SHA, a clean different-family review,
+and fresh selected-check success. Only the branch SHA is pushed, never evidence
+tags or notes; complete evidence remains local. Recovery reconciles mutations by
+PR readback, and `owner_merge` additionally binds the merged PR head and the
+head-side parent of a two-parent merge to the finalized ready receipt. Legacy
+`open_pr` publication and schema-1 merge behavior remain unchanged.
+
 The host constructs `GithubConfig` from confirmed intake: the worktree,
 GitHub.com `owner/repo`, git remote name, base branch, run branch and run ID.
 It also supplies the PR title, approved plan text and independent review summary.

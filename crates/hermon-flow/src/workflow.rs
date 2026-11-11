@@ -67,6 +67,16 @@ impl Default for Limits {
 }
 
 impl Workflow {
+    pub fn uses_ci(&self) -> bool {
+        self.steps
+            .values()
+            .any(|s| s.gate.as_deref() == Some("github_ci"))
+    }
+    pub fn lifecycle(&self) -> bool {
+        self.steps
+            .values()
+            .any(|s| matches!(s.action.as_deref(), Some("open_draft_pr" | "ready_pr")))
+    }
     pub fn load(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("{}: read workflow", path.display()))?;
@@ -113,13 +123,13 @@ impl Workflow {
             }
             if let Some(gate) = &step.gate {
                 ensure!(
-                    ["owner_go", "owner_merge"].contains(&gate.as_str()),
+                    ["owner_go", "owner_merge", "github_ci"].contains(&gate.as_str()),
                     "{path}.gate: unknown gate {gate:?}"
                 );
             }
             if let Some(action) = &step.action {
                 ensure!(
-                    action == "open_pr",
+                    ["open_pr", "open_draft_pr", "ready_pr"].contains(&action.as_str()),
                     "{path}.action: unknown action {action:?}"
                 );
             }
@@ -137,6 +147,7 @@ impl Workflow {
                         "capability",
                         "transient",
                         "scope_change",
+                        "ci_failed",
                         "unknown"
                     ]
                     .contains(&kind.as_str()),
@@ -177,7 +188,22 @@ impl Workflow {
         // Remove bounded nodes before cycle detection: an SCC with a bounded
         // node can still contain an infinite subcycle that bypasses that node.
         // Owner gates break automatic execution with fresh human consent.
-        self.validate_cycles()
+        self.validate_cycles()?;
+        if self.lifecycle() {
+            let green = self
+                .steps
+                .iter()
+                .find(|(_, step)| step.bot.is_some() && step.tag.as_deref() == Some("green"))
+                .map(|(name, _)| name)
+                .context("lifecycle workflow requires a GREEN evidence producer")?;
+            ensure!(
+                self.steps
+                    .values()
+                    .any(|s| s.bot.is_some() && s.require_different_family.as_ref() == Some(green)),
+                "lifecycle workflow requires an independent review of the GREEN producer"
+            );
+        }
+        Ok(())
     }
     fn target(&self, target: &str, path: &str) -> Result<()> {
         ensure!(
@@ -191,7 +217,9 @@ impl Workflow {
             .steps
             .iter()
             .filter(|(_, step)| {
-                step.max_runs.is_none() && step.max_rounds.is_none() && step.gate.is_none()
+                step.max_runs.is_none()
+                    && step.max_rounds.is_none()
+                    && !matches!(step.gate.as_deref(), Some("owner_go" | "owner_merge"))
             })
             .map(|(name, _)| (name.as_str(), 0))
             .collect();

@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod checks;
+pub mod ci;
 pub mod code_host;
 pub mod control;
 pub mod doctor;
