@@ -1,5 +1,8 @@
 //! Deterministic workflow hub; adapters own all external effects.
-use crate::workflow::{Step, Workflow};
+use crate::{
+    ci::{self, Authorization, Candidate, ReviewReceipt},
+    workflow::{Step, Workflow},
+};
 use anyhow::{Result, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,6 +15,7 @@ pub enum BlockKind {
     Capability,
     Transient,
     ScopeChange,
+    CiFailed,
     Unknown,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +98,14 @@ pub struct Run {
     pub owner_question: Option<OwnerQuestion>,
     #[serde(default)]
     pub alert_keys: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<Candidate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_receipt: Option<ReviewReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci_policy_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci: Option<ci::WaitState>,
 }
 impl Run {
     pub fn new(id: impl Into<String>, start: impl Into<String>) -> Self {
@@ -118,6 +130,10 @@ impl Run {
             evidence_revisions: BTreeMap::new(),
             owner_question: None,
             alert_keys: BTreeSet::new(),
+            candidate: None,
+            review_receipt: None,
+            ci_policy_digest: None,
+            ci: None,
         }
     }
 }
@@ -205,8 +221,58 @@ pub trait CodeHost {
     fn open_pr(&mut self, run_id: &str) -> std::result::Result<String, Block>;
     /// True only when merged and the merge commit is an ancestor of the base.
     fn merged(&mut self, pr: &str) -> std::result::Result<bool, Block>;
+    fn open_draft_pr(
+        &mut self,
+        _run_id: &str,
+        _candidate: &Candidate,
+    ) -> std::result::Result<String, Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "draft publication is unsupported",
+        ))
+    }
+    fn sync_head(&mut self, _pr: &str, _candidate: &Candidate) -> std::result::Result<(), Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "candidate synchronization is unsupported",
+        ))
+    }
+    fn ci_policy(&mut self, _digest: &str) -> std::result::Result<ci::Policy, Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "pinned CI policy is unavailable",
+        ))
+    }
+    fn ci_status(
+        &mut self,
+        _pr: &str,
+        _candidate: &Candidate,
+        _policy: &ci::Policy,
+        _digest: &str,
+    ) -> std::result::Result<ci::Observation, Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "GitHub CI observation is unsupported",
+        ))
+    }
+    fn ready_pr(
+        &mut self,
+        _authorization: &Authorization,
+        _policy: &ci::Policy,
+    ) -> std::result::Result<(), Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "ready publication is unsupported",
+        ))
+    }
 }
 pub trait Git {
+    fn candidate(&mut self, _reference: &str) -> std::result::Result<String, Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "accepted candidate verification is unsupported",
+        ))
+    }
     fn check(
         &mut self,
         step: &str,
@@ -476,10 +542,81 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                                             run.evidence_revisions.insert(tag.clone(), revision);
                                             run.freezes.insert(tag.clone(), reference.clone());
                                             event(run, "evidence", &reference);
+                                            if tag == "green"
+                                                && (workflow.lifecycle() || workflow.uses_ci())
+                                            {
+                                                match deps.git.candidate(&reference) {
+                                                    Ok(sha) => {
+                                                        if run
+                                                            .candidate
+                                                            .as_ref()
+                                                            .is_none_or(|c| c.sha != sha)
+                                                        {
+                                                            run.review_receipt = None;
+                                                            run.ci = None;
+                                                        }
+                                                        run.candidate = Some(Candidate {
+                                                            sha,
+                                                            reference,
+                                                            step: run.current.clone(),
+                                                            attempt: attempt.number,
+                                                            family: attempt.family.clone(),
+                                                            red_reference: run
+                                                                .freezes
+                                                                .get("red")
+                                                                .cloned(),
+                                                        });
+                                                    }
+                                                    Err(block) => {
+                                                        handle_block(run, workflow, step, block);
+                                                        continue;
+                                                    }
+                                                }
+                                            }
                                         }
                                         Err(block) => {
                                             handle_block(run, workflow, step, block);
                                             continue;
+                                        }
+                                    }
+                                }
+                                if workflow.lifecycle() && step.require_different_family.is_some() {
+                                    run.review_receipt = None;
+                                    if result.verdict.as_deref() == Some("clean") {
+                                        let proof =
+                                            (|| -> std::result::Result<ReviewReceipt, Block> {
+                                                let c =
+                                                    run.candidate.as_ref().ok_or_else(|| {
+                                                        Block::new(
+                                                            BlockKind::Capability,
+                                                            "review has no accepted candidate",
+                                                        )
+                                                    })?;
+                                                if step.require_different_family.as_ref()
+                                                    != Some(&c.step)
+                                                    || attempt.family.is_empty()
+                                                    || attempt.family == c.family
+                                                    || deps.git.candidate(&c.reference)? != c.sha
+                                                {
+                                                    return Err(Block::new(
+                                                        BlockKind::Capability,
+                                                        "review candidate or independent family changed",
+                                                    ));
+                                                }
+                                                Ok(ReviewReceipt {
+                                                    candidate_sha: c.sha.clone(),
+                                                    step: run.current.clone(),
+                                                    attempt: attempt.number,
+                                                    family: attempt.family.clone(),
+                                                    summary: result.summary.clone(),
+                                                })
+                                            })();
+                                        match proof {
+                                            Ok(receipt) => run.review_receipt = Some(receipt),
+                                            Err(block) => {
+                                                handle_block(run, workflow, step, block);
+                                                continue;
+                                            }
                                         }
                                     }
                                 }
@@ -502,6 +639,11 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                                         .as_ref()
                                         .and_then(|v| step.on_verdict.get(v))
                                         .or(step.next.as_ref());
+                                    if workflow.lifecycle()
+                                        && result.verdict.as_deref() == Some("changes_needed")
+                                    {
+                                        event(run, "review_changes", &result.summary);
+                                    }
                                     transition(run, next);
                                 }
                             }
@@ -510,6 +652,17 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                 }
             }
             Status::Gate => {
+                if step.gate.as_deref() == Some("github_ci") {
+                    match observe_ci(run, deps) {
+                        Ok(true) => {
+                            event(run, "gate_passed", "github_ci");
+                            transition(run, step.next.as_ref());
+                        }
+                        Ok(false) => return Ok(()),
+                        Err(block) => handle_block(run, workflow, step, block),
+                    }
+                    continue;
+                }
                 let approved = match step.gate.as_deref() {
                     Some("owner_go") => deps.tracker.gate_approved(
                         &run.id,
@@ -542,12 +695,6 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                     run.active.is_none() && !run.unsettled,
                     "cannot start while a worker is unresolved"
                 );
-                if step.gate.is_some() {
-                    *run.gate_requests.entry(run.current.clone()).or_default() += 1;
-                    run.status = Status::Gate;
-                    event(run, "gate_opened", step.gate.as_deref().unwrap());
-                    continue;
-                }
                 let executions = run.runs.get(&run.current).copied().unwrap_or(0);
                 // Limits bound visits, not attempts. A retry, check rerun or
                 // answer repeats the current visit and must still start.
@@ -562,6 +709,39 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                             "step execution limit reached; owner action required",
                         ),
                     );
+                    continue;
+                }
+                if step.gate.is_some() {
+                    // Retrying an automatic observation is not another gate visit.
+                    if step.gate.as_deref() != Some("github_ci")
+                        || !run.gate_requests.contains_key(&run.current)
+                    {
+                        *run.gate_requests.entry(run.current.clone()).or_default() += 1;
+                    }
+                    run.status = Status::Gate;
+                    event(run, "gate_opened", step.gate.as_deref().unwrap());
+                    if step.gate.as_deref() == Some("github_ci") {
+                        // Publish the automatic wait before its first external poll.
+                        // A short policy deadline must not erase that durable boundary
+                        // when a slow initial observation consumes the whole budget.
+                        match prepare_ci_wait(run, deps) {
+                            Ok(_) => return Ok(()),
+                            Err(block) => handle_block(run, workflow, step, block),
+                        }
+                    }
+                    continue;
+                }
+                if matches!(step.action.as_deref(), Some("open_draft_pr" | "ready_pr")) {
+                    let outcome = lifecycle_action(run, step, deps);
+                    match outcome {
+                        Ok(true) => {
+                            run.runs.insert(run.current.clone(), executions + 1);
+                            event(run, "step_done", step.action.as_deref().unwrap());
+                            transition(run, step.next.as_ref());
+                        }
+                        Ok(false) => return Ok(()),
+                        Err(block) => handle_block(run, workflow, step, block),
+                    }
                     continue;
                 }
                 if step.action.as_deref() == Some("open_pr") {
@@ -654,6 +834,200 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
     Ok(())
 }
 
+fn lifecycle_action(
+    run: &mut Run,
+    step: &Step,
+    deps: &mut Dependencies<'_>,
+) -> std::result::Result<bool, Block> {
+    let candidate = run.candidate.clone().ok_or_else(|| {
+        Block::new(
+            BlockKind::Capability,
+            "publication requires accepted GREEN evidence",
+        )
+    })?;
+    if deps.git.candidate(&candidate.reference)? != candidate.sha {
+        return Err(Block::new(
+            BlockKind::Capability,
+            "accepted candidate changed",
+        ));
+    }
+    if step.action.as_deref() == Some("open_draft_pr") {
+        let pr = deps.code_host.open_draft_pr(&run.id, &candidate)?;
+        if pr.trim().is_empty() {
+            return Err(Block::new(
+                BlockKind::Capability,
+                "draft publication returned no PR",
+            ));
+        }
+        run.pr = Some(pr);
+        return Ok(true);
+    }
+    let review = run.review_receipt.clone().ok_or_else(|| {
+        Block::new(
+            BlockKind::Capability,
+            "ready requires an accepted independent clean review",
+        )
+    })?;
+    if review.candidate_sha != candidate.sha {
+        return Err(Block::new(BlockKind::Capability, "ready review is stale"));
+    }
+    if !observe_ci(run, deps)? {
+        return Ok(false);
+    }
+    let digest = run
+        .ci_policy_digest
+        .as_deref()
+        .ok_or_else(|| Block::new(BlockKind::Capability, "missing CI policy digest"))?;
+    let policy = deps.code_host.ci_policy(digest)?;
+    let auth = Authorization {
+        run_id: run.id.clone(),
+        pr: run.pr.clone().unwrap_or_default(),
+        candidate,
+        review,
+        ci: run
+            .ci
+            .as_ref()
+            .and_then(|c| c.passed.clone())
+            .ok_or_else(|| {
+                Block::new(
+                    BlockKind::Capability,
+                    "ready requires exact-head passing CI",
+                )
+            })?,
+        amendment_disposition: "not_applicable".into(),
+    };
+    auth.validate(&policy, digest)
+        .map_err(|e| Block::new(BlockKind::Capability, e.to_string()))?;
+    deps.code_host.ready_pr(&auth, &policy)?;
+    Ok(true)
+}
+
+fn prepare_ci_wait(
+    run: &mut Run,
+    deps: &mut Dependencies<'_>,
+) -> std::result::Result<ci::Policy, Block> {
+    let candidate = run
+        .candidate
+        .as_ref()
+        .ok_or_else(|| Block::new(BlockKind::Capability, "CI requires accepted GREEN evidence"))?;
+    let digest = run
+        .ci_policy_digest
+        .as_deref()
+        .ok_or_else(|| Block::new(BlockKind::Capability, "missing pinned CI policy digest"))?;
+    let policy = deps.code_host.ci_policy(digest)?;
+    let now = deps.clock.now();
+    let visit = visits(run, &run.current);
+    if run
+        .ci
+        .as_ref()
+        .is_none_or(|c| c.expected_sha != candidate.sha)
+    {
+        run.ci = Some(ci::WaitState {
+            step: run.current.clone(),
+            visit,
+            expected_sha: candidate.sha.clone(),
+            first_wait: now,
+            next_poll: now,
+            missing: policy.selected_checks.clone(),
+            checks: vec![],
+            passed: None,
+        });
+    }
+    let ci = run.ci.as_mut().unwrap();
+    if ci.step != run.current || ci.visit != visit {
+        ci.step = run.current.clone();
+        ci.visit = visit;
+        ci.next_poll = now;
+        ci.passed = None;
+    }
+    Ok(policy)
+}
+
+fn observe_ci(run: &mut Run, deps: &mut Dependencies<'_>) -> std::result::Result<bool, Block> {
+    let policy = prepare_ci_wait(run, deps)?;
+    let candidate = run.candidate.clone().unwrap();
+    let digest = run.ci_policy_digest.clone().unwrap();
+    let pr = run
+        .pr
+        .clone()
+        .ok_or_else(|| Block::new(BlockKind::Capability, "CI has no published pull request"))?;
+    let now = deps.clock.now();
+    let ci = run.ci.as_mut().unwrap();
+    let age = now.saturating_sub(ci.first_wait);
+    if (ci.passed.is_none() && age >= policy.timeout_seconds)
+        || (!ci.missing.is_empty() && age >= policy.no_checks_timeout_seconds)
+    {
+        let names = if ci.missing.is_empty() {
+            policy.selected_checks.clone()
+        } else {
+            ci.missing.clone()
+        };
+        return Err(ci_deadline(&names, &pr));
+    }
+    if now < ci.next_poll {
+        return Ok(false);
+    }
+    ci.next_poll = now.saturating_add(policy.poll_interval_seconds);
+    ci.passed = None;
+    if deps.git.candidate(&candidate.reference)? != candidate.sha {
+        return Err(Block::new(BlockKind::Capability, "CI candidate changed"));
+    }
+    let observation = deps
+        .code_host
+        .ci_status(&pr, &candidate, &policy, &digest)?;
+    let observed_at = deps.clock.now();
+    ci.next_poll = observed_at.saturating_add(policy.poll_interval_seconds);
+    let age = observed_at.saturating_sub(ci.first_wait);
+    if age >= policy.timeout_seconds {
+        return Err(Block::new(
+            BlockKind::Capability,
+            format!("CI observation exceeded overall deadline ({pr})"),
+        ));
+    }
+    match observation {
+        ci::Observation::Passed(receipt) => {
+            if deps.git.candidate(&candidate.reference)? != candidate.sha
+                || receipt.candidate_sha != candidate.sha
+                || receipt.policy_digest != digest
+            {
+                return Err(Block::new(
+                    BlockKind::Capability,
+                    "CI receipt or local candidate changed",
+                ));
+            }
+            ci.missing.clear();
+            ci.checks = receipt.checks.clone();
+            ci.passed = Some(receipt);
+            Ok(true)
+        }
+        ci::Observation::Waiting { missing, checks } => {
+            ci.missing = missing;
+            ci.checks = checks;
+            if !ci.missing.is_empty() && age >= policy.no_checks_timeout_seconds {
+                return Err(ci_deadline(&ci.missing, &pr));
+            }
+            Ok(false)
+        }
+    }
+}
+
+fn ci_deadline(names: &[String], pr: &str) -> Block {
+    let mut reason = format!("CI deadline reached; pending/missing checks ({pr}): ");
+    let mut omitted = 0;
+    for name in names {
+        if reason.len() + name.len() < 7800 {
+            reason.push_str(name);
+            reason.push_str(", ");
+        } else {
+            omitted += 1;
+        }
+    }
+    if omitted > 0 {
+        reason.push_str(&format!("{omitted} additional jobs; see pinned CI policy"));
+    }
+    Block::new(BlockKind::Capability, reason)
+}
+
 fn event(run: &mut Run, kind: &str, reason: &str) {
     run.events.push(Event {
         kind: kind.into(),
@@ -719,6 +1093,7 @@ fn handle_block(run: &mut Run, workflow: &Workflow, step: &Step, block: Block) {
             BlockKind::OwnerQuestion => "owner_question",
             BlockKind::TestDefect => "test_defect",
             BlockKind::ScopeChange => "scope_change",
+            BlockKind::CiFailed => "ci_failed",
             BlockKind::Capability => "capability",
             BlockKind::Unknown => "unknown",
             BlockKind::Transient => unreachable!(),
@@ -788,7 +1163,11 @@ pub fn override_step(run: &mut Run, workflow: &Workflow, reason: &str) -> Result
         .steps
         .get(&run.current)
         .ok_or_else(|| anyhow!("unknown step"))?;
-    ensure!(step.gate.is_none(), "owner gates cannot be overridden");
+    ensure!(step.gate.is_none(), "gates cannot be overridden");
+    ensure!(
+        !matches!(step.action.as_deref(), Some("open_draft_pr" | "ready_pr")),
+        "lifecycle actions cannot be overridden"
+    );
     event(run, "override", reason);
     transition(run, step.next.as_ref());
     Ok(())

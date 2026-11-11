@@ -126,6 +126,29 @@ pub fn status(args: FlowStatusArgs) -> Result<()> {
                 "{}  {}  {}  {}",
                 record.run.id, record.workflow_name, record.run.current, state
             );
+            if let Some(pr) = &record.run.pr {
+                println!("  PR: {pr}");
+            }
+            if let Some(ci) = &record.run.ci {
+                let state = if ci.step == record.run.current && ci.passed.is_none() {
+                    "automatic CI wait"
+                } else {
+                    "CI candidate"
+                };
+                println!("  {state}: expected HEAD {}", ci.expected_sha);
+                if !ci.missing.is_empty() {
+                    println!("  missing: {}", ci.missing.join(", "));
+                }
+                for check in &ci.checks {
+                    println!(
+                        "  {}: {} / {} ({})",
+                        check.name,
+                        check.status,
+                        check.conclusion.as_deref().unwrap_or("pending"),
+                        check.html_url
+                    );
+                }
+            }
             if let Some(block) = &record.run.block {
                 println!("  {}", block.reason);
             }

@@ -25,6 +25,17 @@ the cycle requires a fresh owner decision. Removing those boundaries must leave 
 graph, so an unrelated bounded branch cannot hide an infinite loop. These
 limits describe the contract for the future hub; the loader does not execute it.
 
+Opt-in lifecycle workflows may use `open_draft_pr`, `github_ci`, `ready_pr`, and
+`on_block: {ci_failed: green}`; unlike owner gates, CI does not break automatic
+cycles. Intake pins `code_host.ci` in `context/ci-policy.json`: unique exact
+`selected_checks` names and positive `poll_interval_seconds` (30),
+`no_checks_timeout_seconds` (600), and `timeout_seconds` (3600). Every selected
+GitHub Actions check must report success for the pushed HEAD; the highest run ID
+per name wins, and skipped/neutral jobs fail. Missing/pending jobs wait silently,
+then capability-block at their deadlines. CI cannot be approved manually, and
+neither lifecycle action nor any gate can be overridden. For CI workflows doctor
+runs only commands referenced by checks; legacy preflight remains unchanged.
+
 ## Comment templates
 
 `Templates::load(project_templates, pack_templates)` resolves each of the seven

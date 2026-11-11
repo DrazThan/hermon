@@ -3,6 +3,7 @@
 use crate::{
     agent::{ProcessAgent, lock},
     checks::{AttemptContext, CheckCommand, CheckConfig, GitChecks, TestReportFormat},
+    ci::{self, Authorization, Candidate},
     code_host::{GithubCodeHost, GithubConfig},
     control::{self, RunRecord},
     hub::{self, Agent, Block, BlockKind, CodeHost, Git, Poll, Settlement, StartRequest, Status},
@@ -307,12 +308,15 @@ fn routing_reason(run: &hub::Run, step: &str) -> Option<String> {
         .iter()
         .rposition(|e| e.kind == "route" && e.reason == step)?;
     let block = &run.events[route.checked_sub(1)?];
-    (block.kind == "block" && block.step == run.events[route].step).then(|| block.reason.clone())
+    (matches!(block.kind.as_str(), "block" | "review_changes")
+        && block.step == run.events[route].step)
+        .then(|| block.reason.clone())
 }
 #[derive(Default)]
 struct Observations {
     completed: BTreeMap<String, PathBuf>,
     block_reason: Option<String>,
+    ready: Option<Authorization>,
 }
 fn producer_dir(
     dir: &Path,
@@ -559,7 +563,13 @@ impl Agent for PreparedAgent<'_> {
                 observations.block_reason = serde_json::from_str::<serde_json::Value>(body)
                     .ok()
                     .filter(|v| v["block"]["kind"] != "transient")
-                    .and_then(|v| v["block"]["reason"].as_str().map(str::to_owned));
+                    .and_then(|v| {
+                        if v["verdict"] == "changes_needed" {
+                            v["summary"].as_str().map(str::to_owned)
+                        } else {
+                            v["block"]["reason"].as_str().map(str::to_owned)
+                        }
+                    });
             }
         }
         Ok(poll)
@@ -576,6 +586,16 @@ struct HostGit<'a> {
     checks: Option<GitChecks>,
 }
 impl Git for HostGit<'_> {
+    fn candidate(&mut self, reference: &str) -> std::result::Result<String, Block> {
+        crate::checks::accepted_candidate(
+            &self.record.worktree,
+            &self.record.branch,
+            &self.record.base_commit,
+            &self.record.ticket,
+            reference,
+        )
+        .map_err(capability)
+    }
     fn check(
         &mut self,
         step: &str,
@@ -700,13 +720,40 @@ struct HostCodeHost<'a> {
 impl HostCodeHost<'_> {
     fn get(&mut self) -> std::result::Result<&mut GithubCodeHost, Block> {
         if self.host.is_none() {
-            let plan = producer_dir(self.dir, self.record, &self.observations.borrow(), "plan")
-                .and_then(|dir| read_text(&artifact(&dir, "plan.md")?))
-                .unwrap_or_else(|_| self.record.ticket.clone());
-            let review = producer_dir(self.dir, self.record, &self.observations.borrow(), "review")
-                .and_then(|dir| read_text(&dir.join("result.json")))
-                .unwrap_or_else(|_| "Workflow review completed".into());
-            self.host = Some(GithubCodeHost::new(
+            let workflow = Workflow::from_str("workflow snapshot", &self.record.workflow_source)
+                .map_err(capability)?;
+            let lifecycle = workflow.lifecycle();
+            let plan = if lifecycle {
+                let producer = workflow
+                    .steps
+                    .iter()
+                    .find(|(_, s)| s.produces.iter().any(|p| p == "plan.md"))
+                    .map(|(name, _)| name)
+                    .ok_or_else(|| {
+                        capability("lifecycle publication requires an accepted plan.md")
+                    })?;
+                let dir =
+                    producer_dir(self.dir, self.record, &self.observations.borrow(), producer)
+                        .map_err(capability)?;
+                read_text(&artifact(&dir, "plan.md").map_err(capability)?).map_err(capability)?
+            } else {
+                producer_dir(self.dir, self.record, &self.observations.borrow(), "plan")
+                    .and_then(|dir| read_text(&artifact(&dir, "plan.md")?))
+                    .unwrap_or_else(|_| self.record.ticket.clone())
+            };
+            let review = if lifecycle {
+                "Review pending".into()
+            } else {
+                producer_dir(self.dir, self.record, &self.observations.borrow(), "review")
+                    .and_then(|dir| read_text(&dir.join("result.json")))
+                    .unwrap_or_else(|_| "Workflow review completed".into())
+            };
+            let constructor = if lifecycle {
+                GithubCodeHost::new_lifecycle
+            } else {
+                GithubCodeHost::new
+            };
+            self.host = Some(constructor(
                 GithubConfig {
                     workdir: self.record.worktree.clone(),
                     repo: self.project.code_host.repo.clone(),
@@ -726,10 +773,101 @@ impl HostCodeHost<'_> {
     }
 }
 impl CodeHost for HostCodeHost<'_> {
+    fn ci_policy(&mut self, digest: &str) -> std::result::Result<ci::Policy, Block> {
+        let body = read_text(&self.dir.join("context/ci-policy.json")).map_err(capability)?;
+        if intake::hash(&body) != digest
+            || self.record.run.ci_policy_digest.as_deref() != Some(digest)
+        {
+            return Err(capability("pinned CI policy digest changed"));
+        }
+        let pin: ci::PinnedPolicy = serde_json::from_str(&body).map_err(capability)?;
+        if pin.run_id != self.record.run.id || pin.workflow_hash != self.record.workflow_hash {
+            return Err(capability("CI policy belongs to another run/workflow"));
+        }
+        pin.policy.validate().map_err(capability)?;
+        Ok(pin.policy)
+    }
+    fn open_draft_pr(&mut self, id: &str, c: &Candidate) -> std::result::Result<String, Block> {
+        self.get()?.open_draft_pr(id, c)
+    }
+    fn sync_head(&mut self, pr: &str, c: &Candidate) -> std::result::Result<(), Block> {
+        self.get()?.sync_head(pr, c)
+    }
+    fn ci_status(
+        &mut self,
+        pr: &str,
+        c: &Candidate,
+        policy: &ci::Policy,
+        digest: &str,
+    ) -> std::result::Result<ci::Observation, Block> {
+        if self.ci_policy(digest)? != *policy {
+            return Err(capability("CI policy mismatch"));
+        }
+        let result = self.get()?.ci_status(pr, c, policy, digest);
+        if let Err(block) = &result {
+            self.observations.borrow_mut().block_reason = Some(block.reason.clone());
+        }
+        result
+    }
+    fn ready_pr(
+        &mut self,
+        auth: &Authorization,
+        policy: &ci::Policy,
+    ) -> std::result::Result<(), Block> {
+        if self.ci_policy(&auth.ci.policy_digest)? != *policy {
+            return Err(capability("ready policy mismatch"));
+        }
+        self.get()?.ready_pr(auth, policy)?;
+        self.observations.borrow_mut().ready = Some(auth.clone());
+        Ok(())
+    }
     fn open_pr(&mut self, id: &str) -> std::result::Result<String, Block> {
         self.get()?.open_pr(id)
     }
     fn merged(&mut self, pr: &str) -> std::result::Result<bool, Block> {
+        let workflow = Workflow::from_str("workflow snapshot", &self.record.workflow_source)
+            .map_err(capability)?;
+        if workflow.lifecycle() {
+            let digest = self
+                .record
+                .run
+                .ci_policy_digest
+                .clone()
+                .ok_or_else(|| capability("missing ready policy digest"))?;
+            let policy = self.ci_policy(&digest)?;
+            let expected = if let Some(auth) = self.observations.borrow().ready.clone() {
+                auth
+            } else {
+                Authorization {
+                    run_id: self.record.run.id.clone(),
+                    pr: pr.into(),
+                    candidate: self
+                        .record
+                        .run
+                        .candidate
+                        .clone()
+                        .ok_or_else(|| capability("missing merge candidate"))?,
+                    review: self
+                        .record
+                        .run
+                        .review_receipt
+                        .clone()
+                        .ok_or_else(|| capability("missing merge review"))?,
+                    ci: self
+                        .record
+                        .run
+                        .ci
+                        .as_ref()
+                        .and_then(|c| c.passed.clone())
+                        .ok_or_else(|| capability("missing merge CI receipt"))?,
+                    amendment_disposition: "not_applicable".into(),
+                }
+            };
+            expected.validate(&policy, &digest).map_err(capability)?;
+            if self.get()?.ready_authorization() != Some(&expected) {
+                return Err(capability("hub and finalized ready authorization disagree"));
+            }
+        }
         let host = self.get()?;
         if !host.merged(pr)? {
             return Ok(false);

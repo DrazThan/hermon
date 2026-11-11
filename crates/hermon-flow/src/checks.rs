@@ -657,6 +657,16 @@ impl GitChecks {
     }
 }
 impl Git for GitChecks {
+    fn candidate(&mut self, reference: &str) -> std::result::Result<String, Block> {
+        accepted_candidate(
+            &self.config.workdir,
+            &self.config.branch,
+            &self.config.base,
+            &self.config.ticket,
+            reference,
+        )
+        .map_err(|e| block(BlockKind::Capability, e))
+    }
     fn check(
         &mut self,
         step: &str,
@@ -909,6 +919,55 @@ fn git_index(workdir: &Path, index: &Path, args: &[&str], stdin: Option<&[u8]>) 
     );
     Ok(output.stdout)
 }
+/// Resolve accepted GREEN evidence without rerunning project commands. A plain
+/// tag or a rewritten annotation without its matching explicit note is not proof.
+pub(crate) fn accepted_candidate(
+    workdir: &Path,
+    branch: &str,
+    base: &str,
+    ticket: &str,
+    reference: &str,
+) -> Result<String> {
+    let head = worktree_at(workdir, branch, reference)?;
+    let object = git_text(
+        workdir,
+        &["rev-parse", "--verify", &format!("refs/tags/{reference}")],
+    )?;
+    let raw = git_text(workdir, &["cat-file", "tag", &object])?;
+    let annotation = raw
+        .split_once("\n\n")
+        .context("missing candidate annotation")?
+        .1
+        .trim();
+    ensure!(annotation.len() < 8192, "oversized candidate evidence");
+    let note: EvidenceNote = serde_json::from_str(annotation)?;
+    let explicit = git_text(workdir, &["notes", "--ref=hermon", "show", &object])?;
+    ensure!(
+        explicit == annotation
+            && note.schema == 1
+            && note.tag == "green"
+            && note.revision > 0
+            && note.attempt > 0
+            && !note.bot.is_empty()
+            && note.ticket == ticket
+            && note.base == base
+            && note.branch == branch
+            && note.commit == head,
+        "candidate evidence identity or explicit note differs"
+    );
+    let suffix = if note.revision == 1 {
+        String::new()
+    } else {
+        format!(".{}", note.revision)
+    };
+    ensure!(
+        reference == format!("hermon/{ticket}/green{suffix}"),
+        "candidate evidence revision differs"
+    );
+    git_at(workdir, &["merge-base", "--is-ancestor", base, &head])?;
+    Ok(head)
+}
+
 pub(crate) fn worktree_head(workdir: &Path) -> Result<String> {
     git_text(workdir, &["rev-parse", "--verify", "HEAD^{commit}"])
 }

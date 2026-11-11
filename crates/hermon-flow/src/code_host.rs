@@ -1,6 +1,7 @@
 //! Run-bound GitHub PR publication and owner-merge observation through `gh`.
 use crate::{
     agent::OwnedChild,
+    ci::{self, Authorization, Candidate},
     hub::{Block, BlockKind, CodeHost},
     store::RunStore,
 };
@@ -45,6 +46,16 @@ struct State {
     pr: Option<String>,
     #[serde(default)]
     merge_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pushed_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ready_intent: Option<Authorization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ready_receipt: Option<Authorization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ready_policy: Option<ci::Policy>,
 }
 #[derive(Deserialize)]
 struct Owner {
@@ -65,9 +76,15 @@ struct PullRequest {
     body: String,
     head_repository_owner: Owner,
     merge_commit: Option<Commit>,
+    #[serde(default)]
+    head_ref_oid: Option<String>,
+    #[serde(default)]
+    is_draft: Option<bool>,
 }
 const PR_FIELDS: &str =
     "number,url,state,baseRefName,headRefName,body,headRepositoryOwner,mergeCommit";
+const LIFECYCLE_FIELDS: &str = "number,url,state,baseRefName,headRefName,body,headRepositoryOwner,mergeCommit,headRefOid,isDraft";
+mod lifecycle;
 
 pub struct GithubCodeHost {
     config: GithubConfig,
@@ -76,7 +93,17 @@ pub struct GithubCodeHost {
     marker: String,
 }
 impl GithubCodeHost {
-    pub fn new(mut config: GithubConfig, state_dir: impl AsRef<Path>) -> Result<Self, Block> {
+    pub fn new(config: GithubConfig, state_dir: impl AsRef<Path>) -> Result<Self, Block> {
+        Self::construct(config, state_dir, 1)
+    }
+    pub fn new_lifecycle(config: GithubConfig, state_dir: impl AsRef<Path>) -> Result<Self, Block> {
+        Self::construct(config, state_dir, 2)
+    }
+    fn construct(
+        mut config: GithubConfig,
+        state_dir: impl AsRef<Path>,
+        schema: u32,
+    ) -> Result<Self, Block> {
         let prepare = || -> Result<Self> {
             config.workdir = fs::canonicalize(&config.workdir)?;
             ensure!(config.workdir.is_dir(), "workdir must be a directory");
@@ -126,11 +153,16 @@ impl GithubCodeHost {
                 config,
                 store,
                 state: State {
-                    schema: 1,
+                    schema,
                     binding: String::new(),
                     remote_hash: String::new(),
                     pr: None,
                     merge_commit: None,
+                    pushed_sha: None,
+                    body_digest: None,
+                    ready_intent: None,
+                    ready_receipt: None,
+                    ready_policy: None,
                 },
                 marker: String::new(),
             };
@@ -145,9 +177,18 @@ impl GithubCodeHost {
             let remote_hash = host.remote_hash()?;
             // Hash the binding, never the environment: credentials stay out of
             // durable files. JSON encoding preserves boundaries between fields.
-            let binding = format!(
-                "{:x}",
-                Sha256::digest(serde_json::to_vec(&(
+            let binding_bytes = if schema == 2 {
+                serde_json::to_vec(&(
+                    schema,
+                    &host.config.workdir,
+                    &host.config.repo,
+                    &host.config.remote,
+                    &host.config.base,
+                    &host.config.branch,
+                    &host.config.run_id,
+                ))?
+            } else {
+                serde_json::to_vec(&(
                     &host.config.workdir,
                     &host.config.repo,
                     &host.config.remote,
@@ -157,17 +198,23 @@ impl GithubCodeHost {
                     &host.config.title,
                     &host.config.plan,
                     &host.config.review_summary,
-                ))?)
-            );
+                ))?
+            };
+            let binding = format!("{:x}", Sha256::digest(binding_bytes));
             host.state = host.store.read_run()?.unwrap_or(State {
-                schema: 1,
+                schema,
                 binding: binding.clone(),
                 remote_hash,
                 pr: None,
                 merge_commit: None,
+                pushed_sha: None,
+                body_digest: None,
+                ready_intent: None,
+                ready_receipt: None,
+                ready_policy: None,
             });
             ensure!(
-                host.state.schema == 1 && host.state.binding == binding,
+                host.state.schema == schema && host.state.binding == binding,
                 "code host state belongs to another intake or artifact revision"
             );
             host.marker = format!(
@@ -242,6 +289,10 @@ impl GithubCodeHost {
             pr.body.lines().any(|line| line == self.marker),
             "PR has no matching run marker"
         );
+        if self.state.schema == 2 {
+            self.validate_managed_identity(pr)
+                .map_err(|b| anyhow::anyhow!(b.reason))?;
+        }
         ensure!(
             matches!(pr.state.as_str(), "OPEN" | "CLOSED" | "MERGED"),
             "invalid PR state"
@@ -270,7 +321,11 @@ impl GithubCodeHost {
             "--limit",
             "100",
             "--json",
-            PR_FIELDS,
+            if self.state.schema == 2 {
+                LIFECYCLE_FIELDS
+            } else {
+                PR_FIELDS
+            },
         ])?;
         let prs: Vec<PullRequest> = serde_json::from_str(&output)
             .map_err(|_| Block::new(BlockKind::Unknown, "invalid PR lookup response"))?;
@@ -391,7 +446,31 @@ impl GithubCodeHost {
     }
 }
 impl CodeHost for GithubCodeHost {
+    fn open_draft_pr(&mut self, run: &str, candidate: &Candidate) -> Result<String, Block> {
+        self.open_draft(run, candidate)
+    }
+    fn sync_head(&mut self, pr: &str, candidate: &Candidate) -> Result<(), Block> {
+        self.synchronize(pr, candidate)
+    }
+    fn ci_status(
+        &mut self,
+        pr: &str,
+        candidate: &Candidate,
+        policy: &ci::Policy,
+        digest: &str,
+    ) -> Result<ci::Observation, Block> {
+        self.observe_checks(pr, candidate, policy, digest)
+    }
+    fn ready_pr(&mut self, auth: &Authorization, policy: &ci::Policy) -> Result<(), Block> {
+        self.mark_ready(auth, policy)
+    }
     fn open_pr(&mut self, run_id: &str) -> Result<String, Block> {
+        if self.state.schema != 1 {
+            return Err(Block::new(
+                BlockKind::Capability,
+                "lifecycle publication requires open_draft_pr",
+            ));
+        }
         if run_id != self.config.run_id {
             return Err(Block::new(
                 BlockKind::Capability,
@@ -466,17 +545,32 @@ impl CodeHost for GithubCodeHost {
             "--repo",
             &self.config.repo,
             "--json",
-            PR_FIELDS,
+            if self.state.schema == 2 {
+                LIFECYCLE_FIELDS
+            } else {
+                PR_FIELDS
+            },
         ])?;
         let observed: PullRequest = serde_json::from_str(&output)
             .map_err(|_| Block::new(BlockKind::Unknown, "invalid PR state response"))?;
-        self.validate(&observed)
-            .map_err(|e| block(BlockKind::Unknown, e))?;
+        self.validate(&observed).map_err(|e| {
+            block(
+                if self.state.schema == 2 {
+                    BlockKind::Capability
+                } else {
+                    BlockKind::Unknown
+                },
+                e,
+            )
+        })?;
         if observed.url != pr {
             return Err(Block::new(
                 BlockKind::Unknown,
                 "observed PR identity changed",
             ));
+        }
+        if self.state.schema == 2 {
+            self.validate_ready_merge(&observed)?;
         }
         if observed.state != "MERGED" {
             return Ok(false);
@@ -502,6 +596,22 @@ impl CodeHost for GithubCodeHost {
                 &format!("+refs/heads/{}:{target}", self.config.base),
             ],
         )?;
+        if self.state.schema == 2 {
+            let parents = self
+                .git(&["show", "-s", "--format=%P", &commit.oid])
+                .map_err(|e| block(BlockKind::Capability, e))?;
+            let parents: Vec<_> = parents.split_whitespace().collect();
+            let ready = self.state.ready_receipt.as_ref().unwrap();
+            if parents.is_empty()
+                || parents.len() > 2
+                || (parents.len() == 2 && parents[1] != ready.candidate.sha)
+            {
+                return Err(Block::new(
+                    BlockKind::Capability,
+                    "merged head-side parent differs from ready candidate",
+                ));
+            }
+        }
         let (status, _) = self.command(
             "git",
             &["merge-base", "--is-ancestor", &commit.oid, &target],
