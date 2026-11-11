@@ -1008,7 +1008,7 @@ impl Fixture {
                 "repos/fixture/project/commits/abc/check-runs?filter=all&per_page=100",
             ])
             .env("HERMON_FAKE_GH_STATE", &self.state_path)
-            .env("HERMON_FAKE_GH_PROBE", &self.probe_path)
+            .env("HERMON_FAKE_GH_PROBE", self.root.join("slurp-probe.log"))
             .env("HERMON_FAKE_GH_BARE", &self.bare)
             .output()
             .unwrap();
