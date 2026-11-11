@@ -60,6 +60,8 @@ pub struct Candidate {
     pub family: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub red_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amendments: Option<crate::checks::Amendments>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewReceipt {
@@ -68,6 +70,15 @@ pub struct ReviewReceipt {
     pub attempt: u32,
     pub family: String,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amendments: Option<crate::checks::Amendments>,
+}
+impl ReviewReceipt {
+    pub fn amendment_disposition(&self) -> String {
+        self.amendments
+            .as_ref()
+            .map_or_else(|| "not_applicable".into(), |a| a.disposition())
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckRun {
@@ -133,7 +144,15 @@ impl Authorization {
                 && self.review.candidate_sha == self.candidate.sha
                 && self.ci.candidate_sha == self.candidate.sha
                 && self.ci.policy_digest == digest
-                && self.amendment_disposition == "not_applicable",
+                && self.amendment_disposition == self.review.amendment_disposition()
+                && self.candidate.amendments == self.review.amendments
+                && self
+                    .review
+                    .amendments
+                    .as_ref()
+                    .is_none_or(|a| a.candidate_sha == self.candidate.sha
+                        && a.diff_sha256.len() == 64
+                        && a.diff_sha256.bytes().all(|b| b.is_ascii_hexdigit())),
             "missing or inconsistent candidate/review/CI/amendment authorization"
         );
         ensure!(

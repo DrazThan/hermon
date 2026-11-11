@@ -1,5 +1,7 @@
 # GitHub PRs and the owner-merge gate
 
+The opt-in [sdlc-light pack](sdlc-light.md) adds reviewed test amendments to the draft/CI/ready lifecycle; the legacy publication behavior described below remains unchanged.
+
 Slice 7 supplies `GithubCodeHost`, an implementation of the hub's `CodeHost`
 interface. It invokes `git` and `gh` directly, without a shell. The existing
 `open_pr` action publishes a run branch and creates a PR; `owner_merge` observes

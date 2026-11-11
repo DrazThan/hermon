@@ -1,5 +1,7 @@
 # Workflow files and run storage
 
+The opt-in [sdlc-light pack](sdlc-light.md) documents the draft/CI/ready lifecycle and digest-bound amendment review, distinct from the legacy workflow contracts below.
+
 `hermon-flow` supplies the file contracts for [slice 2](https://github.com/DrazThan/hermon/issues/117)
 of the [bot pipeline plan](https://github.com/DrazThan/hermon/issues/114).
 It is a library; starting bots, running checks, passing gates, posting comments,

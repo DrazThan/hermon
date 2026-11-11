@@ -169,8 +169,21 @@ pub fn check(project: &Project, workflow: &Workflow, ticket: Option<&str>) -> Re
     {
         report.check("passing assertion reporter".into(), (|| {
             ensure!(project.commands.get("test").is_some_and(|command|
-                matches!(command.report, Some(TestReportFormat::VitestJson))),
-                "tests_pass requires commands.test.report: VitestJson with named passing assertions");
+                matches!(command.report, None | Some(TestReportFormat::VitestJson | TestReportFormat::Libtest))),
+                "tests_pass requires commands.test.report: VitestJson or Libtest with named passing assertions");
+            Ok(())
+        })());
+    }
+    if workflow
+        .steps
+        .values()
+        .any(|step| step.check.iter().any(|c| c.starts_with("red_guard:")))
+    {
+        report.check("light path ownership".into(), (|| {
+            for name in ["tests", "production"] {
+                ensure!(project.paths.get(name).is_some_and(|patterns| !patterns.is_empty()),
+                    "red_guard requires nonempty paths.{name}; use dedicated non-overlapping test and production paths");
+            }
             Ok(())
         })());
     }

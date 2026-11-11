@@ -182,8 +182,25 @@ impl GithubCodeHost {
             "CI pending".into()
         };
         let red = c.red_reference.as_deref().unwrap_or("not configured");
+        let amendments = if let Some(receipt) = &c.amendments {
+            if let Some(auth) = auth {
+                format!("Amendments: {}.", auth.amendment_disposition)
+            } else {
+                format!(
+                    "Amendments: {} review pending; digest {}.",
+                    if receipt.empty {
+                        "empty;"
+                    } else {
+                        "nonempty; explicit acceptance required;"
+                    },
+                    receipt.diff_sha256
+                )
+            }
+        } else {
+            "Amendments: not applicable to this workflow.".into()
+        };
         Ok(format!(
-            "{BEGIN}\nRun: {}\nCandidate: {}\nGREEN evidence: {}\nOriginal RED evidence: {red}\nEvidence tags and notes remain local in the run store.\n\n## Plan\n\n{}\n\n## CI\n\n{ci}\n\n## Review summary\n\n{review}\n\nAmendments: not applicable to this workflow.\n{}\n{END}",
+            "{BEGIN}\nRun: {}\nCandidate: {}\nGREEN evidence: {}\nOriginal RED evidence: {red}\nEvidence tags and notes remain local in the run store.\n\n## Plan\n\n{}\n\n## CI\n\n{ci}\n\n## Review summary\n\n{review}\n\n{amendments}\n{}\n{END}",
             self.config.run_id, c.sha, c.reference, self.config.plan, self.marker
         ))
     }

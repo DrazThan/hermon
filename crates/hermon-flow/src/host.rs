@@ -185,6 +185,7 @@ impl Host {
         let observations = Rc::new(RefCell::new(Observations::default()));
         let mut agent = PreparedAgent {
             process,
+            project: &project,
             dir,
             record,
             workflow: &workflow,
@@ -334,6 +335,7 @@ struct PreparedAgent<'a> {
     dir: &'a Path,
     record: &'a RunRecord,
     workflow: &'a Workflow,
+    project: &'a Project,
     // A successor can start within the same advance call, before its producer's
     // step_done event has been copied back into the durable run snapshot.
     observations: Rc<RefCell<Observations>>,
@@ -464,6 +466,73 @@ impl PreparedAgent<'_> {
             } else if input == "merge" {
                 read_text(&self.dir.join("context/merge.json"))
                     .context("missing verified merge receipt")?
+            } else if input == "amendments" {
+                let policy = step.review_amendments.as_ref();
+                let red = request
+                    .freezes
+                    .get(policy.map_or("red", |p| p.red.as_str()))
+                    .context("missing amendment RED")?;
+                let green = request
+                    .freezes
+                    .get(policy.map_or("green", |p| p.green.as_str()))
+                    .context("missing amendment GREEN")?;
+                let git = configured_checks(
+                    self.project,
+                    self.record,
+                    self.dir,
+                    dir.join("checks"),
+                    AttemptContext {
+                        number: request.number,
+                        bot: request.bot.clone(),
+                        ..Default::default()
+                    },
+                    true,
+                )
+                .map_err(|b| anyhow::anyhow!(b.reason))?;
+                let (receipt, diff) = git.amendments_verified(red, green, policy.is_some())?;
+                fs::write(dir.join("amendments.diff"), &diff)?;
+                fs::write(
+                    dir.join("amendments.json"),
+                    serde_json::to_vec_pretty(&receipt)?,
+                )?;
+                format!(
+                    "Host-generated amendments for candidate {}. SHA-256 digest: {}. Paths: {:?}. Empty: {}.\nInspect amendments.diff and amendments.json beside task.md. Do not edit the candidate. A clean opted-in review of nonempty amendments must return accepted_amendments with exactly this digest.",
+                    receipt.candidate_sha, receipt.diff_sha256, receipt.paths, receipt.empty
+                )
+            } else if input.starts_with("diff:") && step.inputs.iter().any(|i| i == "amendments") {
+                let (red_key, green_key) = input
+                    .strip_prefix("diff:")
+                    .and_then(|s| s.split_once(".."))
+                    .context("invalid evidence diff")?;
+                let red = request.freezes.get(red_key).context("missing diff RED")?;
+                let green = request
+                    .freezes
+                    .get(green_key)
+                    .context("missing diff GREEN")?;
+                let git = configured_checks(
+                    self.project,
+                    self.record,
+                    self.dir,
+                    dir.join("checks"),
+                    AttemptContext {
+                        number: request.number,
+                        bot: request.bot.clone(),
+                        ..Default::default()
+                    },
+                    true,
+                )
+                .map_err(|b| anyhow::anyhow!(b.reason))?;
+                let (receipt, _) =
+                    git.amendments_verified(red, green, step.review_amendments.is_some())?;
+                let diff = git.evidence_diff(&receipt.red_commit, &receipt.candidate_sha, None)?;
+                fs::write(dir.join("candidate.diff"), &diff)?;
+                format!(
+                    "Verified {}..{}; complete diff: {}\n{}",
+                    receipt.red_commit,
+                    receipt.candidate_sha,
+                    dir.join("candidate.diff").display(),
+                    String::from_utf8_lossy(&diff)
+                )
             } else if input.starts_with("diff:") {
                 format!(
                     "Resolve {input} from run evidence: {:?}; PR: {:?}",
@@ -579,6 +648,68 @@ impl Agent for PreparedAgent<'_> {
     }
 }
 
+fn configured_checks(
+    project: &Project,
+    record: &RunRecord,
+    root: &Path,
+    log_dir: PathBuf,
+    mut context: AttemptContext,
+    needs_expected: bool,
+) -> std::result::Result<GitChecks, Block> {
+    let mut git = GitChecks::new(CheckConfig {
+        workdir: record.worktree.clone(),
+        base: record.base_commit.clone(),
+        ticket: record.ticket.clone(),
+        branch: record.branch.clone(),
+        log_dir,
+        env: project.env.clone(),
+        paths: project.paths.clone(),
+        commands: project
+            .commands
+            .iter()
+            .map(|(name, c)| {
+                (
+                    name.clone(),
+                    CheckCommand {
+                        argv: c.argv.clone(),
+                        timeout_seconds: c.timeout_seconds,
+                        report: c
+                            .report
+                            .clone()
+                            .or_else(|| (name == "test").then_some(TestReportFormat::Libtest)),
+                    },
+                )
+            })
+            .collect(),
+    })?;
+    git.set_proof_dir(root.join("proofs")).map_err(capability)?;
+    let workflow =
+        Workflow::from_str("workflow snapshot", &record.workflow_source).map_err(capability)?;
+    let producer = workflow
+        .steps
+        .iter()
+        .find(|(_, s)| s.produces.iter().any(|p| p == "test-expectations.json"));
+    let expected = if let Some((producer, _)) = producer.filter(|_| needs_expected) {
+        artifact(
+            &accepted(root, record, producer).map_err(capability)?,
+            "test-expectations.json",
+        )
+        .map_err(capability)?
+    } else {
+        root.join("context/test-expectations.json")
+    };
+    if expected.exists() {
+        let value: serde_json::Value =
+            serde_json::from_str(&read_text(&expected).map_err(capability)?).map_err(capability)?;
+        context.new_tests =
+            serde_json::from_value(value["new_tests"].clone()).map_err(capability)?;
+        context.baseline_failures =
+            serde_json::from_value(value["baseline_failures"].clone()).map_err(capability)?;
+    }
+    git.set_attempt(context);
+    Ok(git)
+}
+
 struct HostGit<'a> {
     project: &'a Project,
     record: &'a RunRecord,
@@ -586,7 +717,75 @@ struct HostGit<'a> {
     checks: Option<GitChecks>,
 }
 impl Git for HostGit<'_> {
+    fn red_proof(
+        &mut self,
+        reference: &str,
+    ) -> std::result::Result<crate::checks::RedProof, Block> {
+        self.checks
+            .as_mut()
+            .ok_or_else(|| capability("missing RED adapter"))?
+            .red_proof(reference)
+    }
+    fn review_amendments(
+        &mut self,
+        red: &str,
+        green: &str,
+    ) -> std::result::Result<crate::checks::Amendments, Block> {
+        let mut git = configured_checks(
+            self.project,
+            self.record,
+            self.dir,
+            self.dir.join("proofs"),
+            AttemptContext {
+                number: 1,
+                bot: "host-proof".into(),
+                ..Default::default()
+            },
+            true,
+        )?;
+        let proof = git.review_amendments(red, green)?;
+        // A review may accept only the exact immutable intake shown to this attempt.
+        if let Some(attempt) = self.record.run.active.as_ref() {
+            let workflow = Workflow::from_str("workflow snapshot", &self.record.workflow_source)
+                .map_err(capability)?;
+            if workflow.steps[&attempt.step].review_amendments.is_some() {
+                let path = attempt_dir(self.dir, &attempt.step, attempt.number)
+                    .map_err(capability)?
+                    .join("amendments.json");
+                let prepared: crate::checks::Amendments =
+                    serde_json::from_str(&read_text(&path).map_err(capability)?)
+                        .map_err(capability)?;
+                if prepared != proof {
+                    return Err(capability(
+                        "review candidate changed since task preparation",
+                    ));
+                }
+            }
+        }
+        Ok(proof)
+    }
     fn candidate(&mut self, reference: &str) -> std::result::Result<String, Block> {
+        let workflow = Workflow::from_str("workflow snapshot", &self.record.workflow_source)
+            .map_err(capability)?;
+        if workflow
+            .steps
+            .values()
+            .any(|s| s.review_amendments.is_some())
+        {
+            return configured_checks(
+                self.project,
+                self.record,
+                self.dir,
+                self.dir.join("proofs"),
+                AttemptContext {
+                    number: 1,
+                    bot: "host-proof".into(),
+                    ..Default::default()
+                },
+                true,
+            )?
+            .candidate(reference);
+        }
         crate::checks::accepted_candidate(
             &self.record.worktree,
             &self.record.branch,
@@ -605,7 +804,10 @@ impl Git for HostGit<'_> {
         // A workflow with neither checks nor an evidence tag needs no git adapter.
         let workflow = Workflow::from_str("workflow snapshot", &self.record.workflow_source)
             .map_err(capability)?;
-        if checks.is_empty() && workflow.steps[step].tag.is_none() {
+        if checks.is_empty()
+            && workflow.steps[step].tag.is_none()
+            && workflow.steps[step].review_amendments.is_none()
+        {
             return Ok(());
         }
         let attempt = self
@@ -623,77 +825,25 @@ impl Git for HostGit<'_> {
             .and_then(|n| n.parse().ok())
             .unwrap_or(0);
         let bot = workflow.steps[step].bot.clone().unwrap_or_default();
-        let mut git = GitChecks::new(CheckConfig {
-            workdir: self.record.worktree.clone(),
-            base: self.record.base_commit.clone(),
-            ticket: self.record.ticket.clone(),
-            branch: self.record.branch.clone(),
-            log_dir: dir.join("checks"),
-            env: self.project.env.clone(),
-            paths: self.project.paths.clone(),
-            commands: self
-                .project
-                .commands
-                .iter()
-                .map(|(name, c)| {
-                    (
-                        name.clone(),
-                        CheckCommand {
-                            argv: c.argv.clone(),
-                            timeout_seconds: c.timeout_seconds,
-                            report: c
-                                .report
-                                .clone()
-                                .or_else(|| (name == "test").then_some(TestReportFormat::Libtest)),
-                        },
-                    )
-                })
-                .collect(),
-        })?;
+        let mut git = configured_checks(
+            self.project,
+            self.record,
+            self.dir,
+            dir.join("checks"),
+            AttemptContext {
+                number,
+                bot,
+                ..Default::default()
+            },
+            checks.iter().any(|c| {
+                matches!(c.as_str(), "tests_fail" | "tests_pass") || c.starts_with("red_guard:")
+            }) || workflow.steps[step].review_amendments.is_some(),
+        )?;
         match fs::read_to_string(dir.join("base_commit")) {
             Ok(base) => git.set_path_base(base),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(capability(error)),
         }
-        // Trusted expected new test IDs are supplied separately from agent output.
-        let mut context = AttemptContext {
-            number,
-            bot,
-            ..AttemptContext::default()
-        };
-        let producer = workflow.steps.iter().find(|(_, spec)| {
-            spec.produces
-                .iter()
-                .any(|name| name == "test-expectations.json")
-        });
-        let expected = if let Some((producer, _)) = producer {
-            // Planner expectations are independent of the test worker. Never
-            // replace them with a newer unaccepted directory or worker result.
-            if checks
-                .iter()
-                .any(|check| matches!(check.as_str(), "tests_fail" | "tests_pass"))
-            {
-                artifact(
-                    &accepted(self.dir, self.record, producer).map_err(capability)?,
-                    "test-expectations.json",
-                )
-                .map_err(capability)?
-            } else {
-                self.dir.join("context/test-expectations.json")
-            }
-        } else {
-            self.dir.join("context/test-expectations.json")
-        };
-        if expected.exists() {
-            let values: serde_json::Value =
-                serde_json::from_str(&read_text(&expected).map_err(capability)?)
-                    .map_err(capability)?;
-            context.new_tests =
-                serde_json::from_value(values["new_tests"].clone()).map_err(capability)?;
-            context.baseline_failures =
-                serde_json::from_value(values["baseline_failures"].clone()).map_err(capability)?;
-        }
-        git.set_attempt(context);
         git.check(step, checks, freezes)?;
         self.checks = Some(git);
         Ok(())
@@ -860,7 +1010,13 @@ impl CodeHost for HostCodeHost<'_> {
                         .as_ref()
                         .and_then(|c| c.passed.clone())
                         .ok_or_else(|| capability("missing merge CI receipt"))?,
-                    amendment_disposition: "not_applicable".into(),
+                    amendment_disposition: self
+                        .record
+                        .run
+                        .review_receipt
+                        .as_ref()
+                        .ok_or_else(|| capability("missing amendment review disposition"))?
+                        .amendment_disposition(),
                 }
             };
             expected.validate(&policy, &digest).map_err(capability)?;

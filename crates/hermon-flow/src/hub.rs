@@ -106,6 +106,8 @@ pub struct Run {
     pub ci_policy_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci: Option<ci::WaitState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub red_proof: Option<crate::checks::RedProof>,
 }
 impl Run {
     pub fn new(id: impl Into<String>, start: impl Into<String>) -> Self {
@@ -134,6 +136,7 @@ impl Run {
             review_receipt: None,
             ci_policy_digest: None,
             ci: None,
+            red_proof: None,
         }
     }
 }
@@ -267,6 +270,25 @@ pub trait CodeHost {
     }
 }
 pub trait Git {
+    fn red_proof(
+        &mut self,
+        _reference: &str,
+    ) -> std::result::Result<crate::checks::RedProof, Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "original RED proof is unsupported",
+        ))
+    }
+    fn review_amendments(
+        &mut self,
+        _red: &str,
+        _green: &str,
+    ) -> std::result::Result<crate::checks::Amendments, Block> {
+        Err(Block::new(
+            BlockKind::Capability,
+            "amendment verification is unsupported",
+        ))
+    }
     fn candidate(&mut self, _reference: &str) -> std::result::Result<String, Block> {
         Err(Block::new(
             BlockKind::Capability,
@@ -509,9 +531,47 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                                     handle_block(run, workflow, step, block);
                                     continue;
                                 }
-                                if let Err(block) =
-                                    deps.git.check(&run.current, &step.check, &attempt.freezes)
-                                {
+                                let mut accepted_amendments = None;
+                                let checked = (|| -> std::result::Result<(), Block> {
+                                    deps.git
+                                        .check(&run.current, &step.check, &attempt.freezes)?;
+                                    if let Some(policy) = &step.review_amendments {
+                                        let red =
+                                            attempt.freezes.get(&policy.red).ok_or_else(|| {
+                                                Block::new(
+                                                    BlockKind::Capability,
+                                                    "missing review RED",
+                                                )
+                                            })?;
+                                        let green = attempt.freezes.get(&policy.green).ok_or_else(
+                                            || {
+                                                Block::new(
+                                                    BlockKind::Capability,
+                                                    "missing review GREEN",
+                                                )
+                                            },
+                                        )?;
+                                        let proof = deps.git.review_amendments(red, green)?;
+                                        if result.verdict.as_deref() == Some("clean") {
+                                            if result
+                                                .accepted_amendments
+                                                .as_ref()
+                                                .is_some_and(|digest| digest != &proof.diff_sha256)
+                                                || (!proof.empty
+                                                    && result.accepted_amendments.as_ref()
+                                                        != Some(&proof.diff_sha256))
+                                            {
+                                                return Err(Block::new(
+                                                    BlockKind::Unknown,
+                                                    "clean review requires the exact current amendment digest",
+                                                ));
+                                            }
+                                            accepted_amendments = Some(proof);
+                                        }
+                                    }
+                                    Ok(())
+                                })();
+                                if let Err(block) = checked {
                                     if block.kind == BlockKind::Transient {
                                         handle_block(run, workflow, step, block);
                                         continue;
@@ -535,6 +595,22 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                                     continue;
                                 }
                                 if let Some(tag) = &step.tag {
+                                    if tag == "red"
+                                        && run.candidate.is_some()
+                                        && workflow
+                                            .steps
+                                            .values()
+                                            .any(|s| s.review_amendments.is_some())
+                                    {
+                                        stop_on_block(
+                                            run,
+                                            Block::new(
+                                                BlockKind::Capability,
+                                                "cannot replace original RED after GREEN; start a newly planned run",
+                                            ),
+                                        );
+                                        continue;
+                                    }
                                     let revision =
                                         run.evidence_revisions.get(tag).copied().unwrap_or(0) + 1;
                                     match deps.git.evidence(&run.current, tag, revision) {
@@ -542,20 +618,81 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                                             run.evidence_revisions.insert(tag.clone(), revision);
                                             run.freezes.insert(tag.clone(), reference.clone());
                                             event(run, "evidence", &reference);
+                                            if tag == "red"
+                                                && workflow.steps.values().any(|s| {
+                                                    s.check
+                                                        .iter()
+                                                        .any(|c| c.starts_with("red_guard:"))
+                                                })
+                                            {
+                                                match deps.git.red_proof(&reference) {
+                                                    Ok(proof)
+                                                        if run.candidate.is_none()
+                                                            || run.red_proof.as_ref()
+                                                                == Some(&proof) =>
+                                                    {
+                                                        run.red_proof = Some(proof)
+                                                    }
+                                                    Ok(_) => {
+                                                        stop_on_block(
+                                                            run,
+                                                            Block::new(
+                                                                BlockKind::Capability,
+                                                                "cannot replace RED after GREEN; start a newly planned run",
+                                                            ),
+                                                        );
+                                                        continue;
+                                                    }
+                                                    Err(block) => {
+                                                        handle_block(run, workflow, step, block);
+                                                        continue;
+                                                    }
+                                                }
+                                            }
                                             if tag == "green"
                                                 && (workflow.lifecycle() || workflow.uses_ci())
                                             {
                                                 match deps.git.candidate(&reference) {
                                                     Ok(sha) => {
-                                                        if run
-                                                            .candidate
-                                                            .as_ref()
-                                                            .is_none_or(|c| c.sha != sha)
-                                                        {
+                                                        if run.candidate.as_ref().is_none_or(|c| {
+                                                            c.sha != sha || c.reference != reference
+                                                        }) {
                                                             run.review_receipt = None;
                                                             run.ci = None;
                                                         }
+                                                        let amendments = if let Some(review) =
+                                                            workflow.steps.values().find_map(|s| {
+                                                                s.review_amendments.as_ref()
+                                                            }) {
+                                                            let Some(red) =
+                                                                run.freezes.get(&review.red)
+                                                            else {
+                                                                stop_on_block(
+                                                                    run,
+                                                                    Block::new(
+                                                                        BlockKind::Capability,
+                                                                        "missing amendment RED",
+                                                                    ),
+                                                                );
+                                                                continue;
+                                                            };
+                                                            match deps
+                                                                .git
+                                                                .review_amendments(red, &reference)
+                                                            {
+                                                                Ok(receipt) => Some(receipt),
+                                                                Err(block) => {
+                                                                    handle_block(
+                                                                        run, workflow, step, block,
+                                                                    );
+                                                                    continue;
+                                                                }
+                                                            }
+                                                        } else {
+                                                            None
+                                                        };
                                                         run.candidate = Some(Candidate {
+                                                            amendments,
                                                             sha,
                                                             reference,
                                                             step: run.current.clone(),
@@ -609,6 +746,7 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                                                     attempt: attempt.number,
                                                     family: attempt.family.clone(),
                                                     summary: result.summary.clone(),
+                                                    amendments: accepted_amendments.clone(),
                                                 })
                                             })();
                                         match proof {
@@ -732,7 +870,7 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
                     continue;
                 }
                 if matches!(step.action.as_deref(), Some("open_draft_pr" | "ready_pr")) {
-                    let outcome = lifecycle_action(run, step, deps);
+                    let outcome = lifecycle_action(run, workflow, step, deps);
                     match outcome {
                         Ok(true) => {
                             run.runs.insert(run.current.clone(), executions + 1);
@@ -836,6 +974,7 @@ pub fn advance(run: &mut Run, workflow: &Workflow, deps: &mut Dependencies<'_>) 
 
 fn lifecycle_action(
     run: &mut Run,
+    workflow: &Workflow,
     step: &Step,
     deps: &mut Dependencies<'_>,
 ) -> std::result::Result<bool, Block> {
@@ -845,6 +984,17 @@ fn lifecycle_action(
             "publication requires accepted GREEN evidence",
         )
     })?;
+    if workflow
+        .steps
+        .values()
+        .any(|s| s.review_amendments.is_some())
+        && candidate.amendments.is_none()
+    {
+        return Err(Block::new(
+            BlockKind::Capability,
+            "light publication requires amendment proof",
+        ));
+    }
     if deps.git.candidate(&candidate.reference)? != candidate.sha {
         return Err(Block::new(
             BlockKind::Capability,
@@ -882,6 +1032,7 @@ fn lifecycle_action(
     let auth = Authorization {
         run_id: run.id.clone(),
         pr: run.pr.clone().unwrap_or_default(),
+        amendment_disposition: review.amendment_disposition(),
         candidate,
         review,
         ci: run
@@ -894,7 +1045,6 @@ fn lifecycle_action(
                     "ready requires exact-head passing CI",
                 )
             })?,
-        amendment_disposition: "not_applicable".into(),
     };
     auth.validate(&policy, digest)
         .map_err(|e| Block::new(BlockKind::Capability, e.to_string()))?;
@@ -1185,6 +1335,8 @@ struct StepResult {
     #[serde(deserialize_with = "nullable")]
     verdict: Option<String>,
     questions: Vec<String>,
+    #[serde(default)]
+    accepted_amendments: Option<String>,
 }
 
 // The contract allows null, not an omitted key. Serde's plain Option field
@@ -1223,6 +1375,12 @@ fn parse_result(text: Option<&str>, step: &Step) -> std::result::Result<StepResu
             ensure!(
                 matches!(verdict.as_str(), "clean" | "changes_needed"),
                 "unknown review verdict"
+            );
+        }
+        if result.accepted_amendments.is_some() {
+            ensure!(
+                step.review_amendments.is_some(),
+                "accepted_amendments requires opted-in review"
             );
         }
         if result.status == "done"
