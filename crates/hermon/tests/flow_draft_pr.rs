@@ -122,6 +122,7 @@ fn ci_failure_fix_is_pushed_fast_forward_to_the_same_pr() {
             )
         ]),
     );
+    fixture.release_transient();
     let record = fixture.until(
         |record| {
             let current = record["run"]["current"].as_str().unwrap();
